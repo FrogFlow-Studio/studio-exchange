@@ -17,4 +17,4 @@
 
 ## Что сейчас обсуждаем
 
-Конструктор Telegram-ботов по описанию: `context/bot-builder.md`, техника создания ботов без BotFather: `context/telegram-managed-bots.md`.
+Конструктор Telegram-ботов по описанию: `claude/bot-builder/`, техника создания ботов без BotFather: `claude/research/telegram-managed-bots.md`.

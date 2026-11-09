@@ -154,6 +154,36 @@ def importmap() -> str:
                                    "three/addons/loaders/STLLoader.js": url("STLLoader.js")}})
 
 
+def print_ready_html(best: dict | None, ctx: dict) -> str:
+    """Готово ли к печати: что проверено автоматически, а что — только инженером."""
+    e = html.escape
+    if not best or not best["run"].get("ok"):
+        return ""
+    run, cmp = best["run"], best["cmp"] or {}
+    restored = (best.get("meta") or {}).get("restored") or []
+    one = run.get("solids") == 1 and not run.get("voids")
+    fit = cmp.get("within_tol_share", 0) >= ctx["target"] and cmp.get("outside_share", 1) < 0.02
+    rows = [
+        (one, "Одно цельное тело без закрытых пустот внутри",
+         f"тел: {run.get('solids')}, пустот: {run.get('voids', '—')}"),
+        (bool(run.get("valid")), "Тело проходит проверку геометрии CAD-ядра (OpenCascade)", ""),
+        (fit, f"Совпадает с уцелевшей частью скана: не меньше {ctx['target']*100:.0f}% в допуске {ctx['tol']} мм, "
+              "нехватка материала меньше 2%",
+         f"{cmp.get('within_tol_share', 0)*100:.1f}%, нехватка {cmp.get('outside_share', 0)*100:.2f}%"),
+        (None, "Скол восстановлен по замыслу",
+         ("достроено: " + "; ".join(map(str, restored))) if restored else "достроенных мест модель не указала"),
+        (None, "Посадочные места (отверстия, крепления) по размеру",
+         "сверить по таблице размеров ниже или по детали"),
+    ]
+    mark = {True: "<b style='color:var(--ok)'>да</b>", False: "<b class=err>нет</b>", None: "инженер"}
+    auto = [r for r in rows if r[0] is not None]
+    done = sum(1 for r in auto if r[0])
+    body = "".join(f"<tr><td>{mark[ok]}</td><td>{e(t)}</td><td class=small>{e(n)}</td></tr>" for ok, t, n in rows)
+    return (f"<section><h2>Готово к печати?</h2><p>Автоматические проверки: <b>{done} из {len(auto)}</b>. "
+            "Последние два пункта проверяет инженер: машина не знает замысла детали наверняка.</p>"
+            f"<table><tr><th class=chk>Итог</th><th>Проверка</th><th>Что получилось</th></tr>{body}</table></section>")
+
+
 def dims_table(sheet: dict) -> str:
     """Таблица размеров по скану для сверки штангенциркулем (можно распечатать)."""
     e = html.escape
@@ -301,6 +331,7 @@ a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:
 Цель: не менее {ctx['target']*100:.0f}% точек скана в допуске и почти нет мест, где модели не хватает материала. Точки на сколе в допуск не попадают, так и должно быть.</p>
 {('<a class=btn href="model.step" download>Скачать STEP (КОМПАС-3D, SolidWorks и др.)</a><a class=btn href="model.stl" download>STL (для печати)</a><a class=btn href="model.py" download>Код модели</a>') if best else ''}
 </section>
+{print_ready_html(best, ctx)}
 {truth_html}
 <section><h2>Что восстановлено и что должен проверить инженер</h2>
 <p><b>Как строил:</b> {e(str(meta.get('plan', '—')))}</p>

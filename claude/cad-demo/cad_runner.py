@@ -42,6 +42,8 @@ try:
     info.update({
         "valid": bool(shape.isValid()),
         "solids": len(solids),
+        # оболочек больше, чем тел: внутри закрытые пустоты (печать их не простит)
+        "voids": sum(len(x.Shells()) - 1 for x in solids),
         "volume_mm3": round(shape.Volume(), 1),
         "bbox_mm": [[round(bb.xmin, 2), round(bb.ymin, 2), round(bb.zmin, 2)],
                     [round(bb.xmax, 2), round(bb.ymax, 2), round(bb.zmax, 2)]],

@@ -460,14 +460,21 @@ def summary(sheet: dict) -> list[str]:
     return out
 
 
-def measurement_sheet(path: str) -> tuple[dict, trimesh.Trimesh]:
+UNITS = {"mm": 1.0, "cm": 10.0, "m": 1000.0, "in": 25.4}
+
+
+def measurement_sheet(path: str, units: str = "mm") -> tuple[dict, trimesh.Trimesh]:
+    """units — в чём записан файл (STL единиц не хранит): mm, cm, m, in. Масштаб не
+    угадывается молча: маленькая деталь в мм не должна стать метровой (нашёл Север)."""
     raw = load_mesh(path)
+    k = UNITS.get(units, 1.0)
+    if k != 1.0:
+        raw.apply_scale(k)
     diag = diagnostics(raw)
-    # Единицы: STL их не хранит. Деталь меньше 2 единиц почти наверняка в метрах.
-    if max(raw.extents) < 2:
-        raw.apply_scale(1000.0)
-        diag["warnings"].append("файл похож на метры: увеличен в 1000 раз (в мм). Проверьте габарит")
-        diag["scaled_to_mm"] = 1000.0
+    diag["units"] = units
+    diag["scaled_to_mm"] = k
+    if units == "mm" and max(raw.extents) < 2:
+        diag["warnings"].append("деталь меньше 2 мм: если файл в метрах, укажите единицы «м» и запустите снова")
     # Дыры сетки (места, которые сканер не увидел): штопаем мелкие, чтобы сечения
     # замыкались. Исходный файл не меняется.
     if not raw.is_watertight:
@@ -479,6 +486,7 @@ def measurement_sheet(path: str) -> tuple[dict, trimesh.Trimesh]:
             diag["warnings"] = [w for w in diag["warnings"] if not w.startswith("сетка не замкнута")]
             diag["warnings"].append("в сетке были мелкие дыры, заштопаны автоматически")
     mesh, T = align(largest_component(raw))
+    T = T @ np.diag([k, k, k, 1.0])  # преобразование из исходного файла, вместе с единицами
     noise = noise_estimate(mesh)
     diag["noise_mm"] = round(noise, 3)
     if noise > 0.1:

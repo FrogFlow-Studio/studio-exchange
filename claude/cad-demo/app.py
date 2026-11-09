@@ -41,6 +41,7 @@ iframe{width:100%;height:1200px;border:1px solid var(--line);border-radius:8px;m
 <div id=drop class=drop>Перетащите скан сюда<br><span class=small>STL, OBJ или PLY</span></div>
 <input id=file type=file accept=".stl,.obj,.ply" hidden>
 <p id=fname class=small>или <a href="#" id=sample>взять тестовую деталь</a> (сломана нами, не деталь студии)</p>
+<label>Единицы файла: <select id=units><option value=mm selected>мм</option><option value=cm>см</option><option value=m>м</option><option value=in>дюймы</option></select></label>
 <textarea id=notes placeholder="Что сломано, что важно (необязательно)">угол плиты отколот, отверстие в нём потеряно</textarea>
 <button id=go disabled>Построить модель</button>
 <p class=small id=mode></p></div>
@@ -55,7 +56,7 @@ $('drop').ondrop=e=>{e.preventDefault();$('drop').classList.remove('on');e.dataT
 $('sample').onclick=e=>{e.preventDefault();useSample=true;file=null;$('fname').textContent='Тестовая деталь: bracket_scan.stl';$('go').disabled=false};
 fetch('/api/mode').then(r=>r.json()).then(j=>$('mode').textContent='Режим: '+j.label);
 $('go').onclick=async()=>{$('go').disabled=true;$('rep').hidden=true;$('log').textContent='Запуск…';
- const h={'X-Notes':encodeURIComponent($('notes').value),'X-Name':encodeURIComponent(file?file.name:'')};
+ const h={'X-Notes':encodeURIComponent($('notes').value),'X-Units':$('units').value,'X-Name':encodeURIComponent(file?file.name:'')};
  const r=await fetch(useSample?'/api/run-sample':'/api/run',{method:'POST',headers:h,body:useSample?'':file});
  if(!r.ok){$('log').textContent=await r.text();$('go').disabled=false;return}poll()};
 const color=l=>l.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/^(.*?(\\d\\/4).*)$/gm,'<span class=step>$1</span>')
@@ -65,9 +66,9 @@ async function poll(){const j=await (await fetch('/api/status')).json();const L=
 </script></body></html>"""
 
 
-def start_job(scan: Path, notes: str) -> None:
+def start_job(scan: Path, notes: str, units: str = "mm") -> None:
     def work():
-        cmd = [sys.executable, "-u", str(HERE / "demo.py"), str(scan), "--notes", notes, "--no-open"]
+        cmd = [sys.executable, "-u", str(HERE / "demo.py"), str(scan), "--notes", notes, "--no-open", "--units", units]
         p = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                              encoding="utf-8", errors="replace")
         for line in p.stdout:
@@ -127,8 +128,10 @@ class H(BaseHTTPRequestHandler):
             if JOB["running"]:
                 return self.send(409, "Уже идёт построение, дождитесь конца.".encode())
         notes = unquote(self.headers.get("X-Notes", ""))
+        units = self.headers.get("X-Units", "mm")
+        units = units if units in ("mm", "cm", "m", "in") else "mm"
         if self.path == "/api/run-sample":
-            start_job(HERE / "samples" / "bracket_scan.stl", notes)
+            start_job(HERE / "samples" / "bracket_scan.stl", notes, units)
             return self.send(200, b"ok")
         if self.path == "/api/run":
             n = int(self.headers.get("Content-Length", 0))
@@ -140,7 +143,7 @@ class H(BaseHTTPRequestHandler):
             UPLOADS.mkdir(parents=True, exist_ok=True)
             dst = UPLOADS / f"{time.strftime('%Y%m%d-%H%M%S')}-{name}"
             dst.write_bytes(self.rfile.read(n))
-            start_job(dst, notes)
+            start_job(dst, notes, units)
             return self.send(200, b"ok")
         self.send(404, b"")
 

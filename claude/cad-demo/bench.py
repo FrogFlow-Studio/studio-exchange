@@ -21,6 +21,7 @@ import trimesh
 
 import compare as cmpmod
 import demo
+import gates
 import geometric
 import scan_analysis as sa
 
@@ -200,6 +201,7 @@ def one(args):
             tol = max(0.3, 3 * sheet["diagnostics"].get("noise_mm", 0))
             c_scan = cmpmod.compare(scan, model, tol=tol)
             c_truth = cmpmod.compare(truth, model, tol=tol)
+            row["gates"] = gates.check(run, model, sheet, scan)
             c_fixed = cmpmod.compare(truth, model, tol=0.3)
             # «наивное копирование»: сам сломанный скан как модель. Если метрика даёт ему
             # высокий балл, она не отличает восстановление от копии скола
@@ -230,7 +232,6 @@ def one(args):
 
 def main():
     """python bench.py [кол-во] [seed] [семейства через запятую] [-j потоков]"""
-    import multiprocessing as mp
     import warnings
 
     warnings.filterwarnings("ignore")
@@ -240,6 +241,11 @@ def main():
         i = argv.index("-j")
         jobs = int(argv[i + 1])
         del argv[i:i + 2]
+    wargs = []
+    if "--worker" in argv:
+        i = argv.index("--worker")
+        wargs = argv[i:i + 4]
+        del argv[i:i + 4]
     n = int(argv[0]) if len(argv) > 0 else 12
     seed0 = int(argv[1]) if len(argv) > 1 else 100
     only = argv[2].split(",") if len(argv) > 2 else []
@@ -247,12 +253,42 @@ def main():
     rows = []
     tasks = [(seed0 + k, only, tmp) for k in range(n)]
     # каждая деталь в своём процессе (maxtasksperchild=1): память ядра CAD не копится
-    with mp.get_context("spawn").Pool(jobs, maxtasksperchild=1) as pool:
-        for row in pool.imap(one, tasks):
-            if "skip" in row:
-                print(f"{row['seed']}: {row['skip']}, пропуск", flush=True)
-            rows.append(row)  # пропуски тоже в JSON: ничего не теряется молча
-            print(json.dumps(row, ensure_ascii=False), flush=True)
+    import os
+    import subprocess as sp
+
+    if wargs:  # дочерний процесс: свои детали по очереди, строки в файл
+        part, of, outf = int(wargs[1]), int(wargs[2]), wargs[3]
+        with open(outf, "w", encoding="utf-8") as fh:
+            for k, t in enumerate(tasks):
+                if k % of == part:
+                    fh.write(json.dumps(one(t), ensure_ascii=False) + "\n")
+                    fh.flush()
+        return
+    # Параллельно — отдельными процессами, каждый со своей долей деталей. (Пул
+    # multiprocessing однажды зависал насмерть после ~14 деталей.)
+    env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1")
+    base = [sys.executable, str(Path(__file__).resolve()), str(n), str(seed0)] + ([",".join(only)] if only else [])
+    files = [Path(tmp) / f"w{i}.jsonl" for i in range(jobs)]
+    procs = [sp.Popen(base + ["--worker", str(i), str(jobs), str(f)], env=env, stderr=sp.DEVNULL) for i, f in enumerate(files)]
+    seen: set = set()
+    while True:
+        alive = any(p.poll() is None for p in procs)
+        for f in files:
+            if f.exists():
+                for line in f.read_text(encoding="utf-8").splitlines():
+                    row = json.loads(line)
+                    if row["seed"] in seen:
+                        continue
+                    seen.add(row["seed"])
+                    rows.append(row)
+                    print(f"{row['seed']}: {row['skip']}, пропуск" if "skip" in row else json.dumps(row, ensure_ascii=False), flush=True)
+        if not alive:
+            break
+        time.sleep(2)
+    for t in tasks:  # деталь, которую процесс так и не отдал (упал) — тоже в отчёт
+        if t[0] not in seen:
+            rows.append({"seed": t[0], "family": "?", "part": "?", "error": "процесс проверки упал"})
+    rows.sort(key=lambda r: r["seed"])
     skipped = len([r for r in rows if "skip" in r])
     rows_g = [r for r in rows if "skip" not in r]
     ok = [r for r in rows_g if r.get("truth_fit") is not None and r.get("valid")]
@@ -262,9 +298,10 @@ def main():
         v = np.array([r[key] for r in rr])
         return f"медиана {np.median(v)*100:.1f}%, худшая {v.min()*100:.1f}%, ≥95%: {(v >= 0.95).sum()} из {len(v)}"
 
+    gate_bad = [r for r in ok if r.get("gates")]
     lines = [f"Команда: python bench.py {n} {seed0}" + (f" {','.join(only)}" if only else ""),
              f"Сгенерировано {len(rows_g)} (генерация не удалась: {skipped}), построено {len(ok)}, "
-             f"не построено или битое тело: {len(bad)}"]
+             f"не построено или битое тело: {len(bad)}, не прошли обязательные проверки: {len(gate_bad)}"]
     if ok:
         lines += [f"С целой деталью (допуск 0.3 мм или 3× шум): {stat('truth_fit', ok)}",
                   f"С целой деталью (жёсткий допуск 0.3 мм):   {stat('truth_fit_03', ok)}",

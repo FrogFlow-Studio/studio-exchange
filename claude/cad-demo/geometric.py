@@ -421,7 +421,23 @@ def _cone_layer(mesh: trimesh.Trimesh, outer: Polygon, a: float, b: float):
     return float(c[0]), float(c[1]), [(round(r, 3), round(z, 3)) for r, z in keep]
 
 
-def build(mesh: trimesh.Trimesh, sheet: dict) -> tuple[str, dict]:
+def _intact_at(mesh: trimesh.Trimesh, xy, r: float) -> bool:
+    """Есть ли у скана целая горизонтальная поверхность (верх или низ) на месте
+    предполагаемого отверстия. Есть — значит, там материал и не скол: сверлить нельзя.
+    Проверяем лучами сверху вниз в центре и по кругу 0.5 r (плотность сетки не важна)."""
+    top = float(mesh.bounds[1][2]) + 5.0
+    pts = [(xy[0], xy[1])] + [(xy[0] + 0.5 * r * np.cos(t), xy[1] + 0.5 * r * np.sin(t))
+                              for t in np.linspace(0, 2 * np.pi, 6, endpoint=False)]
+    o = np.array([[x, y, top] for x, y in pts])
+    loc, ri, tri = mesh.ray.intersects_location(o, np.tile([0, 0, -1.0], (len(o), 1)), multiple_hits=True)
+    if not len(tri):
+        return False
+    flat = np.abs(mesh.face_normals[tri][:, 2]) > 0.9
+    return len(set(ri[flat].tolist())) >= 4  # материал под большей частью отверстия
+
+
+def build(mesh: trimesh.Trimesh, sheet: dict, restore: bool = True) -> tuple[str, dict]:
+    """restore=False — ничего не достраивать (деталь целая или инженер запретил)."""
     notes: list[str] = []
     levels = [p["z_mm"] for p in sheet["horizontal_planes"]]
     slabs = _slab_bounds(mesh, levels)
@@ -452,6 +468,12 @@ def build(mesh: trimesh.Trimesh, sheet: dict) -> tuple[str, dict]:
         zs = sum((g["zs"] for g in sib), [])
         for m in pat["missing_positions_xy"]:
             if all(np.hypot(g["c"][0] - m[0], g["c"][1] - m[1]) > 1.0 for g in groups):
+                if not restore or _intact_at(mesh, m, pat["hole_diameter"] / 2):
+                    # на месте целая поверхность: повтор — только гипотеза, решает инженер
+                    notes.append(f"Возможно, не хватает отверстия Ø{pat['hole_diameter']} в {m} ({pat['pattern']}, "
+                                 f"найдено {pat['found']} из {pat['likely_total']}), но там целый материал, а не скол: "
+                                 f"не сверлю, проверьте")
+                    continue
                 groups.append({"c": tuple(m), "d": pat["hole_diameter"], "zs": list(zs), "ds": [], "restored": True})
                 notes.append(f"Отверстие Ø{pat['hole_diameter']} в {m} добавлено: {pat['pattern']}, найдено "
                              f"{pat['found']} из {pat['likely_total']}")
@@ -486,7 +508,8 @@ def build(mesh: trimesh.Trimesh, sheet: dict) -> tuple[str, dict]:
         shapes = []
         for p in polys:
             # ось по четырём отверстиям надёжнее: тогда зеркалим и при большом сколе
-            outer = _restore_outer(Polygon(p.exterior), notes, (a + b) / 2, axes, 0.75 if axes_strong else 0.88)
+            outer = (_restore_outer(Polygon(p.exterior), notes, (a + b) / 2, axes, 0.75 if axes_strong else 0.88)
+                     if restore else Polygon(p.exterior))
             cuts = []
             for ring in p.interiors:
                 pts = np.asarray(ring.coords)[:-1]
@@ -504,8 +527,9 @@ def build(mesh: trimesh.Trimesh, sheet: dict) -> tuple[str, dict]:
     # отверстия в стенках ищем до достройки слоёв: их место — не скол
     sides = [_snap_faces(mesh, h) for h in side_holes(mesh)]
     sides = [h for h in sides if _arc_share(mesh, h, *h["c"]) >= 0.7]  # стенка отверстия видна по кругу
-    sides += _mirror_side_holes(mesh, sides, axes, notes)
-    _fill_between(layers, notes, sides)
+    if restore:
+        sides += _mirror_side_holes(mesh, sides, axes, notes)
+        _fill_between(layers, notes, sides)
     # убрать дубли заметок
     seen, uniq = set(), []
     for n in notes:

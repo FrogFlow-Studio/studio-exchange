@@ -27,6 +27,7 @@ import trimesh
 logging.getLogger("trimesh").setLevel(logging.ERROR)
 
 import compare as cmpmod
+import gates
 import geometric
 import llm
 import scan_analysis
@@ -161,10 +162,10 @@ def write_report(out: Path, ctx: dict) -> Path:
     for it in its:
         c = it.get("cmp")
         status = ("ошибка кода" if not it["run"].get("ok") else
-                  ("тело невалидно" if not it["run"].get("valid") else "построено"))
+                  ("не прошла обязательные проверки: " + "; ".join(it["gates"]) if it.get("gates") else "построено"))
         rows.append(f"<tr{' class=best' if best and it['n'] == best['n'] else ''}><td>{it['n']}</td><td>{e(it.get('by', ''))}: {status}</td>"
-                    f"<td>{'' if not c else f'{c['within_tol_share']*100:.1f}%'}</td>"
-                    f"<td>{'' if not c else f'{c['outside_share']*100:.2f}%'}</td>"
+                    f"<td>{'' if not c else format(c['within_tol_share'] * 100, '.1f') + '%'}</td>"
+                    f"<td>{'' if not c else format(c['outside_share'] * 100, '.2f') + '%'}</td>"
                     f"<td>{'' if not c else c['p95_abs_dev_mm']}</td><td>{it['seconds']:.0f} с</td></tr>")
     blocks = []
     for it in its:
@@ -283,6 +284,10 @@ def main() -> None:
     ap.add_argument("--notes", default="", help="заметки мастера: что сломано, что важно")
     ap.add_argument("--image", help="фото или эскиз детали (png/jpg), необязательно")
     ap.add_argument("--mode", choices=["auto", "anthropic", "openai", "replay", "scripted", "geometric"], default="auto")
+    ap.add_argument("--units", choices=["mm", "cm", "m", "in"], default="mm",
+                    help="в чём записан скан: STL единиц не хранит (по умолчанию мм)")
+    ap.add_argument("--no-restore", action="store_true",
+                    help="не достраивать ничего (деталь целая); то же, если в заметке «деталь целая» или «не достраивать»")
     ap.add_argument("--no-geometric", action="store_true", help="не строить черновик без ИИ (попытка 0)")
     ap.add_argument("--model", help="модель ИИ (по умолчанию: claude-sonnet-5-5 / gpt-4.1)")
     ap.add_argument("--replay", help="llm_log.json для режимов replay/scripted")
@@ -311,7 +316,8 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     log(f"режим: {mode_label}")
     log(f"1/4 читаю скан {a.scan}")
-    sheet, scan = scan_analysis.measurement_sheet(a.scan)
+    sheet, scan = scan_analysis.measurement_sheet(a.scan, units=a.units)
+    log(f"    единицы файла: {a.units} (STL их не хранит; если габарит неверный, укажите --units)")
     scan.export(out / "scan_aligned.stl")
     d = sheet["diagnostics"]
     log(f"    граней {d['faces']}, габарит {d['extents_mm']} мм, плоскостей {len(sheet['horizontal_planes'])}, "
@@ -324,7 +330,6 @@ def main() -> None:
     (out / "sheet.json").write_text(json.dumps(sheet, ensure_ascii=False, indent=1), encoding="utf-8")
 
     iterations, llm_log, best, converged = [], [], None, False
-    t_all = time.time()
 
     def evaluate(n: int, code: str, meta: dict, t0: float, by: str) -> dict:
         it_dir = out / f"iter{n}"
@@ -332,6 +337,7 @@ def main() -> None:
         log("3/4 строю модель…")
         run = run_code(code, it_dir) if code else {"ok": False, "error": "в ответе нет блока python"}
         cmp = None
+        model = None
         if run.get("ok"):
             model = trimesh.load(it_dir / "model.stl", force="mesh")
             log(f"    тело валидно: {run.get('valid')}, объём {run.get('volume_mm3')} мм³")
@@ -342,24 +348,38 @@ def main() -> None:
             render(cmp, it_dir / "deviation.png", f"Попытка {n} ({by})")
         else:
             log(f"    ошибка: {run.get('error', '')[:200]}")
+        gate_fail = gates.check(run, model, sheet, scan)
+        for g in gate_fail:
+            log("    обязательная проверка не пройдена: " + g)
         fb = llm.feedback_prompt(run, cmp, a.target)
-        return {"n": n, "by": by, "code": code, "meta": meta, "run": run, "cmp": cmp, "feedback": fb,
+        if gate_fail and run.get("ok"):
+            fb += "\n\nОбязательные проверки НЕ пройдены (без них модель не принимается):\n- " + "\n- ".join(gate_fail)
+        return {"n": n, "by": by, "code": code, "meta": meta, "run": run, "cmp": cmp, "feedback": fb, "gates": gate_fail,
                 "seconds": time.time() - t0, "img": (it_dir / "deviation.png") if cmp else None, "dir": it_dir}
 
     def good(it: dict) -> bool:
         c = it["cmp"]
-        return bool(c and it["run"].get("valid") and c["within_tol_share"] >= a.target and c["outside_share"] < 0.005)
+        return bool(c and not it["gates"] and c["within_tol_share"] >= a.target and c["outside_share"] < 0.005)
+
+    def rank(it: dict) -> tuple:
+        # сначала — прошла ли обязательные проверки, потом цель, потом счёт: «лучшая»
+        # и «сошлось» всегда относятся к одной и той же попытке
+        return (not it["gates"], good(it), score(it["run"], it["cmp"]))
 
     # Попытка 0: геометрический алгоритм без ИИ. Всегда есть, работает без ключа и сети.
     if not a.no_geometric:
         t0 = time.time()
         log("2/4 попытка 0: алгоритм без ИИ строит черновик по сечениям…")
-        g_code, g_meta = geometric.build(scan, sheet)
+        low = (a.notes or "").lower()
+        restore = not a.no_restore and not any(w in low for w in ("деталь целая", "не достраивать", "ничего не восстанавливать"))
+        if not restore:
+            log("    достройка выключена (заметка или --no-restore): строю только то, что есть в скане")
+        g_code, g_meta = geometric.build(scan, sheet, restore=restore)
         for r in g_meta["restored"]:
             log("    " + r)
         it0 = evaluate(0, g_code, g_meta, t0, "алгоритм, без ИИ")
         iterations.append(it0)
-        if score(it0["run"], it0["cmp"]) > -0.5:
+        if it0["run"].get("ok"):
             best = it0
 
     hint = ""
@@ -384,15 +404,13 @@ def main() -> None:
         it = evaluate(n, code, meta, t0, "ИИ" if mode in ("anthropic", "openai") else
                       ("повтор записи ИИ" if mode == "replay" else "заготовка, не ИИ"))
         iterations.append(it)
-        if score(it["run"], it["cmp"]) > (score(best["run"], best["cmp"]) if best else -0.5):
+        if it["run"].get("ok") and (best is None or rank(it) > rank(best)):
             best = it
         if good(it):
-            converged = True
             log(f"    сошлось на попытке {n}")
             break
         messages.append({"role": "user", "content": it["feedback"]})
-    if not converged and best and good(best):
-        converged = True
+    converged = bool(best and good(best))
 
     (out / "llm_log.json").write_text(json.dumps(llm_log, ensure_ascii=False, indent=1), encoding="utf-8")
     truth = None
@@ -418,7 +436,7 @@ def main() -> None:
     rep = write_report(out, {
         "iterations": iterations, "best": best, "sheet": sheet, "mode": mode, "mode_label": mode_label,
         "started": started.strftime("%d.%m.%Y %H:%M"), "scan_name": Path(a.scan).name, "tol": a.tol,
-        "target": a.target, "converged": converged, "total_s": time.time() - t_all, "truth": truth,
+        "target": a.target, "converged": converged, "total_s": (dt.datetime.now() - started).total_seconds(),  # весь запуск, с замерами "truth": truth,
         "test_label": test_label, "scan_mesh": scan})
     log(f"готово: {rep}")
     if not a.no_open:

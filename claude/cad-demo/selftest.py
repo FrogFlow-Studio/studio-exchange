@@ -36,6 +36,18 @@ def near(a, b, tol):
     return a is not None and abs(a - b) <= tol
 
 
+print("Совместимость с Python 3.10–3.12 (README обещает их):")
+import shutil  # noqa: E402
+
+for v in ("3.10", "3.11", "3.12"):
+    exe = shutil.which(f"python{v}")
+    if not exe:
+        print(f"  --   Python {v} не установлен здесь, пропуск")
+        continue
+    bad = [f.name for f in HERE.glob("*.py")
+           if subprocess.run([exe, "-m", "py_compile", str(f)], capture_output=True).returncode != 0]
+    check(f"Python {v}: все файлы компилируются", not bad, bad)
+
 print("Замеры:")
 sh, _ = sa.measurement_sheet(str(S / "bracket_scan.stl"))
 p = pattern(sh)
@@ -73,7 +85,7 @@ for name, m in variants.items():
     f = tmp / "v.stl"
     m.export(f)
     try:
-        sh, _ = sa.measurement_sheet(str(f))
+        sh, _ = sa.measurement_sheet(str(f), units="m" if name == "в метрах" else "mm")
         p = pattern(sh)
         ext = sorted(sh["diagnostics"]["extents_mm"])
         lo, hi = sh["bounds_mm"]
@@ -81,6 +93,55 @@ for name, m in variants.items():
         check(f"кронштейн {name}: габарит и отверстия", ok, f"{p}, {lo}, {hi}")
     except Exception as e:  # noqa: BLE001
         check(f"кронштейн {name}", False, f"{type(e).__name__}: {e}")
+
+tiny = trimesh.creation.box(extents=[1.0, 0.8, 0.5])
+tiny.export(tmp / "tiny.stl")
+sh, _ = sa.measurement_sheet(str(tmp / "tiny.stl"))
+check("деталь 1×0.8×0.5 мм не увеличивается молча в 1000 раз", max(sh["diagnostics"]["extents_mm"]) < 2,
+      sh["diagnostics"]["extents_mm"])
+
+print("Отрицательные проверки (неправильная модель не должна приниматься):")
+import cadquery as cq  # noqa: E402
+
+import gates  # noqa: E402
+
+
+def _mesh(wp):
+    f = tmp / "neg.stl"
+    cq.exporters.export(wp, str(f), tolerance=0.02)
+    return trimesh.load(f, force="mesh")
+
+
+plate = (cq.Workplane("XY").box(80, 50, 8, centered=(True, True, False)).faces(">Z").workplane()
+         .rect(60, 30, forConstruction=True).vertices().hole(2))
+pf = tmp / "plate.stl"
+cq.exporters.export(plate, str(pf), tolerance=0.02)
+psheet, pscan = sa.measurement_sheet(str(pf))
+Tm = np.array(psheet["transform_from_scan_4x4"])
+ok_run = {"ok": True, "valid": True, "solids": 1}
+m_ok = _mesh(plate)
+m_ok.apply_transform(Tm)
+check("целая плита с отверстиями Ø2 проходит проверки", not gates.check(ok_run, m_ok, psheet, pscan),
+      gates.check(ok_run, m_ok, psheet, pscan))
+plug = plate.union(cq.Workplane("XY").center(30, 15).circle(1.2).extrude(8))
+m_plug = _mesh(plug)
+m_plug.apply_transform(Tm)
+check("заделанное отверстие Ø2 не принимается", bool(gates.check(ok_run, m_plug, psheet, pscan)))
+tower = plate.union(cq.Workplane("XY").center(0, 0).rect(2, 2).extrude(100))
+m_tow = _mesh(tower)
+m_tow.apply_transform(Tm)
+check("лишняя «башня» 2×2×100 не принимается", bool(gates.check(ok_run, m_tow, psheet, pscan)))
+three = (cq.Workplane("XY").box(80, 50, 8, centered=(True, True, False)).faces(">Z").workplane()
+         .pushPoints([(-30, -15), (30, -15), (-30, 15)]).hole(4))
+tf = tmp / "three.stl"
+cq.exporters.export(three, str(tf), tolerance=0.02)
+tsheet, tscan = sa.measurement_sheet(str(tf))
+import geometric  # noqa: E402
+
+tcode, tmeta = geometric.build(tscan, tsheet)
+check("целая плита с тремя отверстиями: четвёртое не сверлится", tcode.count(".circle(2.0") <= 3
+      and not any("добавлено" in r for r in tmeta["restored"]), tmeta["restored"])
+check("два тела не принимаются", bool(gates.check(dict(ok_run, solids=2), m_ok, psheet, pscan)))
 
 print("Полный цикл: алгоритм без ИИ (попытка 0), затем заготовленные ответы:")
 import re

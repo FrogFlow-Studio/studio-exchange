@@ -54,6 +54,11 @@ def _mirror_axis(poly: Polygon, axis: str) -> tuple[float, float]:
         iou = poly.intersection(m).area / max(poly.union(m).area, 1e-9)
         if iou > best[1]:
             best = (float(c), float(iou))
+    # скол сдвигает максимум IoU в сторону уцелевшей части; середина габарита
+    # (крайние кромки обычно уцелели) надёжнее, если она почти так же хороша
+    iou0, _ = _iou_mirror(poly, axis, c0)
+    if iou0 >= best[1] - 0.01:
+        return (float(c0), float(iou0))
     return best
 
 
@@ -63,7 +68,8 @@ def _iou_mirror(poly: Polygon, axis: str, c: float) -> tuple[float, Polygon]:
     return poly.intersection(m).area / max(poly.union(m).area, 1e-9), m
 
 
-def _restore_outer(outer: Polygon, notes: list[str], z: float, axes: dict | None = None) -> Polygon:
+def _restore_outer(outer: Polygon, notes: list[str], z: float, axes: dict | None = None,
+                   min_iou: float = 0.88) -> Polygon:
     ext = np.asarray(outer.exterior.coords)[:-1]
     pc = sa.partial_circle(ext)
     if pc and pc["share_of_contour"] >= 0.6:
@@ -82,7 +88,7 @@ def _restore_outer(outer: Polygon, notes: list[str], z: float, axes: dict | None
     # или по узору отверстий). Своя ось у каждого слоя давала ложную «симметрию».
     for axis, c in (axes or {}).items():
         iou, m = _iou_mirror(res, axis, c)
-        if 0.88 < iou < 0.98:
+        if min_iou < iou < 0.98:
             u = unary_union([res, m]).buffer(0.05).buffer(-0.05)
             if u.geom_type != "Polygon":  # зеркальная копия не срослась — не трогаем контур
                 continue
@@ -101,7 +107,12 @@ def _same(A: list, B: list, thr: float = 0.985) -> bool:
 
 
 def _poly_code(p: Polygon, tol: float = 0.3) -> str:
-    q = p.simplify(tol)
+    # закрываем зубцы шума глубже 0.3 мм (острые углы сохраняются), потом упрощаем:
+    # почти самопересекающийся зубчатый контур ядро CAD сливает часами и без памяти
+    q = p.buffer(0.15, join_style=2).buffer(-0.15, join_style=2)
+    if q.geom_type != "Polygon" or q.area < 0.5 * p.area:
+        q = p
+    q = q.simplify(tol)
     raw = np.round(np.asarray(q.exterior.coords)[:-1], 2).tolist()
     pts = [pt for i, pt in enumerate(raw) if pt != raw[i - 1]]  # повтор точки = ребро нулевой длины
     return json.dumps(pts)
@@ -148,7 +159,19 @@ def side_holes(mesh: trimesh.Trimesh, step: float = 1.5) -> list[dict]:
 
 
 
-def _fill_between(layers: list[dict], notes: list[str]) -> None:
+def _side_footprint(h: dict, za: float, zb: float):
+    """След отверстия в стенке на плане слоя za..zb (или None, если слой его не задевает)."""
+    from shapely.geometry import box
+    u, v = h["c"]
+    r = h["d"] / 2 + 1.3
+    if zb < v - r or za > v + r:
+        return None
+    if h["axis"] == "X":
+        return box(h["from"] - 0.5, u - r, h["to"] + 0.5, u + r)
+    return box(u - r, h["from"] - 0.5, u + r, h["to"] + 0.5)
+
+
+def _fill_between(layers: list[dict], notes: list[str], sides: list[dict] | None = None) -> None:
     """Скол посреди высоты: если материал есть и ниже, и выше слоя в одном и том же
     месте плана, а в самом слое его нет — это откол, а не замысел. Дополняем слой
     пересечением контуров нижнего и верхнего слоёв.
@@ -188,6 +211,9 @@ def _fill_between(layers: list[dict], notes: list[str]) -> None:
         layers[k]["shapes"] = shapes
         U[k] = unary_union([o for o, _ in shapes])
         L = layers[k]
+        fp = [f for f in (_side_footprint(h, L["a"], L["b"]) for h in sides or []) if f is not None]
+        if fp and deficit.difference(unary_union(fp)).area < 4.0:
+            continue  # это отверстие в стенке, его вырежет точный цилиндр — не скол
         notes.append(f"Z {L['a']:.1f}–{L['b']:.1f}: материал есть ниже и выше, а в слое нет "
                      f"({deficit.area:.0f} мм²): похоже на скол, достроено по соседним слоям")
 
@@ -217,7 +243,12 @@ def _arc_share(mesh: trimesh.Trimesh, h: dict, u: float, v: float) -> float:
     inside = (V[:, i] > h["from"] + 0.5) & (V[:, i] < h["to"] - 0.5)
     du, dv = V[inside, 1 - i] - u, V[inside, 2] - v
     rr = np.hypot(du, dv)
-    on = np.abs(rr - h["d"] / 2) < 0.3
+    # точка стенки отверстия: на радиусе И нормаль смотрит на ось (иначе засчитаются
+    # чужие поверхности, которые просто проходят на этом расстоянии, например
+    # вертикальное отверстие поперёк)
+    N = mesh.vertex_normals[inside]
+    radial = (N[:, 1 - i] * du + N[:, 2] * dv) / np.maximum(rr, 1e-9)
+    on = (np.abs(rr - h["d"] / 2) < 0.3) & (np.abs(radial) > 0.8) & (np.abs(N[:, i]) < 0.4)
     if on.sum() < 10:
         return 0.0
     bins = np.unique(((np.arctan2(dv[on], du[on]) + np.pi) / (2 * np.pi) * 24).astype(int) % 24)
@@ -374,6 +405,7 @@ def build(mesh: trimesh.Trimesh, sheet: dict) -> tuple[str, dict]:
 
     # Общие оси симметрии детали: центр узора отверстий, иначе — ось основания.
     axes: dict = {}
+    axes_strong = False
     for pat in patterns:
         if pat.get("pcd_diameter"):
             continue  # круговой узор: контур и так восстанавливается дугой
@@ -381,6 +413,7 @@ def build(mesh: trimesh.Trimesh, sheet: dict) -> tuple[str, dict]:
         if len(pts) == 4:
             cx, cy = np.mean(pts, axis=0)
             axes = {"x": float(cx), "y": float(cy)}
+            axes_strong = True  # ось задана четырьмя отверстиями — сильное основание
             break
     if not axes and slabs:
         base = unary_union(_section_polys(mesh, (slabs[0][0] + slabs[0][1]) / 2))
@@ -399,7 +432,8 @@ def build(mesh: trimesh.Trimesh, sheet: dict) -> tuple[str, dict]:
             continue
         shapes = []
         for p in polys:
-            outer = _restore_outer(Polygon(p.exterior), notes, (a + b) / 2, axes)
+            # ось по четырём отверстиям надёжнее: тогда зеркалим и при большом сколе
+            outer = _restore_outer(Polygon(p.exterior), notes, (a + b) / 2, axes, 0.75 if axes_strong else 0.88)
             cuts = []
             for ring in p.interiors:
                 pts = np.asarray(ring.coords)[:-1]
@@ -414,7 +448,11 @@ def build(mesh: trimesh.Trimesh, sheet: dict) -> tuple[str, dict]:
             continue
         prev = {"a": a, "b": b, "shapes": shapes}
         layers.append(prev)
-    _fill_between(layers, notes)
+    # отверстия в стенках ищем до достройки слоёв: их место — не скол
+    sides = [_snap_faces(mesh, h) for h in side_holes(mesh)]
+    sides = [h for h in sides if _arc_share(mesh, h, *h["c"]) >= 0.7]  # стенка отверстия видна по кругу
+    sides += _mirror_side_holes(mesh, sides, axes, notes)
+    _fill_between(layers, notes, sides)
     # убрать дубли заметок
     seen, uniq = set(), []
     for n in notes:
@@ -470,8 +508,6 @@ def build(mesh: trimesh.Trimesh, sheet: dict) -> tuple[str, dict]:
         mark = "  # восстановлено" if g.get("restored") else ""
         lines.append(f"result = result.cut(cq.Workplane('XY').workplane(offset={z0 - 0.05:.3f}).center({g['c'][0]:.3f}, {g['c'][1]:.3f})"
                      f".circle({g['d'] / 2:.3f}).extrude({z1 - z0 + 0.1:.3f})){mark}")
-    sides = [_snap_faces(mesh, h) for h in side_holes(mesh)]
-    sides += _mirror_side_holes(mesh, sides, axes, notes)
     if sides:
         lines.append("")
         lines.append("# Отверстия с горизонтальной осью: слои дают ступеньки, поэтому сначала")

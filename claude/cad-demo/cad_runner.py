@@ -11,6 +11,14 @@ import traceback
 from pathlib import Path
 
 code_path, out = Path(sys.argv[1]), Path(sys.argv[2])
+# Ядро CAD на неудачной геометрии иногда съедает всю память; ограничиваем процесс
+# (3 ГБ), чтобы упала одна попытка, а не ноутбук. На Windows такого ограничения нет.
+try:
+    import resource
+
+    resource.setrlimit(resource.RLIMIT_AS, (3 * 1024 ** 3, 3 * 1024 ** 3))
+except (ImportError, ValueError, OSError):
+    pass
 info = {"ok": False}
 try:
     import cadquery as cq

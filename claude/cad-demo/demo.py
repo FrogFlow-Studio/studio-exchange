@@ -463,7 +463,7 @@ def main() -> None:
             try:
                 subprocess.run([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
                                 str(out / "sheet.json"), "1", str(wj), "walls"],
-                               timeout=a.geo_timeout + 120, check=True, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                               timeout=a.geo_timeout + 300, check=True, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
                 w = json.loads(wj.read_text(encoding="utf-8"))
                 log("    " + w["meta"]["plan"])
                 itw = evaluate("0б", w["code"], w["meta"], t0, "стенки, без ИИ")

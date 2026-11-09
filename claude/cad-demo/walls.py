@@ -137,37 +137,112 @@ def walls(mesh: trimesh.Trimesh, max_thick: float = 25.0) -> list[dict]:
                     pass
             out.append({"normal": a["normal"], "origin": a["point"], "u": u, "v": v, "thickness": t,
                         "outline": full, "area": float(full.area)})
-    used = {k for pair in seen for k in pair}
-    out += _single_sided(mesh, pats, frames, used, max_thick)
+    out += _single_sided(mesh, pats, frames, out, max_thick)
+    if mesh.is_watertight:
+        out = _check_material(mesh, out)
     return _dedupe(out)
 
 
-def _single_sided(mesh, pats, frames, used, max_thick) -> list[dict]:
-    """Плоский участок без плоской пары: обратная сторона бывает кривой или разбитой на
-    мелочь. Толщину меряем лучами внутрь из точек участка: первое попадание в поверхность,
-    смотрящую навстречу, — другая сторона стенки."""
+def _check_material(mesh, ws: list[dict]) -> list[dict]:
+    """Стенка должна лежать в материале. Если толщина завышена (луч ушёл в ребро), пробуем
+    обычную толщину детали; если и так большая часть вне тела — стенку выбрасываем.
+    Точки всех стенок проверяются вместе, кусками по 1000 (по одной стенке — в разы дольше,
+    одним куском — не хватает памяти)."""
+    from shapely import contains_xy
+    paired = [w["thickness"] for w in ws if not w.get("single")]
+    typical = float(np.median(paired)) if paired else None
+    samples = []
+    for i, w in enumerate(ws):
+        g = w["outline"]
+        x0, y0, x1, y1 = g.bounds
+        xy = np.random.default_rng(i).uniform([x0, y0], [x1, y1], (3000, 2))
+        samples.append(xy[contains_xy(g, xy[:, 0], xy[:, 1])][:40])
+
+    def share(ts):
+        pts, owner = [], []
+        for i, (w, xy) in enumerate(zip(ws, samples)):
+            if ts[i] is None or len(xy) == 0:
+                continue
+            for f in (0.25, 0.5, 0.75):
+                pts.append(w["origin"] + xy[:, :1] * w["u"] + xy[:, 1:2] * w["v"] - w["normal"] * ts[i] * f)
+                owner.append(np.full(len(xy), i))
+        res = np.zeros(len(ws))
+        if pts:
+            P = np.vstack(pts)
+            ins = np.concatenate([mesh.contains(P[k:k + 1000]) for k in range(0, len(P), 1000)]).astype(float)
+            own = np.concatenate(owner)
+            res = np.bincount(own, weights=ins, minlength=len(ws)) / np.maximum(np.bincount(own, minlength=len(ws)), 1)
+        return res
+
+    first = share([w["thickness"] for w in ws])
+    retry = [typical if (typical and first[i] < 0.8 and w["thickness"] > typical * 1.5) else None
+             for i, w in enumerate(ws)]
+    second = share(retry) if any(r is not None for r in retry) else np.zeros(len(ws))
+    keep = []
+    for i, w in enumerate(ws):
+        if first[i] >= 0.8:
+            keep.append(w)
+        elif retry[i] is not None and second[i] >= 0.8:
+            keep.append(dict(w, thickness=typical))
+    return keep
+
+
+def _project(w, origin, u, v):
+    """Контур стенки w в координатах другой плоскости (origin, u, v)."""
+    g = w["outline"]
+    res = []
+    for gg in ([g] if g.geom_type == "Polygon" else list(g.geoms)):
+        r = np.asarray(gg.exterior.coords)
+        P = w["origin"] + r[:, :1] * w["u"] + r[:, 1:2] * w["v"] - origin
+        res.append(Polygon(np.c_[P @ u, P @ v]).buffer(0))
+    return unary_union(res)
+
+
+def _single_sided(mesh, pats, frames, paired, max_thick) -> list[dict]:
+    """Плоский участок (или его часть), не закрытый парными стенками: обратная сторона
+    бывает кривой, разбитой рёбрами на куски или мелкой. Толщину меряем лучами внутрь из
+    точек участка: первое попадание в поверхность, смотрящую навстречу, — другая сторона."""
     out = []
     fc, fn = mesh.triangles_center, mesh.face_normals
     for k, p in enumerate(pats):
-        if k in used:
-            continue
         n = p["normal"]
+        u, v = frames[k]
         faces = p["faces"]
-        pick = faces if len(faces) <= 300 else np.random.default_rng(k).choice(faces, 300, replace=False)
-        orig = fc[pick] - n * 0.05
-        dirs = np.repeat(-n[None], len(pick), axis=0)
+        cover = []
+        for w in paired:
+            if abs(w["normal"] @ n) < 0.97:
+                continue
+            mid = w["origin"] - w["normal"] * w["thickness"] / 2
+            if abs((p["point"] - mid) @ w["normal"]) > w["thickness"] / 2 + 0.8:
+                continue
+            cover.append(_project(w, p["point"], u, v))
+        if cover:
+            cov = unary_union(cover).buffer(0.5)
+            q = fc[faces] - p["point"]
+            from shapely import contains_xy
+            faces = faces[~contains_xy(cov, q @ u, q @ v)]
+        if len(faces) < 5 or mesh.area_faces[faces].sum() < 15:
+            continue
+        orig = fc[faces] - n * 0.05
+        dirs = np.repeat(-n[None], len(faces), axis=0)
         try:
             loc, ri, ti = mesh.ray.intersects_location(orig, dirs, multiple_hits=False)
         except Exception:  # noqa: BLE001
             continue
-        if len(ri) < 0.5 * len(pick):
+        d = np.full(len(faces), np.inf)
+        d[ri] = np.einsum("ij,j->i", orig[ri] - loc, n)
+        d[ri[fn[ti] @ n > -0.5]] = np.inf
+        ok = (d > 0.6) & (d < max_thick)
+        if ok.sum() < 0.5 * len(faces):
             continue
-        d = np.einsum("ij,j->i", orig[ri] - loc, n)
-        ok = (fn[ti] @ n < -0.5) & (d > 0.6) & (d < max_thick)
-        if ok.sum() < 0.5 * len(pick):
+        # лучи, попавшие в рёбра и стыки, дают толщину больше настоящей: берём самую
+        # частую толщину (пик гистограммы с шагом 0,25 мм), а не среднюю
+        h, e = np.histogram(d[ok], bins=np.arange(0.6, max_thick + 0.25, 0.25))
+        t = float(np.median(d[ok & (np.abs(d - e[h.argmax()] - 0.125) < 0.5)]))
+        # только те треугольники, за которыми эта же стенка (а не стык с другой)
+        faces = faces[ok]
+        if len(faces) < 5:
             continue
-        t = float(np.median(d[ok]))
-        u, v = frames[k]
         g = _outline(mesh, faces, p["point"], u, v)
         if g.area < 15:
             continue

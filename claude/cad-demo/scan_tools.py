@@ -93,6 +93,7 @@ class ScanTools:
     def __init__(self, mesh: trimesh.Trimesh):
         self.mesh = mesh
         self.calls: list[dict] = []
+        self.verbose = False  # печатать каждый запрос ИИ в журнал (для наблюдения вживую)
 
     # ---- инструменты ----
     def mesh_overview(self) -> dict:
@@ -218,4 +219,10 @@ class ScanTools:
         if len(s) > MAX_CHARS:
             s = s[:MAX_CHARS] + ' …(обрезано, сузьте запрос)"'
         self.calls.append({"tool": name, "args": args, "chars": len(s)})
+        if self.verbose:
+            import time
+
+            short = ", ".join(f"{k}={v}" for k, v in (args or {}).items())[:90]
+            print(time.strftime("%H:%M:%S") + f"     ИИ → {name}({short})" + (" ОШИБКА" if '"error"' in s[:40] else ""),
+                  flush=True)
         return s

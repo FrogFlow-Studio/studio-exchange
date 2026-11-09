@@ -435,6 +435,7 @@ def main() -> None:
         import scan_tools
 
         tools = scan_tools.ScanTools(scan)
+        tools.verbose = True
         prov.max_tool_calls = a.max_tool_calls
         mode_label += " · ИИ сам смотрит сетку скана инструментами, без картинок"
         log(f"    ИИ смотрит сетку скана сам: {len(scan_tools.TOOLS)} инструментов, до {a.max_tool_calls} вызовов на попытку")

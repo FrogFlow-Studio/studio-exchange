@@ -154,6 +154,27 @@ def break_part(part, rng):
     return part.cut(br)
 
 
+def fracture(m: trimesh.Trimesh, truth: trimesh.Trimesh, rng) -> trimesh.Trimesh:
+    """Излом шероховатый, а не ровный срез: поверхность скола (точки дальше 0.05 мм от
+    целой детали) гуляет по нормали на 0.1–0.4 мм плавными буграми.
+    Без этого скол по сетке неотличим от фрезерованного выреза (живой тест 2, 09.11)."""
+    m2 = m.copy()
+    _, dv, _ = trimesh.proximity.closest_point(truth, m2.vertices)
+    on = dv > 0.05
+    if not on.any():
+        return m
+    amp = float(rng.uniform(0.3, 0.7))
+    x = m2.vertices[on]
+    bump = np.zeros(len(x))
+    for _ in range(6):
+        k = rng.normal(size=3)
+        k *= 2 * np.pi / float(rng.uniform(3.0, 8.0)) / np.linalg.norm(k)
+        bump += np.sin(x @ k + rng.uniform(0, 2 * np.pi))
+    nv = m2.vertex_normals[on]
+    m2.vertices[on] = x + nv * (amp * bump / 3)[:, None]
+    return m2
+
+
 def make(seed: int, d: Path):
     rng = np.random.default_rng(seed)
     fams = [f for f in FAMILIES if f.__name__ in ONLY] if ONLY else FAMILIES
@@ -163,6 +184,7 @@ def make(seed: int, d: Path):
     cq.exporters.export(part, str(d / "truth.stl"), tolerance=0.02, angularTolerance=0.1)
     cq.exporters.export(broken, str(d / "broken.stl"), tolerance=0.02, angularTolerance=0.1)
     m = trimesh.load(d / "broken.stl").subdivide_to_size(float(rng.uniform(1.5, 3.0)))
+    m = fracture(m, trimesh.load(d / "truth.stl"), rng)
     m.vertices += rng.normal(0, float(rng.uniform(0.01, 0.06)), m.vertices.shape)
     T = trimesh.transformations.random_rotation_matrix(rng.random(3))
     T[:3, 3] = rng.uniform(-200, 200, 3)
@@ -256,38 +278,42 @@ def main():
     import os
     import subprocess as sp
 
-    if wargs:  # дочерний процесс: свои детали по очереди, строки в файл
-        part, of, outf = int(wargs[1]), int(wargs[2]), wargs[3]
+    if wargs:  # дочерний процесс: одна деталь (по номеру part в списке), строка в файл
+        part, outf = int(wargs[1]), wargs[3]
         with open(outf, "w", encoding="utf-8") as fh:
-            for k, t in enumerate(tasks):
-                if k % of == part:
-                    fh.write(json.dumps(one(t), ensure_ascii=False) + "\n")
-                    fh.flush()
+            fh.write(json.dumps(one(tasks[part]), ensure_ascii=False) + "\n")
         return
-    # Параллельно — отдельными процессами, каждый со своей долей деталей. (Пул
-    # multiprocessing однажды зависал насмерть после ~14 деталей.)
+    # Каждая деталь в своём процессе, до jobs одновременно. Упавший процесс теряет только
+    # свою деталь, а причина (код выхода, конец stderr) попадает в отчёт. Раньше процесс
+    # вёл треть деталей, и его падение молча теряло все оставшиеся (bench-600-36: 15 из 36).
     env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1")
     base = [sys.executable, str(Path(__file__).resolve()), str(n), str(seed0)] + ([",".join(only)] if only else [])
-    files = [Path(tmp) / f"w{i}.jsonl" for i in range(jobs)]
-    procs = [sp.Popen(base + ["--worker", str(i), str(jobs), str(f)], env=env, stderr=sp.DEVNULL) for i, f in enumerate(files)]
-    seen: set = set()
-    while True:
-        alive = any(p.poll() is None for p in procs)
-        for f in files:
-            if f.exists():
-                for line in f.read_text(encoding="utf-8").splitlines():
-                    row = json.loads(line)
-                    if row["seed"] in seen:
-                        continue
-                    seen.add(row["seed"])
-                    rows.append(row)
-                    print(f"{row['seed']}: {row['skip']}, пропуск" if "skip" in row else json.dumps(row, ensure_ascii=False), flush=True)
-        if not alive:
-            break
-        time.sleep(2)
-    for t in tasks:  # деталь, которую процесс так и не отдал (упал) — тоже в отчёт
-        if t[0] not in seen:
-            rows.append({"seed": t[0], "family": "?", "part": "?", "error": "процесс проверки упал"})
+    queue = list(range(len(tasks)))
+    running: dict = {}
+    while queue or running:
+        while queue and len(running) < jobs:
+            k = queue.pop(0)
+            f, ef = Path(tmp) / f"r{k}.jsonl", Path(tmp) / f"r{k}.err"
+            p = sp.Popen(base + ["--worker", str(k), "1", str(f)], env=env, stderr=open(ef, "w"))
+            running[k] = (p, f, ef, time.time())
+        for k, (p, f, ef, t0) in list(running.items()):
+            if p.poll() is None and time.time() - t0 < 900:
+                continue
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+            del running[k]
+            seed = tasks[k][0]
+            if f.exists() and f.read_text(encoding="utf-8").strip():
+                row = json.loads(f.read_text(encoding="utf-8").splitlines()[0])
+            else:
+                tail = ef.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-3:] if ef.exists() else []
+                why = "убит (нехватка памяти?)" if p.returncode in (-9, 137) else f"код выхода {p.returncode}"
+                row = {"seed": seed, "family": "?", "part": "?",
+                       "error": f"процесс проверки упал: {why}; " + " | ".join(tail)[-400:]}
+            rows.append(row)
+            print(f"{row['seed']}: {row['skip']}, пропуск" if "skip" in row else json.dumps(row, ensure_ascii=False), flush=True)
+        time.sleep(1)
     rows.sort(key=lambda r: r["seed"])
     skipped = len([r for r in rows if "skip" in r])
     rows_g = [r for r in rows if "skip" not in r]

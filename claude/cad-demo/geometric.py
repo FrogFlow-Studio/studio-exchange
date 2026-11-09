@@ -72,7 +72,10 @@ def _restore_outer(outer: Polygon, notes: list[str], z: float) -> Polygon:
         if 0.88 < iou < 0.98:
             m = (sh_translate(sh_scale(res, -1, 1, origin=(0, 0)), 2 * c, 0) if axis == "x"
                  else sh_translate(sh_scale(res, 1, -1, origin=(0, 0)), 0, 2 * c))
-            res = unary_union([res, m]).buffer(0.05).buffer(-0.05)
+            u = unary_union([res, m]).buffer(0.05).buffer(-0.05)
+            if u.geom_type != "Polygon":  # зеркальная копия не срослась — не трогаем контур
+                continue
+            res = u
             notes.append(f"Z≈{z:.1f}: контур симметричен относительно {'X=' if axis == 'x' else 'Y='}{c:.2f} "
                          f"(совпадение {iou*100:.0f}%): недостающая часть дополнена зеркально")
     return res

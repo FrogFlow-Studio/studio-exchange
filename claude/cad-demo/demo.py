@@ -101,6 +101,54 @@ def importmap() -> str:
                                    "three/addons/loaders/STLLoader.js": url("STLLoader.js")}})
 
 
+def dims_table(sheet: dict) -> str:
+    """Таблица размеров по скану для сверки штангенциркулем (можно распечатать)."""
+    e = html.escape
+    rows, seen = [], set()
+    lo, hi = sheet["bounds_mm"]
+    rows.append(("Габарит X × Y × Z", f"{hi[0]-lo[0]:.2f} × {hi[1]-lo[1]:.2f} × {hi[2]-lo[2]:.2f}", "с учётом скола"))
+    for p in sheet["horizontal_planes"]:
+        if p["facing"] == "смотрит вверх":
+            rows.append(("Высота площадки от опорной плоскости", f"{p['z_mm']:.2f}", ""))
+    for sec in sheet["sections"]:
+        for reg in sec["regions"]:
+            o = reg["outer"]
+            if o.get("shape") == "окружность":
+                k = ("o", round(o["diameter"]))
+                if k not in seen:
+                    seen.add(k)
+                    rows.append(("Наружный Ø", f"{o['diameter']:.2f}", f"на высоте {sec['z_mm']}"))
+            elif o.get("partial_circle"):
+                k = ("o", round(o["partial_circle"]["diameter"]))
+                if k not in seen:
+                    seen.add(k)
+                    rows.append(("Наружный Ø (по уцелевшей дуге)", f"{o['partial_circle']['diameter']:.2f}", f"на высоте {sec['z_mm']}"))
+            for h in reg["inner"]:
+                d = h.get("diameter") or (h.get("partial_circle") or {}).get("diameter")
+                c = h.get("center_xy") or (h.get("partial_circle") or {}).get("center_xy")
+                if not d:
+                    continue
+                k = ("h", round(d), round(c[0]), round(c[1]))
+                if k not in seen:
+                    seen.add(k)
+                    rows.append(("Отверстие Ø" + (" (с пазом)" if h.get("partial_circle") else ""), f"{d:.2f}", f"центр {c}"))
+            for pat in reg.get("hole_patterns", []):
+                k = ("p", pat["pattern"], round(pat["hole_diameter"]))
+                if k in seen:
+                    continue
+                seen.add(k)
+                if pat.get("pcd_diameter"):
+                    rows.append(("Диаметр окружности центров отверстий", f"{pat['pcd_diameter']:.2f}",
+                                 f"{pat['likely_total']} отв., шаг {360 / pat['likely_total']:.0f}°"))
+                if pat.get("sides_mm"):
+                    rows.append(("Межосевые отверстий (прямоугольник)", " × ".join(f"{v:.2f}" for v in pat["sides_mm"]), ""))
+    body = "".join(f"<tr><td>{e(a)}</td><td><b>{e(b)}</b></td><td>{e(c)}</td><td class=chk></td></tr>" for a, b, c in rows)
+    return (f"<section><h2>Размеры для сверки штангенциркулем</h2><p class=small>Посчитаны по скану, мм. "
+            f"Шум скана ~{sheet['diagnostics'].get('noise_mm', 0)} мм. Последний столбец — для отметки инженера "
+            f"(страницу можно распечатать).</p><table><tr><th>Что</th><th>По скану</th><th>Где</th><th>Замер</th></tr>"
+            f"{body}</table></section>")
+
+
 def write_report(out: Path, ctx: dict) -> Path:
     e = html.escape
     its = ctx["iterations"]
@@ -140,23 +188,40 @@ def write_report(out: Path, ctx: dict) -> Path:
     viewer = ""
     if best and (out / "model.stl").exists():
         pts = best["cmp"]["_scan_pts"][::2]
-        viewer = f"""<section><h2>3D: модель и точки скана</h2><div id=v></div>
-<p class=small>Крутить мышью. Полупрозрачная: модель. Точки: скан (красные — модели не хватает материала, синие — скол).</p>
+        dev = best["cmp"]["_scan_dev"][::2]
+        tol = ctx["tol"]
+        mdl = trimesh.load(out / "model.stl", force="mesh")
+        scan_m = ctx["scan_mesh"]
+        _, dist, _ = trimesh.proximity.closest_point(scan_m, mdl.triangles_center)
+        tri = mdl.triangles.reshape(-1, 3).astype(np.float32)
+        fc = np.where(dist[:, None] > tol, [[0.13, 0.72, 0.36]], [[0.50, 0.64, 0.84]]).astype(np.float32)
+        col = np.repeat(fc, 3, axis=0)
+        pc = np.where(dev[:, None] < -tol, [[0.85, 0.1, 0.1]], np.where(dev[:, None] > tol, [[0.1, 0.3, 0.95]], [[0.3, 0.3, 0.3]])).astype(np.float32)
+        f32 = lambda x: base64.b64encode(np.ascontiguousarray(x, dtype=np.float32).tobytes()).decode()
+        added_pct = float((mdl.area_faces[dist > tol]).sum() / mdl.area * 100)
+        viewer = f"""<section><h2>3D: что было в скане и что достроено</h2>
+<div class=vbtns><button data-v=both class=on>Обе</button><button data-v=scan>Только скан</button><button data-v=model>Только модель</button></div>
+<div id=v></div>
+<p class=small>Крутить мышью, колесо — приблизить. <b style="color:#21b85c">Зелёным</b> — поверхности модели, которых в скане нет
+(достроено, {added_pct:.0f}% площади). Точки — скан: красные — модели там не хватает материала, синие — скол.</p>
 <script type=importmap>{importmap()}</script>
 <script type=module>
-import * as THREE from 'three';import {{OrbitControls}} from 'three/addons/controls/OrbitControls.js';import {{STLLoader}} from 'three/addons/loaders/STLLoader.js';
-const el=document.getElementById('v');const r=new THREE.WebGLRenderer({{antialias:true}});r.setSize(el.clientWidth,480);el.appendChild(r.domElement);
-const s=new THREE.Scene();s.background=new THREE.Color(0xf4f5f7);const cam=new THREE.PerspectiveCamera(40,el.clientWidth/480,0.1,5000);
-s.add(new THREE.HemisphereLight(0xffffff,0x8899aa,2.2));const dl=new THREE.DirectionalLight(0xffffff,1.5);dl.position.set(50,-80,120);s.add(dl);
-const bin=Uint8Array.from(atob("{b64(out / 'model.stl')}"),c=>c.charCodeAt(0)).buffer;
-const g=new STLLoader().parse(bin);const m=new THREE.Mesh(g,new THREE.MeshStandardMaterial({{color:0x7fa6d6,transparent:true,opacity:0.55,metalness:0.1,roughness:0.6}}));s.add(m);
-const P={json.dumps(np.round(pts, 2).tolist())};const D={json.dumps(np.round(best['cmp']['_scan_dev'][::2], 3).tolist())};const tol={ctx['tol']};
-const pg=new THREE.BufferGeometry();pg.setAttribute('position',new THREE.Float32BufferAttribute(P.flat(),3));
-pg.setAttribute('color',new THREE.Float32BufferAttribute(D.flatMap(d=>d<-tol?[0.85,0.1,0.1]:d>tol?[0.1,0.3,0.95]:[0.25,0.25,0.25]),3));
-s.add(new THREE.Points(pg,new THREE.PointsMaterial({{size:0.6,vertexColors:true}})));
+import * as THREE from 'three';import {{OrbitControls}} from 'three/addons/controls/OrbitControls.js';
+const f32=b=>new Float32Array(Uint8Array.from(atob(b),c=>c.charCodeAt(0)).buffer);
+const el=document.getElementById('v');const W=()=>el.clientWidth;const r=new THREE.WebGLRenderer({{antialias:true}});r.setPixelRatio(window.devicePixelRatio||1);r.setSize(W(),480);el.appendChild(r.domElement);
+const s=new THREE.Scene();s.background=new THREE.Color(0xf4f5f7);const cam=new THREE.PerspectiveCamera(40,W()/480,0.1,5000);
+s.add(new THREE.HemisphereLight(0xffffff,0x8899aa,2.0));const dl=new THREE.DirectionalLight(0xffffff,1.6);dl.position.set(50,-80,120);s.add(dl);
+const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(f32("{f32(tri)}"),3));g.setAttribute('color',new THREE.BufferAttribute(f32("{f32(col)}"),3));g.computeVertexNormals();
+const mm=new THREE.MeshStandardMaterial({{vertexColors:true,transparent:true,opacity:0.6,metalness:0.1,roughness:0.6,side:THREE.DoubleSide}});const m=new THREE.Mesh(g,mm);s.add(m);
+const pg=new THREE.BufferGeometry();pg.setAttribute('position',new THREE.BufferAttribute(f32("{f32(pts)}"),3));pg.setAttribute('color',new THREE.BufferAttribute(f32("{f32(pc)}"),3));
+const p=new THREE.Points(pg,new THREE.PointsMaterial({{size:0.7,vertexColors:true}}));s.add(p);
 g.computeBoundingSphere();const c=g.boundingSphere.center,R=g.boundingSphere.radius;cam.up.set(0,0,1);cam.position.set(c.x+R*1.6,c.y-R*2.0,c.z+R*1.4);
 const oc=new OrbitControls(cam,r.domElement);oc.target.copy(c);oc.update();(function a(){{requestAnimationFrame(a);r.render(s,cam);}})();
+document.querySelectorAll('.vbtns button').forEach(b=>b.onclick=()=>{{document.querySelectorAll('.vbtns button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+const v=b.dataset.v;m.visible=v!=='scan';p.visible=v!=='model';mm.opacity=v==='model'?1:0.6;mm.transparent=v!=='model';mm.needsUpdate=true;}});
+addEventListener('resize',()=>{{r.setSize(W(),480);cam.aspect=W()/480;cam.updateProjectionMatrix();}});
 </script></section>"""
+    dims = dims_table(ctx["sheet"])
     page = f"""<!doctype html><html lang=ru><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>Скан → CAD: отчёт</title><style>
 :root{{--bg:#fff;--fg:#1d2330;--mut:#5b6474;--line:#e3e6eb;--acc:#2f6fd6;--warn:#b3261e;--ok:#1e7d3c}}
@@ -166,7 +231,8 @@ h1{{font-size:24px;margin:.2em 0}}h2{{font-size:19px;margin-top:1.6em;border-bot
 .mode.live{{background:#dff3e4}}table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;font-size:14px}}
 tr.best td{{background:#eef5ff;font-weight:600}}img{{max-width:100%}}pre{{background:#f6f7f9;padding:10px;overflow:auto;font-size:12.5px}}
 .err{{color:var(--warn)}}.small{{color:var(--mut);font-size:13px}}.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}}
-.card{{border:1px solid var(--line);border-radius:8px;padding:10px}}.card b{{font-size:20px;display:block}}#v{{width:100%;height:480px;border:1px solid var(--line)}}
+.card{{border:1px solid var(--line);border-radius:8px;padding:10px}}.vbtns{{margin:6px 0}}.vbtns button{{border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 12px;margin-right:6px;cursor:pointer;font:inherit}}.vbtns button.on{{background:var(--acc);color:#fff;border-color:var(--acc)}}
+.chk{{width:70px}}@media print{{#v,.vbtns,details,a.btn{{display:none}}}}.card b{{font-size:20px;display:block}}#v{{width:100%;height:480px;border:1px solid var(--line)}}
 a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:6px;background:var(--acc);color:#fff;text-decoration:none}}
 </style></head><body>
 <h1>Скан повреждённой детали → CAD-модель</h1>
@@ -190,6 +256,7 @@ a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:
 <h3>Проверить инженеру</h3><ul>{lst(meta.get('check_by_engineer'))}</ul>
 <p class=small>Модель — черновик для инженера. Производственное решение принимает человек, проверив размеры по детали (при желании в КОМПАС-3D или SolidWorks).</p></section>
 {viewer}
+{dims}
 <section><h2>Журнал попыток</h2><table><tr><th>#</th><th>Результат</th><th>В допуске</th><th>Не хватает</th><th>95% точек ближе, мм</th><th>Время</th></tr>{''.join(rows)}</table>
 {''.join(blocks)}</section>
 <section><h2>Скан</h2><p>Граней {d['faces']}, замкнут: {'да' if d['watertight'] else 'нет'}, кусков: {d['components']}, габарит {d['extents_mm']} мм.
@@ -348,7 +415,7 @@ def main() -> None:
         "iterations": iterations, "best": best, "sheet": sheet, "mode": mode, "mode_label": mode_label,
         "started": started.strftime("%d.%m.%Y %H:%M"), "scan_name": Path(a.scan).name, "tol": a.tol,
         "target": a.target, "converged": converged, "total_s": time.time() - t_all, "truth": truth,
-        "test_label": test_label})
+        "test_label": test_label, "scan_mesh": scan})
     log(f"готово: {rep}")
     if not a.no_open:
         import webbrowser

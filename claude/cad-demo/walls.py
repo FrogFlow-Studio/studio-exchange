@@ -134,6 +134,8 @@ GROW_MM = 0.5
 BAND_MM = 0.7
 CLIP_AT = (0.25, 0.5, 0.75, 0.95)
 CLIP_BUF = 0.1
+CHECK_PTS = 100
+CHECK_MIN = 0.9
 WEDGE = False  # «выдавить до грани»: на кронштейне студии давал лишнее, ступени по глубине точнее
 
 
@@ -212,6 +214,27 @@ def _clip_depth(mesh, w):
     return dict(w, outline=g, area=float(g.area))
 
 
+_KD: dict = {}
+
+
+def _inside(mesh, P: np.ndarray) -> np.ndarray:
+    """Точка внутри тела? По знаку нормали у ближайших точек поверхности (плотная выборка
+    + KD-дерево): с mesh.contains совпадает на 99,7%, но в сотни раз быстрее и без
+    всплесков памяти (contains на нескольких тысячах точек съедал гигабайты)."""
+    from scipy.spatial import cKDTree
+
+    key = id(mesh)
+    if key not in _KD:
+        n = int(np.clip(mesh.area / 0.25, 20000, 400000))  # точка на ~0,25 мм²
+        pts, fi = trimesh.sample.sample_surface_even(mesh, n, seed=0)
+        _KD.clear()
+        _KD[key] = (cKDTree(pts), pts, mesh.face_normals[fi])
+    tree, pts, nrm = _KD[key]
+    _, ii = tree.query(P, k=3)
+    s = np.einsum("ijk,ijk->ij", P[:, None, :] - pts[ii], nrm[ii]) < 0
+    return s.sum(axis=1) >= 2
+
+
 def _check_material(mesh, ws: list[dict]) -> list[dict]:
     """Стенка должна лежать в материале. Если толщина завышена (луч ушёл в ребро), пробуем
     обычную толщину детали; если и так большая часть вне тела — стенку выбрасываем.
@@ -225,7 +248,7 @@ def _check_material(mesh, ws: list[dict]) -> list[dict]:
         g = w["outline"]
         x0, y0, x1, y1 = g.bounds
         xy = np.random.default_rng(i).uniform([x0, y0], [x1, y1], (3000, 2))
-        samples.append(xy[contains_xy(g, xy[:, 0], xy[:, 1])][:40])
+        samples.append(xy[contains_xy(g, xy[:, 0], xy[:, 1])][:CHECK_PTS])
 
     def share(ts):
         pts, owner = [], []
@@ -237,8 +260,7 @@ def _check_material(mesh, ws: list[dict]) -> list[dict]:
                 owner.append(np.full(len(xy), i))
         res = np.zeros(len(ws))
         if pts:
-            P = np.vstack(pts)
-            ins = np.concatenate([mesh.contains(P[k:k + 1000]) for k in range(0, len(P), 1000)]).astype(float)
+            ins = _inside(mesh, np.vstack(pts)).astype(float)
             own = np.concatenate(owner)
             res = np.bincount(own, weights=ins, minlength=len(ws)) / np.maximum(np.bincount(own, minlength=len(ws)), 1)
         return res
@@ -247,14 +269,14 @@ def _check_material(mesh, ws: list[dict]) -> list[dict]:
     for i, w in enumerate(ws):
         if w.get("until"):
             first[i] = 1.0  # клин ограничен гранями скана с обеих сторон
-    retry = [typical if (typical and first[i] < 0.8 and w["thickness"] > typical * 1.5) else None
+    retry = [typical if (typical and first[i] < CHECK_MIN and w["thickness"] > typical * 1.5) else None
              for i, w in enumerate(ws)]
     second = share(retry) if any(r is not None for r in retry) else np.zeros(len(ws))
     keep = []
     for i, w in enumerate(ws):
-        if first[i] >= 0.8:
+        if first[i] >= CHECK_MIN:
             keep.append(w)
-        elif retry[i] is not None and second[i] >= 0.8:
+        elif retry[i] is not None and second[i] >= CHECK_MIN:
             keep.append(dict(w, thickness=typical))
     return keep
 

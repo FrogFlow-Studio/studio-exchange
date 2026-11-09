@@ -506,3 +506,210 @@ The first success is not a long feature list. It is proof that the platform can 
 
 **Strategic principle:**  
 *Understand the task. Build the geometry. Validate the result. Empower the engineer.*
+
+
+---
+
+# Strategy update v1.1 — customer evidence and commercial validation
+
+**Update date:** 2026-11-09  
+**Status:** evidence-based refinement; strategic proposal still pending founder approval.  
+**Scope:** incorporates the founder's direct description of the pilot studio and the independent reviews by Север and Компас. It does not imply that technical feasibility, willingness to pay, or a commercial agreement has been proven.
+
+## A. Updated initial customer workflow
+
+The founder has direct prior work experience in the prospective pilot studio. The studio is small, works in 3D, and receives damaged parts. For small or relatively uncomplicated parts, staff currently measure the part with calipers, manually reconstruct its CAD geometry, and 3D-print a replacement.
+
+Additional founder-provided facts:
+- A separate 3D scanner is available at the studio.
+- The scanner is used as part of a workflow that the founder describes as a large camera/sensor unit on a tripod, a handheld scanning instrument, and a smaller setup with a rotating plate. Exact manufacturer, model, capture technology, software and export formats are unknown.
+- Damaged-part reconstruction occurs daily.
+- SolidWorks is the studio's CAD system.
+- The main time-consuming activity is manual geometry construction.
+- Manual work currently takes approximately 1–3 hours per part.
+- Desired workflow: scan → automated reconstruction → engineer review → 3D printing.
+- The studio handles simple and medium-complexity parts.
+
+These are founder-reported observations, not independently audited operational data. The frequency and time range should be measured across a sample of real jobs.
+
+### Initial product wedge
+
+**AI-Assisted Part Reconstruction for small 3D studios and repair-oriented workshops.**
+
+The initial job is not generic "AI CAD". It is to reduce repetitive manual reconstruction work for supported classes of damaged mechanical parts, using an existing scan as geometric evidence and retaining engineer approval before production.
+
+Proposed workflow:
+
+1. Scan the part using the studio's existing equipment.
+2. Export a supported file, initially STL/OBJ; direct scanner integration is not required for the first POC.
+3. Inspect the scan, units, scale, mesh quality, coverage and defects.
+4. Separate observed intact geometry from worn, broken, occluded or missing regions.
+5. Reconstruct supported geometry using deterministic fitting, constraints and explicit assumptions.
+6. Generate a CAD result of a clearly declared type.
+7. Validate geometry, known dimensions and deviations.
+8. Open the result in SolidWorks for engineer review and correction.
+9. Export/hand off the approved model for the studio's existing 3D-printing workflow.
+
+The first deliverable should fit into the studio's current SolidWorks workflow. Native SolidWorks integration is not a first-POC requirement. A STEP handoff is a candidate interface and must be tested in the studio's actual SolidWorks version and workflow.
+
+### What the scan can and cannot establish
+
+A scan provides evidence about visible, captured surfaces. It does not by itself reveal the original geometry of a broken-away feature, hidden/internal surfaces, design intent, material properties or required tolerances.
+
+For each reconstructed region, preserve provenance:
+- observed from scan;
+- measured separately (for example, caliper measurement);
+- inferred from symmetry or repeated geometry;
+- derived from an agreed engineering constraint;
+- assumed by the system and awaiting engineer confirmation.
+
+Never silently turn an assumption into a measured fact. If the original shape is ambiguous, show alternatives or request an engineer decision.
+
+## B. Output contract: three reconstruction modes
+
+A task must declare which result is wanted. These modes are related but not interchangeable:
+
+| Mode | Meaning | Acceptance focus |
+|---|---|---|
+| As-built | Representation of the currently observed physical surface | Agreement with captured, observable geometry |
+| Nominal reconstruction | Idealized intended geometry, correcting wear/damage where justified | Known dimensions, constraints, symmetry and engineer-approved assumptions |
+| Parametric reconstruction | Editable construction recipe with parameters/features | Rebuildability, editable dimensions and stable feature dependencies, in addition to geometric checks |
+
+A STEP solid may be a valid B-rep without a parametric feature history. Do not call it a parametric model unless the delivered artifact actually contains an editable construction recipe/tree and passes a rebuild/edit test.
+
+The engineer or customer selects the intended mode and supplies known dimensions, critical interfaces, tolerances and manufacturing purpose where relevant.
+
+## C. Revised interpretation of advisor reviews
+
+The reviews by Север and Компас correctly identify unresolved issues:
+- reconstruction from noisy or incomplete scans is technically difficult;
+- fit surfaces alone do not establish a valid part topology or design intent;
+- real files and known dimensions are required before choosing algorithms;
+- competitors and existing workflows must be benchmarked;
+- customer willingness to pay, service economics and stop criteria are missing;
+- building a full SaaS platform before proving the geometry engine is premature;
+- file isolation, resource limits, job recovery and permissions are foundational requirements;
+- independent engineering review is necessary.
+
+The founder's new evidence changes one important premise in the reviews: the prospective studio does not merely have occasional access to scans. The founder reports daily damaged-part reconstruction, an available scanner, SolidWorks, manual geometry construction as the bottleneck, and 1–3 hours of manual work per part. This supports keeping reverse engineering as the first product experiment rather than switching the first milestone to text-to-CAD.
+
+It does **not** prove that every daily repair job is scan-based, that all parts are automatable, that the scanner produces suitable mesh files, or that the studio will pay. Those questions remain validation work.
+
+The reviews' warnings about scope, technical risk, competition and commercial validation remain active.
+
+## D. Commercial hypothesis and validation before scaling
+
+Initial buyer hypothesis:
+- small 3D-printing / reverse-engineering studios;
+- repair workshops that recreate unavailable or damaged replacement parts;
+- small manufacturers with recurring low-volume spare-part reconstruction.
+
+Initial value hypothesis: reduce engineer time spent on repetitive geometry construction while preserving control over uncertain design decisions.
+
+Do not publish a price or claim savings until the baseline and assisted workflow are measured. Record for each pilot job:
+- part category and complexity;
+- current manual time, including measurement and CAD cleanup;
+- scan preparation and processing time;
+- engineer review/correction time;
+- percentage of geometry automated;
+- output type and SolidWorks import result;
+- critical dimensions and agreed tolerances;
+- whether the result was accepted for printing;
+- compute, software and human service cost.
+
+Compare three workflows on the same parts where possible:
+1. studio's current manual process;
+2. an available commercial scan-to-CAD tool/workflow;
+3. CAD Intelligence assisted workflow.
+
+Relevant alternatives to investigate include Geomagic Design X / Geomagic, QUICKSURFACE, Mesh2Surface, Creaform VXmodel, and native or add-in workflows in SolidWorks, Fusion and FreeCAD. This is a research list, not a claim that each is a direct substitute for every target part. Verify current features, licensing, file support and hands-on performance using the same source files.
+
+A plausible initial go-to-market path is a **paid reconstruction service / assisted pilot**, where the founder operates the pipeline and an engineer approves the output. A self-service platform follows only when repeatable demand and delivery economics justify it. This is a proposed path, not a committed business model.
+
+## E. Technical and commercial gates
+
+Do not adopt a universal accuracy threshold such as ±0.2 mm for all parts. Acceptance tolerances depend on part function, size, scan quality, material, printer, fit and the engineer's requirements.
+
+Use staged gates:
+
+**Gate 0 — Customer data and workflow**
+- Obtain permission to process 3–5 representative scan files.
+- Obtain known dimensions or caliper measurements for each where possible.
+- Record the intended output and use for each part.
+- Identify scanner make/model, capture software, export formats and units.
+- Confirm the SolidWorks version and preferred handoff format.
+- Measure current manual time on each selected job.
+
+**Gate 1 — Technical feasibility**
+- Select one narrow geometry family based on the actual files.
+- Produce a reproducible pipeline and report.
+- Demonstrate valid CAD geometry and a successful STEP round-trip if STEP is claimed.
+- Compare against scan and independent known dimensions.
+- Explicitly report failures and manual interventions.
+
+**Gate 2 — Engineering usefulness**
+- Engineer can inspect and correct the result in SolidWorks.
+- Engineer records acceptance/rejection and reasons.
+- Measure total assisted time, not only machine processing time.
+- Confirm whether the result is suitable for the agreed print/use case.
+
+**Gate 3 — Commercial signal**
+- Studio confirms the workflow solves a recurring problem.
+- Ask for a specific paid pilot or paid next batch; do not infer willingness to pay from compliments.
+- Calculate full delivery cost, including compute, retries, founder/engineer time and support.
+- Compare the cost and time with the current process and available alternatives.
+
+**Stop / pivot conditions**
+- No representative files or permission can be obtained.
+- The selected class cannot be reconstructed reliably enough for its stated use.
+- Human correction removes the time advantage.
+- Existing tools provide equivalent results at a lower total cost and acceptable workflow friction, with no clear underserved segment.
+- The studio does not confirm a recurring problem or a plausible paid use case after a fair pilot.
+- The effort materially displaces the founder's existing revenue work without a defined time/budget limit.
+
+A failed gate should lead to narrowing the part class, changing the service workflow, testing a different buyer problem, or stopping. It must not be hidden by expanding the feature list.
+
+## F. Revised execution order
+
+1. Customer workflow interview and scanner/software identification.
+2. Collect 3–5 permitted representative files and known measurements.
+3. Audit the inputs and classify part families.
+4. Benchmark the current manual process and at least one relevant existing tool where practical.
+5. Select one tractable geometry family.
+6. Run a deterministic mesh-to-CAD pipeline and validate it.
+7. Test STEP handoff in the studio's SolidWorks workflow.
+8. Run an engineer-reviewed pilot and measure total time saved.
+9. Seek a paid pilot/service order.
+10. Build only the minimal reusable interface and job infrastructure needed by repeated work.
+11. Expand toward Copilot, Agent and the wider platform only after the initial workflow demonstrates repeatability and demand.
+
+This refines the earlier "platform-first" wording: keep platform boundaries and reusable interfaces, but **engine-first and customer-workflow-first in execution**. Do not build authentication, billing, collaboration or a broad dashboard ahead of the first validated job.
+
+## G. Foundational safety and operations
+
+Even a small pilot that handles third-party engineering files needs:
+- explicit permission and purpose limitation;
+- access control and least privilege;
+- isolated processing workers with CPU, RAM, time, file-size and process limits;
+- no arbitrary network access or unrestricted execution of agent-generated code;
+- durable job status, cancellation, bounded retries and recovery;
+- versioned source files, parameters, tool versions and output artifacts;
+- clear retention and deletion rules;
+- resource accounting and a per-job budget;
+- protection against one malformed or oversized file affecting other jobs.
+
+Advanced team management and autoscaling can wait. Basic file and worker safety cannot.
+
+## H. Founder decisions still required
+
+The following remain unapproved until the founder explicitly decides:
+- final product name and public positioning;
+- first supported part family;
+- target tolerances and acceptance rules per application;
+- selected CAD/mesh stack;
+- whether first revenue is service, pilot, subscription or a combination;
+- pricing and available development budget;
+- whether to pursue direct scanner integration;
+- whether the first output needs a parametric feature tree or a validated B-rep is sufficient.
+
+**Updated strategic position:** retain Reverse Engineering as the first experiment because the founder has identified a daily, concrete studio workflow and a real manual bottleneck. Prove a narrow, engineer-approved reconstruction service before investing in the full CAD Intelligence platform.

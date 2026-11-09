@@ -18,7 +18,11 @@ from pathlib import Path
 
 SYSTEM = """Ты инженер-конструктор. Восстанавливаешь CAD-модель повреждённой детали по скану.
 Тебе дают «лист замеров» скана (уже выровненного: опорная плоскость на Z=0, ось X вдоль
-главной стороны, центр в плане в 0,0; всё в мм), иногда фото или эскиз и заметки мастера.
+главной стороны, центр в плане в 0,0; всё в мм), картинку скана с четырёх сторон (видно
+форму и где скол), иногда фото и заметки мастера. После каждой попытки — картинку, где твоя
+модель наложена на скан: серый — совпало, красный — модели не хватает материала (ошибка),
+синий — скан внутри модели (скол, который ты достроил, или модель велика), зелёный — твоя
+достройка там, где скана нет. Смотри на картинки, но размеры бери из чисел.
 
 Задача: написать Python-код на CadQuery, который строит ЦЕЛУЮ деталь, какой она была до
 поломки (замысел конструктора), в той же системе координат, что и скан.
@@ -41,6 +45,18 @@ SYSTEM = """Ты инженер-конструктор. Восстанавлив
  "restored": ["что достроил, чего нет в скане"], "check_by_engineer": ["что проверить штангенциркулем"]}
 ```
 Пиши по-русски."""
+
+TOOLS_NOTE = """
+
+У тебя есть инструменты, которыми ты сам смотришь сетку скана: сечения по X, Y, Z на любой
+высоте, лучи, точки с нормалями в любой области, вписывание плоскости и окружности, ближайшая
+точка поверхности. Картинок нет: форму и скол ищи по самой сетке. Лист замеров — только
+подсказка, проверяй по скану то, в чём сомневаешься (особенно место скола: где поверхности
+нет, что там было по симметрии и соседним граням). Вызовов на одну попытку не больше {limit};
+не повторяй уже сделанные запросы. Когда всё ясно, дай ответ в двух блоках, как сказано выше."""
+
+# Цены за 1 млн токенов (вход, выход), $; кэш: запись 1.25×, чтение 0.1× входа.
+PRICES = {"sonnet": (2.0, 10.0), "opus": (5.0, 25.0), "haiku": (1.0, 5.0)}
 
 
 def first_prompt(sheet: dict, notes: str) -> str:
@@ -90,34 +106,98 @@ def parse(text: str) -> tuple[str, dict]:
     return (code.group(1) if code else ""), info
 
 
+def _images(m: dict) -> list[Path]:
+    """Картинки сообщения: фото детали, виды скана, карта отклонений попытки."""
+    out = list(m.get("images") or [])
+    if m.get("image"):
+        out.insert(0, m["image"])
+    return [Path(p) for p in out if p and Path(p).exists()]
+
+
+def _mt(p: Path) -> str:
+    return "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
+
+
 class Provider:
     label = ""
+    supports_tools = False
 
-    def chat(self, messages: list[dict]) -> str:  # messages: [{"role","content", "image"?}]
+    def chat(self, messages: list[dict], tools=None) -> str:  # messages: [{"role","content", "images"?: [путь, ...]}]
         raise NotImplementedError
 
 
 class Anthropic(Provider):
-    def __init__(self, model: str):
-        import anthropic
+    supports_tools = True
 
-        self.client = anthropic.Anthropic(timeout=240.0, max_retries=0)
+    def __init__(self, model: str, client=None, max_tool_calls: int = 30):
+        if client is None:
+            import anthropic
+
+            client = anthropic.Anthropic(timeout=240.0, max_retries=0)
+        self.client = client
         self.model = model
+        self.max_tool_calls = max_tool_calls
         self.label = f"живой прогон, Anthropic {model}"
+        self.usage = {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0, "requests": 0}
+        self.trace: list[dict] = []  # вызовы инструментов последней попытки
 
-    def chat(self, messages):
+    def cost_usd(self) -> float:
+        pin, pout = next((v for k, v in PRICES.items() if k in self.model), PRICES["sonnet"])
+        u = self.usage
+        return round((u["input"] * pin + u["cache_write"] * pin * 1.25 + u["cache_read"] * pin * 0.1
+                      + u["output"] * pout) / 1e6, 4)
+
+    def _count(self, r) -> None:
+        u = getattr(r, "usage", None)
+        self.usage["requests"] += 1
+        if u is None:
+            return
+        self.usage["input"] += getattr(u, "input_tokens", 0) or 0
+        self.usage["output"] += getattr(u, "output_tokens", 0) or 0
+        self.usage["cache_write"] += getattr(u, "cache_creation_input_tokens", 0) or 0
+        self.usage["cache_read"] += getattr(u, "cache_read_input_tokens", 0) or 0
+
+    def chat(self, messages, tools=None):
         conv = []
         for m in messages:
             content: list = []
-            if m.get("image"):
-                p = Path(m["image"])
-                mt = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
-                content.append({"type": "image", "source": {"type": "base64", "media_type": mt,
+            for p in _images(m):
+                content.append({"type": "image", "source": {"type": "base64", "media_type": _mt(p),
                                                             "data": base64.b64encode(p.read_bytes()).decode()}})
             content.append({"type": "text", "text": m["content"]})
             conv.append({"role": m["role"], "content": content})
-        r = self.client.messages.create(model=self.model, max_tokens=8000, system=SYSTEM, messages=conv)
-        return "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
+        system = SYSTEM + (TOOLS_NOTE.format(limit=self.max_tool_calls) if tools else "")
+        kw: dict = {"model": self.model, "max_tokens": 8000,
+                    "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]}
+        if tools:
+            from scan_tools import TOOLS
+
+            kw["tools"] = TOOLS[:-1] + [dict(TOOLS[-1], cache_control={"type": "ephemeral"})]
+        self.trace = []
+        while True:
+            # кэш на последний блок: каждый следующий запрос цикла читает прошлое из кэша
+            req = [dict(m) for m in conv]
+            last = dict(req[-1]["content"][-1], cache_control={"type": "ephemeral"})
+            req[-1] = {"role": req[-1]["role"], "content": req[-1]["content"][:-1] + [last]}
+            if tools and len(self.trace) >= self.max_tool_calls:
+                kw["tool_choice"] = {"type": "none"}
+            r = self.client.messages.create(messages=req, **kw)
+            self._count(r)
+            if getattr(r, "stop_reason", "") != "tool_use" or not tools:
+                return "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
+            blocks = [b.model_dump(exclude_none=True) if hasattr(b, "model_dump") else dict(b) for b in r.content]
+            conv.append({"role": "assistant", "content": blocks})
+            results = []
+            for b in blocks:
+                if b.get("type") != "tool_use":
+                    continue
+                if len(self.trace) >= self.max_tool_calls:
+                    out = json.dumps({"error": "лимит вызовов на попытку исчерпан, дай ответ"}, ensure_ascii=False)
+                else:
+                    out = tools.call(b["name"], b.get("input") or {})
+                self.trace.append({"tool": b["name"], "input": b.get("input"), "result": out[:2000]})
+                results.append({"type": "tool_result", "tool_use_id": b["id"], "content": out})
+            conv.append({"role": "user", "content": results})
 
 
 class OpenAI(Provider):
@@ -126,15 +206,18 @@ class OpenAI(Provider):
         self.model = model
         self.label = f"живой прогон, OpenAI {model}"
 
-    def chat(self, messages):
+    def chat(self, messages, tools=None):
+        if tools:
+            raise RuntimeError("инструменты сетки пока только для Anthropic")
         conv = [{"role": "system", "content": SYSTEM}]
         for m in messages:
-            if m.get("image"):
-                p = Path(m["image"])
-                mt = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
-                url = f"data:{mt};base64," + base64.b64encode(p.read_bytes()).decode()
-                conv.append({"role": m["role"], "content": [{"type": "text", "text": m["content"]},
-                                                            {"type": "image_url", "image_url": {"url": url}}]})
+            imgs = _images(m)
+            if imgs:
+                parts = [{"type": "text", "text": m["content"]}]
+                for p in imgs:
+                    url = f"data:{_mt(p)};base64," + base64.b64encode(p.read_bytes()).decode()
+                    parts.append({"type": "image_url", "image_url": {"url": url}})
+                conv.append({"role": m["role"], "content": parts})
             else:
                 conv.append({"role": m["role"], "content": m["content"]})
         req = urllib.request.Request(
@@ -153,7 +236,7 @@ class Replay(Provider):
         self.i = 0
         self.label = label
 
-    def chat(self, messages):
+    def chat(self, messages, tools=None):
         if self.i >= len(self.answers):
             raise RuntimeError("в записи больше нет ответов")
         a = self.answers[self.i]

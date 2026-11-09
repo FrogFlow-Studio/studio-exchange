@@ -143,6 +143,59 @@ check("целая плита с тремя отверстиями: четвёр�
       and not any("добавлено" in r for r in tmeta["restored"]), tmeta["restored"])
 check("два тела не принимаются", bool(gates.check(dict(ok_run, solids=2), m_ok, psheet, pscan)))
 
+print("ИИ смотрит сетку сам (инструменты), проверка цикла без сети:")
+import json as _json  # noqa: E402
+import types  # noqa: E402
+
+import llm  # noqa: E402
+import scan_tools  # noqa: E402
+
+
+class _B(dict):
+    __getattr__ = dict.get
+
+    def model_dump(self, exclude_none=False):
+        return dict(self)
+
+
+class _FakeClient:
+    """Отвечает как API: сначала просит сечение и луч, потом даёт код. Запоминает запросы."""
+
+    def __init__(self, final, loop_forever=False):
+        self.final, self.loop, self.reqs = final, loop_forever, []
+        self.messages = self
+
+    def create(self, **kw):
+        self.reqs.append(kw)
+        u = types.SimpleNamespace(input_tokens=1000, output_tokens=200, cache_creation_input_tokens=0,
+                                  cache_read_input_tokens=0)
+        if self.loop and kw.get("tool_choice", {}).get("type") != "none" or (not self.loop and len(self.reqs) == 1):
+            return types.SimpleNamespace(stop_reason="tool_use", usage=u, content=[
+                _B(type="text", text="Посмотрю сечение."),
+                _B(type="tool_use", id=f"t{len(self.reqs)}a", name="section", input={"axis": "z", "value": 4}),
+                _B(type="tool_use", id=f"t{len(self.reqs)}b", name="ray", input={"origin": [-30, 0, 50], "direction": [0, 0, -1]})])
+        return types.SimpleNamespace(stop_reason="end_turn", usage=u, content=[_B(type="text", text=self.final)])
+
+
+bsheet, bscan = sa.measurement_sheet(str(S / "bracket_scan.stl"))
+final = _json.loads((S / "scripted_bracket.json").read_text(encoding="utf-8"))[0]["answer"]
+fc = _FakeClient(final)
+prov = llm.Anthropic("claude-sonnet-5-5", client=fc)
+ans = prov.chat([{"role": "user", "content": "построй"}], tools=scan_tools.ScanTools(bscan))
+tr = fc.reqs[1]["messages"][-1]["content"]
+check("инструменты: ИИ получил ответы сечения и луча на настоящей сетке",
+      len(prov.trace) == 2 and all(b["type"] == "tool_result" for b in tr)
+      and '"contours"' in tr[0]["content"] and '"distance_mm": 42.0' in tr[1]["content"], prov.trace)
+check("инструменты: итоговый ответ с кодом дошёл до конвейера", llm.parse(ans)[0] == llm.parse(final)[0])
+check("инструменты: картинок в запросе нет, инструменты объявлены",
+      "tools" in fc.reqs[0] and not any(b.get("type") == "image" for m in fc.reqs[0]["messages"] for b in m["content"]))
+fc2 = _FakeClient(final, loop_forever=True)
+prov2 = llm.Anthropic("claude-sonnet-5-5", client=fc2, max_tool_calls=4)
+prov2.chat([{"role": "user", "content": "построй"}], tools=scan_tools.ScanTools(bscan))
+check("инструменты: лимит вызовов соблюдается, ИИ вынужден ответить",
+      len(prov2.trace) <= 4 and fc2.reqs[-1].get("tool_choice") == {"type": "none"} and prov2.cost_usd() > 0,
+      (len(prov2.trace), len(fc2.reqs)))
+
 print("Полный цикл: алгоритм без ИИ (попытка 0), затем заготовленные ответы:")
 import re
 

@@ -61,6 +61,42 @@ def score(run: dict, cmp: dict | None) -> float:
     return cmp["within_tol_share"] - 3 * cmp["outside_share"]
 
 
+def render_views(mesh: trimesh.Trimesh, path: Path) -> None:
+    """Скан с четырёх сторон (затенённые грани, оси в мм) — чтобы ИИ видел форму и скол."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    m = mesh
+    if len(m.faces) > 40000:  # для картинки хватит части граней
+        idx = np.random.default_rng(0).choice(len(m.faces), 40000, replace=False)
+        tri, nrm = m.triangles[idx], m.face_normals[idx]
+    else:
+        tri, nrm = m.triangles, m.face_normals
+    light = np.array([0.4, -0.5, 0.75])
+    light /= np.linalg.norm(light)
+    shade = 0.35 + 0.6 * np.clip(nrm @ light, 0, 1)
+    fig = plt.figure(figsize=(10, 9), dpi=90)
+    lo, hi = m.bounds
+    for i, (el, az, name) in enumerate(((28, -60, "общий вид"), (90, -90, "сверху (X вправо, Y вверх)"),
+                                        (0, -90, "спереди (X вправо, Z вверх)"), (0, 0, "сбоку (Y вправо, Z вверх)"))):
+        ax = fig.add_subplot(2, 2, i + 1, projection="3d")
+        ax.add_collection3d(Poly3DCollection(tri, facecolors=np.c_[shade, shade, shade * 1.05].clip(0, 1),
+                                             edgecolor="none"))
+        ax.set_xlim(lo[0], hi[0])
+        ax.set_ylim(lo[1], hi[1])
+        ax.set_zlim(lo[2], hi[2])
+        ax.set_box_aspect(hi - lo + 1e-6)
+        ax.view_init(el, az)
+        ax.set_title(name, fontsize=9)
+        ax.tick_params(labelsize=6)
+    fig.suptitle("Скан (выровнен, мм)", fontsize=10)
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
 def render(cmp: dict, path: Path, title: str) -> None:
     import matplotlib
 
@@ -291,6 +327,11 @@ def main() -> None:
     ap.add_argument("--no-geometric", action="store_true", help="не строить черновик без ИИ (попытка 0)")
     ap.add_argument("--model", help="модель ИИ (по умолчанию: claude-sonnet-5-5 / gpt-4.1)")
     ap.add_argument("--replay", help="llm_log.json для режимов replay/scripted")
+    ap.add_argument("--ai-input", choices=["tools", "sheet"], default="tools",
+                    help="tools: ИИ сам опрашивает сетку скана инструментами (без картинок); "
+                         "sheet: только лист замеров и картинки видов скана")
+    ap.add_argument("--max-tool-calls", type=int, default=30, help="вызовов инструментов на одну попытку ИИ")
+    ap.add_argument("--budget-usd", type=float, default=1.0, help="остановить ИИ, если оценка расхода выше")
     ap.add_argument("--iters", type=int, default=5)
     ap.add_argument("--tol", type=float, default=0.3, help="допуск сравнения, мм")
     ap.add_argument("--target", type=float, default=0.95)
@@ -388,16 +429,37 @@ def main() -> None:
         hint = ("\n\nДля справки: черновик без ИИ (слои по сечениям) совпал со сканом на "
                 f"{c0['within_tol_share']*100:.1f}%. Он копирует форму ступеньками и не знает замысла; "
                 "построй деталь по замыслу. Что черновик восстановил: " + "; ".join(iterations[0]["meta"]["restored"]))
-    messages = [{"role": "user", "content": llm.first_prompt(sheet, a.notes) + hint, "image": a.image}]
+    use_tools = bool(prov and a.ai_input == "tools" and prov.supports_tools)
+    tools = None
+    if use_tools:
+        import scan_tools
+
+        tools = scan_tools.ScanTools(scan)
+        prov.max_tool_calls = a.max_tool_calls
+        mode_label += " · ИИ сам смотрит сетку скана инструментами, без картинок"
+        log(f"    ИИ смотрит сетку скана сам: {len(scan_tools.TOOLS)} инструментов, до {a.max_tool_calls} вызовов на попытку")
+    views = out / "scan_views.png"
+    if prov and not use_tools:
+        render_views(scan, views)
+    messages = [{"role": "user", "content": llm.first_prompt(sheet, a.notes) + hint,
+                 "images": [p for p in (a.image, views if views.exists() else None) if p]}]
     for n in range(1, a.iters + 1 if prov else 1):
         t0 = time.time()
         log(f"2/4 попытка {n}: ИИ пишет модель…")
         try:
-            answer = prov.chat(messages)
+            answer = prov.chat(messages, tools=tools)
         except Exception as ex:  # noqa: BLE001
             log(f"    ИИ не ответил: {type(ex).__name__}: {ex}")
             break
-        llm_log.append({"provider": prov.label, "answer": answer})
+        entry = {"provider": prov.label, "answer": answer}
+        if getattr(prov, "trace", None):
+            entry["tool_calls"] = prov.trace
+            log(f"    ИИ сделал запросов к сетке: {len(prov.trace)} ("
+                + ", ".join(sorted({t['tool'] for t in prov.trace})) + ")")
+        if hasattr(prov, "cost_usd"):
+            entry["usage"] = dict(prov.usage, cost_usd=prov.cost_usd())
+            log(f"    расход пока: ${prov.cost_usd():.3f} ({prov.usage['requests']} запросов)")
+        llm_log.append(entry)
         code, meta = llm.parse(answer)
         messages.append({"role": "assistant", "content": answer})
         log(f"    замысел: {str(meta.get('plan', ''))[:140]}")
@@ -409,7 +471,11 @@ def main() -> None:
         if good(it):
             log(f"    сошлось на попытке {n}")
             break
-        messages.append({"role": "user", "content": it["feedback"]})
+        if hasattr(prov, "cost_usd") and prov.cost_usd() > a.budget_usd:
+            log(f"    стоп: расход ${prov.cost_usd():.2f} больше бюджета ${a.budget_usd}")
+            break
+        messages.append({"role": "user", "content": it["feedback"],  # в режиме tools без картинок
+                         "images": [it["img"]] if it.get("img") and not use_tools else []})
     converged = bool(best and good(best))
 
     (out / "llm_log.json").write_text(json.dumps(llm_log, ensure_ascii=False, indent=1), encoding="utf-8")

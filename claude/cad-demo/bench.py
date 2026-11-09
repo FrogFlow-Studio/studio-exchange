@@ -1,7 +1,7 @@
 """Проверка на случайных деталях: python bench.py [кол-во] [seed] [семейства] [-j 3]
 
-Генерирует случайные детали четырёх семейств (плита с отверстиями и бобышкой,
-фланец, втулка с буртом и пазом, ступенчатый вал-ось), случайно откалывает кусок
+Генерирует случайные детали шести семейств (плита с отверстиями и бобышкой,
+фланец, втулка с буртом и пазом, ступенчатая ось, уголок со стенкой, точёная с конусом), случайно откалывает кусок
 края, добавляет шум сканера и случайно поворачивает. Затем строит модель
 алгоритмом без ИИ и сравнивает с целой деталью до поломки. Так алгоритм нельзя
 подогнать под три известные детали.
@@ -26,6 +26,8 @@ import scan_analysis as sa
 
 
 def r_(rng, a, b, step=0.5):
+    if b < a:  # узкая деталь: верхняя граница ниже нижней (seed 114, нашёл Север)
+        b = a
     return round(float(rng.uniform(a, b)) / step) * step
 
 
@@ -186,7 +188,7 @@ def one(args):
         desc, truth = make(seed, d)
     except Exception as e:  # noqa: BLE001 — неудачная генерация не считается
         return {"seed": seed, "skip": f"генерация не удалась ({type(e).__name__})"}
-    row = {"seed": seed, "part": desc}
+    row = {"seed": seed, "family": desc.split()[0], "part": desc}
     try:
         sheet, scan = sa.measurement_sheet(str(d / "scan.stl"))
         code, meta = geometric.build(scan, sheet)
@@ -198,10 +200,26 @@ def one(args):
             tol = max(0.3, 3 * sheet["diagnostics"].get("noise_mm", 0))
             c_scan = cmpmod.compare(scan, model, tol=tol)
             c_truth = cmpmod.compare(truth, model, tol=tol)
+            c_fixed = cmpmod.compare(truth, model, tol=0.3)
+            # «наивное копирование»: сам сломанный скан как модель. Если метрика даёт ему
+            # высокий балл, она не отличает восстановление от копии скола
+            c_copy = cmpmod.compare(truth, scan, tol=tol)
+            # Главная метрика восстановления: только там, где скан НЕ видел целую деталь
+            # (точки эталона дальше 1 мм от скана — отколотое). Копия скола здесь даёт ~0.
+            tp = c_truth["_scan_pts"]
+            d_scan = trimesh.proximity.closest_point(scan, tp)[1]
+            lost = d_scan > 1.0
+            if lost.sum() >= 20:
+                row["lost_share"] = round(float(lost.mean()), 4)
+                row["restore_fit"] = round(float((np.abs(c_truth["_scan_dev"][lost]) <= tol).mean()), 4)
+                row["restore_fit_copy"] = round(float((np.abs(c_copy["_scan_dev"][lost]) <= tol).mean()), 4)
             row.update(scan_fit=c_scan["within_tol_share"],
                        # симметрично: и эталон близко к модели, и модель не выходит за эталон
                        truth_fit=min(c_truth["within_tol_share"], 1 - c_truth["added_surface_share"]),
-                       truth_p95=c_truth["p95_abs_dev_mm"], restored=len([r for r in meta["restored"] if "ничего" not in r]))
+                       truth_fit_03=min(c_fixed["within_tol_share"], 1 - c_fixed["added_surface_share"]),
+                       copy_fit=min(c_copy["within_tol_share"], 1 - c_copy["added_surface_share"]),
+                       tol=round(tol, 3), truth_p95=c_truth["p95_abs_dev_mm"], truth_max=c_truth["max_abs_dev_mm"],
+                       restored=len([r for r in meta["restored"] if "ничего" not in r]))
         else:
             row["error"] = run.get("error", "")[:120]
     except Exception as e:  # noqa: BLE001
@@ -233,18 +251,49 @@ def main():
         for row in pool.imap(one, tasks):
             if "skip" in row:
                 print(f"{row['seed']}: {row['skip']}, пропуск", flush=True)
-                continue
-            rows.append(row)
+            rows.append(row)  # пропуски тоже в JSON: ничего не теряется молча
             print(json.dumps(row, ensure_ascii=False), flush=True)
-    ok = [r for r in rows if r.get("truth_fit") is not None]
-    print("\nИТОГ:", f"деталей {len(rows)}, построено {len(ok)}")
-    if ok:
-        tf = np.array([r["truth_fit"] for r in ok])
-        print(f"  совпадение с целой деталью: медиана {np.median(tf)*100:.1f}%, худшая {tf.min()*100:.1f}%, "
-              f"≥95%: {(tf >= 0.95).sum()} из {len(ok)}")
-    (Path(__file__).parent / "out").mkdir(exist_ok=True)
-    (Path(__file__).parent / "out" / f"bench-{seed0}-{n}.json").write_text(json.dumps(rows, ensure_ascii=False, indent=1))
+    skipped = len([r for r in rows if "skip" in r])
+    rows_g = [r for r in rows if "skip" not in r]
+    ok = [r for r in rows_g if r.get("truth_fit") is not None and r.get("valid")]
+    bad = [r for r in rows_g if r not in ok]
 
+    def stat(key, rr):
+        v = np.array([r[key] for r in rr])
+        return f"медиана {np.median(v)*100:.1f}%, худшая {v.min()*100:.1f}%, ≥95%: {(v >= 0.95).sum()} из {len(v)}"
+
+    lines = [f"Команда: python bench.py {n} {seed0}" + (f" {','.join(only)}" if only else ""),
+             f"Сгенерировано {len(rows_g)} (генерация не удалась: {skipped}), построено {len(ok)}, "
+             f"не построено или битое тело: {len(bad)}"]
+    if ok:
+        lines += [f"С целой деталью (допуск 0.3 мм или 3× шум): {stat('truth_fit', ok)}",
+                  f"С целой деталью (жёсткий допуск 0.3 мм):   {stat('truth_fit_03', ok)}",
+                  f"Для сравнения, сломанный скан как есть:     {stat('copy_fit', ok)}"]
+        rf = [r for r in ok if "restore_fit" in r]
+        if rf:
+            lines += [f"Только отколотое место (эталон дальше 1 мм от скана), {len(rf)} деталей:",
+                      f"  модель:                {stat('restore_fit', rf)}",
+                      f"  сломанный скан как есть: {stat('restore_fit_copy', rf)}"]
+        for fam in sorted({r["family"] for r in rows_g}):
+            rr = [r for r in ok if r["family"] == fam]
+            nb = len([r for r in bad if r["family"] == fam])
+            if rr:
+                lines.append(f"  {fam}: {stat('truth_fit', rr)}" + (f", не построено {nb}" if nb else ""))
+            elif nb:
+                lines.append(f"  {fam}: не построено {nb}")
+    print("\nИТОГ:\n" + "\n".join(lines))
+    out = Path(__file__).parent / "results"
+    out.mkdir(exist_ok=True)
+    tag = f"bench-{seed0}-{n}" + (f"-{'-'.join(only)}" if only else "")
+    import subprocess
+
+    try:
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+                             cwd=Path(__file__).parent).stdout.strip()
+    except OSError:
+        sha = ""
+    (out / f"{tag}.json").write_text(json.dumps({"commit": sha, "summary": lines, "rows": rows},
+                                                ensure_ascii=False, indent=1), encoding="utf-8")
 
 if __name__ == "__main__":
     main()

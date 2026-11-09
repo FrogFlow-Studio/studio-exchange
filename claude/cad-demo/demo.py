@@ -12,6 +12,7 @@ import base64
 import datetime as dt
 import html
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -40,8 +41,11 @@ def log(msg: str) -> None:
 def run_code(code: str, it_dir: Path, timeout: int = 90) -> dict:
     (it_dir / "model.py").write_text(code, encoding="utf-8")
     try:
+        # код от ИИ не должен видеть ключи и прочие секреты окружения
+        env = {k: v for k, v in os.environ.items()
+               if not any(t in k.upper() for t in ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"))}
         subprocess.run([sys.executable, str(HERE / "cad_runner.py"), str(it_dir / "model.py"), str(it_dir)],
-                       timeout=timeout, capture_output=True, text=True)
+                       timeout=timeout, capture_output=True, text=True, env=env)
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"код считался дольше {timeout} с и был остановлен"}
     p = it_dir / "run.json"
@@ -241,11 +245,11 @@ a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:
 {'<p class=err><b>' + e(ctx['test_label']) + '</b></p>' if ctx.get('test_label') else ''}
 <section><h2>Итог</h2><div class=cards>
 <div class=card>Попыток<b>{len(its)}</b></div>
-<div class=card>Точек скана в допуске {ctx['tol']} мм<b>{(best['cmp']['within_tol_share']*100 if best else 0):.1f}%</b></div>
+<div class=card>Уцелевшей части скана в допуске {ctx['tol']} мм<b>{(best['cmp']['within_tol_share']*100 if best else 0):.1f}%</b></div>
 <div class=card>Модели не хватает материала<b>{(best['cmp']['outside_share']*100 if best else 0):.2f}%</b></div>
 <div class=card>Время<b>{ctx['total_s']:.0f} с</b></div></div>
-<p>{'<b>Модель сошлась со сканом.</b>' if ctx['converged'] else '<b class=err>Не сошлась до цели</b>: смотреть лучшую попытку и замечания.' if best else '<b class=err>Ни одна попытка не дала тела.</b>'}
-Цель: не менее {ctx['target']*100:.0f}% точек в допуске и почти нет мест, где модели не хватает материала. Точки на сколе в допуск не попадают, так и должно быть.</p>
+<p>{'<b>Модель сошлась с уцелевшей частью скана.</b> Это не доказывает, что достроенное место верно: его проверяет инженер.' if ctx['converged'] else '<b class=err>Не сошлась до цели</b>: смотреть лучшую попытку и замечания.' if best else '<b class=err>Ни одна попытка не дала тела.</b>'}
+Цель: не менее {ctx['target']*100:.0f}% точек скана в допуске и почти нет мест, где модели не хватает материала. Точки на сколе в допуск не попадают, так и должно быть.</p>
 {('<a class=btn href="model.step" download>Скачать STEP (КОМПАС-3D, SolidWorks и др.)</a><a class=btn href="model.stl" download>STL (для печати)</a><a class=btn href="model.py" download>Код модели</a>') if best else ''}
 </section>
 {truth_html}

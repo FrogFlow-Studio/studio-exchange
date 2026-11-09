@@ -145,3 +145,96 @@ The result may be a successful limited reconstruction or a well-documented techn
 ## 10. Decision boundaries
 
 The owner decides the product scope and final stack. The AI advisors should recommend, cite primary documentation, state uncertainty and propose small tests. No model should claim it ran a test unless it actually ran it and records environment, command and result.
+
+
+---
+
+## 11. Pilot studio integration and reconstruction semantics
+
+### 11.1 Observed customer workflow
+
+Founder-reported facts about the prospective pilot studio:
+- daily damaged-part reconstruction;
+- simple and medium-complexity parts;
+- a separate 3D scanner is available, exact model unknown;
+- the described equipment appears to include a tripod-mounted camera/sensor unit, a handheld scanning instrument and a smaller rotating-platform setup; this description is insufficient to identify the manufacturer, model or scanning technology;
+- SolidWorks is the studio's CAD system;
+- manual geometry construction is the main bottleneck;
+- current manual effort is approximately 1–3 hours per part;
+- target process is scan → automated reconstruction → engineer review → 3D print.
+
+Treat these as reported workflow facts pending observation and time study. Do not assume every daily repair is scanned or that all scanner outputs are STL/OBJ.
+
+### 11.2 First integration boundary
+
+For the POC, use **file-based integration**, not direct scanner control:
+- identify scanner make/model and capture software;
+- determine available export formats, units, scale and coordinate conventions;
+- export a sample scan to STL/OBJ or another format only after explicitly adding support;
+- preserve the original source file;
+- produce STEP only if a valid B-rep is generated;
+- test the STEP file in the studio's actual SolidWorks version;
+- record import warnings, units, body count, geometry integrity and engineer edits.
+
+Direct scanner SDK integration, live capture, SolidWorks add-ins and automated printer submission are future options, not first-POC dependencies.
+
+### 11.3 Reconstruction task contract
+
+Every run must identify the requested result mode:
+
+- **As-built:** represent observed physical geometry. Do not silently idealize wear.
+- **Nominal:** reconstruct intended/idealized geometry using known dimensions, symmetry, repeated features or engineer-approved constraints.
+- **Parametric:** deliver an editable construction recipe/feature history and verify that changing selected parameters rebuilds the model.
+
+Record geometry provenance by region or feature: scan-observed, separately measured, inferred by symmetry/repetition, constraint-derived, or assumed and awaiting approval.
+
+For missing/broken regions, the system must not infer an original shape solely from an exterior scan. Ask for measurements, a matching part, assembly context or engineer input. Present multiple candidates when ambiguity is material.
+
+### 11.4 Geometry reconstruction stages
+
+Do not treat feature fitting as complete reconstruction. Keep these stages separate:
+1. mesh and scan quality audit;
+2. registration / coordinate and scale determination;
+3. segmentation and primitive/surface hypotheses;
+4. feature relationships and adjacency;
+5. design constraints and known dimensions;
+6. candidate topology / solid construction;
+7. B-rep validity and task-specific checks;
+8. STEP round-trip and target-CAD inspection;
+9. source comparison with observed-region and inferred-region reporting;
+10. engineer correction and acceptance.
+
+LLM may choose among approved strategies, ask questions, interpret diagnostics and orchestrate tools. It must not invent dimensions, tolerances, topology or missing design intent.
+
+### 11.5 Comparison and acceptance method
+
+For every run, preserve:
+- raw scan and processed copy;
+- scale/units source and registration transform;
+- alignment method (best-fit versus engineering datum-based);
+- sampling method and observable scan coverage;
+- source-to-CAD and CAD-to-source distance distributions;
+- mean/median and robust high percentiles;
+- known critical dimensions and independent measurements;
+- regions omitted from comparison and why;
+- geometry provenance and uncertainty reasons.
+
+A partial scan makes whole-model bidirectional distance potentially misleading. Report observed and inferred regions separately. Do not use a low fitting residual as proof that the nominal part is correct. Confidence scores must not be presented as calibrated probabilities unless calibration data exists.
+
+### 11.6 Initial geometry family
+
+Do not lock the first family before auditing real files. Candidate families for a first experiment may include prismatic parts, brackets, spacers, bushings, simple housings, plates with holes, and other parts dominated by planes/cylinders. These are candidates only, not promised supported classes.
+
+### 11.7 Foundational operational safeguards
+
+Before processing third-party files, provide:
+- explicit authorization and purpose limitation;
+- file-size/complexity limits and validation;
+- isolated worker with CPU/RAM/time/process limits;
+- restricted filesystem and no arbitrary network access;
+- no unrestricted execution of model-generated code;
+- durable task status, cancellation and bounded retry;
+- versioned inputs, parameters, tools and outputs;
+- resource budget, retention and deletion controls.
+
+A polished multi-tenant platform is not needed for the POC, but safe handling is required even for a small pilot.

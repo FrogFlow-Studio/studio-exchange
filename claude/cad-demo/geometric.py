@@ -319,6 +319,10 @@ def sloped_planes(mesh: trimesh.Trimesh, noise: float = 0.05) -> list[dict]:
             res = (pts - c) @ nn
             if np.sqrt(np.average(res ** 2, weights=w)) > max(0.12, 2.5 * noise):
                 continue  # не плоскость (скругление, конус) — оставляем слоям
+            # на конусе нормали поворачиваются вокруг оси, на плоскости — нет
+            spread = np.degrees(np.arccos(np.clip(fn[comp] @ nn, -1, 1)))
+            if np.percentile(spread, 90) > 6.0:
+                continue
             # контур грани в её плоскости: объединение треугольников
             ex = np.cross(nn, [0, 0, 1.0])
             ex = ex / np.linalg.norm(ex) if np.linalg.norm(ex) > 1e-6 else np.array([1.0, 0, 0])
@@ -367,6 +371,55 @@ def _slope_code(planes: list[dict], depth: float) -> list[str]:
         lines.append("except Exception:")
         lines.append(f"    pass  # грань {k + 1}: ядро не справилось — оставляем ступеньки")
     return lines
+
+
+def _radius_at(mesh: trimesh.Trimesh, z: float, c, r_ref: float) -> float | None:
+    sec = mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
+    if sec is None:
+        return None
+    P = np.vstack([np.asarray(e.discrete(sec.vertices))[:, :2] for e in sec.entities])
+    P = P[np.abs(np.linalg.norm(P - c, axis=1) - r_ref) < 3.0]  # только внешний контур слоя
+    if len(P) < 12:
+        return None
+    pc = sa.partial_circle(P, tol=0.15)
+    if not pc or np.hypot(*(np.asarray(pc["center_xy"]) - c)) > 0.5:
+        return None
+    return pc["diameter"] / 2
+
+
+def _cone_layer(mesh: trimesh.Trimesh, outer: Polygon, a: float, b: float):
+    """Круглый слой → тело вращения по профилю радиуса, замеренному по высоте слоя
+    через 0.5 мм. Конусы, фаски и скругления идут гладко, а не ступенькой.
+    Возвращает (cx, cy, [(r, z), ...]) или None, если слой не круглый."""
+    pts = np.asarray(outer.exterior.coords)[:-1]
+    if len(pts) < 12:
+        return None
+    c, r_mid, resid = sa.fit_circle(pts)
+    if resid > max(0.4, 0.02 * r_mid) or r_mid < 2:
+        return None
+    k = max(2, int(round((b - a) / 0.5)) + 1)
+    prof = []
+    for z in np.linspace(a + 0.15, b - 0.15, k):
+        r = _radius_at(mesh, float(z), c, r_mid)
+        if r is None:
+            continue
+        prof.append((r, float(z)))
+    if len(prof) < 2:
+        return None
+    rs = np.array([p[0] for p in prof])
+    if np.abs(np.diff(rs)).max() > 1.5:  # скачок радиуса внутри слоя — это не гладкий переход
+        return None
+    # концы слоя — по крайним замерам; почти прямые участки — одной линией
+    prof = [(prof[0][0], a)] + prof + [(prof[-1][0], b)]
+    keep = [prof[0]]
+    for i in range(1, len(prof) - 1):
+        (r0, z0), (r1, z1), (r2, z2) = keep[-1], prof[i], prof[i + 1]
+        t = (z1 - z0) / max(z2 - z0, 1e-9)
+        if abs(r0 + t * (r2 - r0) - r1) > 0.04:
+            keep.append(prof[i])
+    keep.append(prof[-1])
+    return float(c[0]), float(c[1]), [(round(r, 3), round(z, 3)) for r, z in keep]
+
 
 def build(mesh: trimesh.Trimesh, sheet: dict) -> tuple[str, dict]:
     notes: list[str] = []
@@ -465,31 +518,88 @@ def build(mesh: trimesh.Trimesh, sheet: dict) -> tuple[str, dict]:
 
     lines = ["import cadquery as cq", "", "# Построено геометрическим алгоритмом без ИИ: слои по сечениям скана.",
              "parts = []"]
+    n_cones = 0
+    # 1) каждому слою — либо профиль вращения, либо контур для вытягивания
+    items = []
     for L in layers:
+        lap = 0.05 if L is not layers[0] else 0.0  # перекрытие: касание гранями ядро иногда не сливает
         for outer, cuts in L["shapes"]:
-            # слой заходит в нижний на 0.05 мм: касание гранями ядро иногда оставляет
-            # отдельными телами, а перекрытие сливается надёжно
-            lap = 0.05 if L is not layers[0] else 0.0
-            lines.append(f"s = cq.Workplane('XY').workplane(offset={L['a'] - lap:.3f}).polyline({_poly_code(outer)}).close()"
+            cone = _cone_layer(mesh, outer, L["a"] - lap, L["b"]) if len(L["shapes"]) == 1 else None
+            items.append({"L": L, "lap": lap, "outer": outer, "cuts": cuts, "cone": cone})
+    # 2) подряд идущие круглые слои на общей оси — ОДНО тело вращения по общему профилю
+    #    (стопка отдельных тел с осями, разошедшимися на сотые, ядро сливает в мусор)
+    groups_rev, cur = [], []
+    for it in items:
+        if it["cone"] and cur and np.hypot(it["cone"][0] - cur[0]["cone"][0], it["cone"][1] - cur[0]["cone"][1]) < 0.2:
+            cur.append(it)
+            continue
+        if cur:
+            groups_rev.append(cur)
+        cur = [it] if it["cone"] else []
+        if not it["cone"]:
+            groups_rev.append([it])
+    if cur:
+        groups_rev.append(cur)
+
+    def cut_lines(it):
+        L, lap = it["L"], it["lap"]
+        out = []
+        for c in it["cuts"]:
+            if len(json.loads(_poly_code(c, 0.15))) < 3:
+                continue
+            out.append(f"s = s.cut(cq.Workplane('XY').workplane(offset={L['a'] - lap - 0.01:.3f}).polyline({_poly_code(c, 0.15)})"
+                       f".close().extrude({L['b'] - L['a'] + lap + 0.02:.3f}))")
+        return out
+
+    for grp in groups_rev:
+        it0 = grp[0]
+        if it0["cone"]:
+            cx = float(np.median([g["cone"][0] for g in grp]))
+            cy = float(np.median([g["cone"][1] for g in grp]))
+            prof = []
+            for g in grp:
+                pr = g["cone"][2]
+                if len({r for r, _ in pr}) > 1:
+                    n_cones += 1
+                for k, (r, z) in enumerate(pr):
+                    if prof and z <= prof[-1][1] + 1e-6:
+                        if k == 0:  # начало следующего слоя: уступ на границе слоёв
+                            prof.append((r, prof[-1][1]))
+                        continue  # нахлёст слоёв по высоте
+                    prof.append((r, z))
+            if prof[0][1] > it0["L"]["a"] - it0["lap"] + 1e-6:
+                prof.insert(0, (prof[0][0], it0["L"]["a"] - it0["lap"]))
+            pp = [[0.0, prof[0][1]]] + [[r, z] for r, z in prof] + [[0.0, prof[-1][1]]]
+            pp = [q for i, q in enumerate(pp) if i == 0 or abs(q[0] - pp[i - 1][0]) + abs(q[1] - pp[i - 1][1]) > 1e-3]
+            lines.append(f"s = cq.Workplane('XZ').polyline({json.dumps(pp)}).close()"
+                         f".revolve(360, (0, 0, 0), (0, 1, 0)).translate(({cx:.3f}, {cy:.3f}, 0))")
+        else:
+            L, lap = it0["L"], it0["lap"]
+            lines.append(f"s = cq.Workplane('XY').workplane(offset={L['a'] - lap:.3f}).polyline({_poly_code(it0['outer'])}).close()"
                          f".extrude({L['b'] - L['a'] + lap:.3f})")
-            for c in cuts:
-                if len(json.loads(_poly_code(c, 0.15))) < 3:
-                    continue
-                lines.append(f"s = s.cut(cq.Workplane('XY').workplane(offset={L['a'] - lap - 0.01:.3f}).polyline({_poly_code(c, 0.15)})"
-                             f".close().extrude({L['b'] - L['a'] + lap + 0.02:.3f}))")
-            lines.append("parts.append(s)")
-    lines += ["# Слои сливаем по одному; если ядро не справилось — повтор с допуском 0.01 мм",
+        for g in grp:
+            lines += cut_lines(g)
+        lines.append("parts.append(s)")
+    lines += ["# Слои сливаем по одному; если ядро не справилось — повтор с допуском 0.01 мм;",
+              "# если и так получился мусор — этот слой пропускаем (сравнение со сканом это покажет)",
               "result = parts[0]",
               "for p in parts[1:]:",
               "    try:",
               "        nxt = result.union(p)",
               "        assert nxt.val().isValid() and nxt.val().Volume() > result.val().Volume() * 0.999",
               "    except Exception:",
-              "        nxt = result.union(p, tol=0.01)",
+              "        try:",
+              "            nxt = result.union(p, tol=0.01)",
+              "            assert nxt.val().isValid() and nxt.val().Volume() > result.val().Volume() * 0.999",
+              "        except Exception:",
+              "            nxt = result",
               "    result = nxt"]
     slopes = [p for p in sloped_planes(mesh, float(sheet.get("diagnostics", {}).get("noise_mm", 0.05) or 0.05))
               if min(p["in"], p["out"]) >= 0.3]
     lines += _slope_code(slopes, depth=2.5)
+    if n_cones:
+        notes.append(f"Круглые слои с меняющимся радиусом ({n_cones}) построены телом вращения по замеренному профилю: конусы, фаски и "
+                     f"скругления идут гладко, а не ступенькой")
     for p in slopes:
         nz = abs(p["normal"][2])
         notes.append(f"Наклонная грань {p['area']:.0f} мм² (наклон {np.degrees(np.arccos(nz)):.0f}° к горизонту): "

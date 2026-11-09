@@ -1,4 +1,4 @@
-"""Проверка на случайных деталях: python bench.py [кол-во] [seed]
+"""Проверка на случайных деталях: python bench.py [кол-во] [seed] [семейства] [-j 3]
 
 Генерирует случайные детали четырёх семейств (плита с отверстиями и бобышкой,
 фланец, втулка с буртом и пазом, ступенчатый вал-ось), случайно откалывает кусок
@@ -111,7 +111,25 @@ def angle(rng):
     return body, f"уголок {L}×{W}, стенка {H}"
 
 
-FAMILIES = [plate, flange, bushing, shaft, angle]
+def turned(rng):
+    """Точёная деталь: конусный переход, фаски, скругление у буртика (сложно для слоёв)."""
+    D1 = r_(rng, 30, 60)
+    D2 = r_(rng, 14, D1 - 8)
+    h1, hc, h2 = r_(rng, 6, 15), r_(rng, 6, 18), r_(rng, 8, 25)
+    pts = [(0, 0), (D1 / 2, 0), (D1 / 2, h1), (D2 / 2, h1 + hc), (D2 / 2, h1 + hc + h2), (0, h1 + hc + h2)]
+    body = cq.Workplane("XZ").polyline(pts).close().revolve(360, (0, 0, 0), (0, 1, 0))
+    c = r_(rng, 0.8, 2.0)
+    try:
+        body = body.faces(">Z").edges().chamfer(c)
+        body = body.faces("<Z").edges().chamfer(c)
+    except Exception:  # noqa: BLE001
+        pass
+    if rng.random() < 0.6:
+        body = body.faces(">Z").workplane().hole(r_(rng, 4, D2 * 0.5))
+    return body, f"точёная Ø{D1}→Ø{D2}, конус {hc}"
+
+
+FAMILIES = [plate, flange, bushing, shaft, angle, turned]
 
 
 def break_part(part, rng):
@@ -155,46 +173,69 @@ def make(seed: int, d: Path):
 ONLY: list[str] = []
 
 
-def main():
+def one(args):
+    """Одна деталь: генерация, построение без ИИ, сравнение. Отдельно, чтобы детали
+    считались параллельно."""
     global ONLY
-    ONLY = sys.argv[3].split(",") if len(sys.argv) > 3 else []
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else 12
-    seed0 = int(sys.argv[2]) if len(sys.argv) > 2 else 100
-    tmp = Path(tempfile.mkdtemp())
+    seed, only, tmp = args
+    ONLY = only
+    d = Path(tmp) / f"p{seed}"
+    d.mkdir()
+    t0 = time.time()
+    try:
+        desc, truth = make(seed, d)
+    except Exception as e:  # noqa: BLE001 — неудачная генерация не считается
+        return {"seed": seed, "skip": f"генерация не удалась ({type(e).__name__})"}
+    row = {"seed": seed, "part": desc}
+    try:
+        sheet, scan = sa.measurement_sheet(str(d / "scan.stl"))
+        code, meta = geometric.build(scan, sheet)
+        run = demo.run_code(code, d)
+        row["valid"] = bool(run.get("ok") and run.get("valid"))
+        if run.get("ok"):
+            model = trimesh.load(d / "model.stl", force="mesh")
+            truth.apply_transform(np.array(sheet["transform_from_scan_4x4"]))
+            tol = max(0.3, 3 * sheet["diagnostics"].get("noise_mm", 0))
+            c_scan = cmpmod.compare(scan, model, tol=tol)
+            c_truth = cmpmod.compare(truth, model, tol=tol)
+            row.update(scan_fit=c_scan["within_tol_share"],
+                       # симметрично: и эталон близко к модели, и модель не выходит за эталон
+                       truth_fit=min(c_truth["within_tol_share"], 1 - c_truth["added_surface_share"]),
+                       truth_p95=c_truth["p95_abs_dev_mm"], restored=len([r for r in meta["restored"] if "ничего" not in r]))
+        else:
+            row["error"] = run.get("error", "")[:120]
+    except Exception as e:  # noqa: BLE001
+        row["error"] = f"{type(e).__name__}: {e}"[:160]
+    row["sec"] = round(time.time() - t0, 1)
+    return row
+
+
+def main():
+    """python bench.py [кол-во] [seed] [семейства через запятую] [-j потоков]"""
+    import multiprocessing as mp
+    import warnings
+
+    warnings.filterwarnings("ignore")
+    argv = sys.argv[1:]
+    jobs = 3
+    if "-j" in argv:
+        i = argv.index("-j")
+        jobs = int(argv[i + 1])
+        del argv[i:i + 2]
+    n = int(argv[0]) if len(argv) > 0 else 12
+    seed0 = int(argv[1]) if len(argv) > 1 else 100
+    only = argv[2].split(",") if len(argv) > 2 else []
+    tmp = tempfile.mkdtemp()
     rows = []
-    for k in range(n):
-        seed = seed0 + k
-        d = tmp / f"p{seed}"
-        d.mkdir()
-        t0 = time.time()
-        try:
-            desc, truth = make(seed, d)
-        except Exception as e:  # noqa: BLE001 — неудачная генерация не считается
-            print(f"{seed}: генерация не удалась ({type(e).__name__}), пропуск")
-            continue
-        row = {"seed": seed, "part": desc}
-        try:
-            sheet, scan = sa.measurement_sheet(str(d / "scan.stl"))
-            code, meta = geometric.build(scan, sheet)
-            run = demo.run_code(code, d)
-            row["valid"] = bool(run.get("ok") and run.get("valid"))
-            if run.get("ok"):
-                model = trimesh.load(d / "model.stl", force="mesh")
-                truth.apply_transform(np.array(sheet["transform_from_scan_4x4"]))
-                tol = max(0.3, 3 * sheet["diagnostics"].get("noise_mm", 0))
-                c_scan = cmpmod.compare(scan, model, tol=tol)
-                c_truth = cmpmod.compare(truth, model, tol=tol)
-                row.update(scan_fit=c_scan["within_tol_share"],
-                           # симметрично: и эталон близко к модели, и модель не выходит за эталон
-                           truth_fit=min(c_truth["within_tol_share"], 1 - c_truth["added_surface_share"]),
-                           truth_p95=c_truth["p95_abs_dev_mm"], restored=len([r for r in meta["restored"] if "ничего" not in r]))
-            else:
-                row["error"] = run.get("error", "")[:120]
-        except Exception as e:  # noqa: BLE001
-            row["error"] = f"{type(e).__name__}: {e}"[:160]
-        row["sec"] = round(time.time() - t0, 1)
-        rows.append(row)
-        print(json.dumps(row, ensure_ascii=False), flush=True)
+    tasks = [(seed0 + k, only, tmp) for k in range(n)]
+    # каждая деталь в своём процессе (maxtasksperchild=1): память ядра CAD не копится
+    with mp.get_context("spawn").Pool(jobs, maxtasksperchild=1) as pool:
+        for row in pool.imap(one, tasks):
+            if "skip" in row:
+                print(f"{row['seed']}: {row['skip']}, пропуск", flush=True)
+                continue
+            rows.append(row)
+            print(json.dumps(row, ensure_ascii=False), flush=True)
     ok = [r for r in rows if r.get("truth_fit") is not None]
     print("\nИТОГ:", f"деталей {len(rows)}, построено {len(ok)}")
     if ok:

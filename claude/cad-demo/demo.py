@@ -464,6 +464,7 @@ def main() -> None:
         tools = scan_tools.ScanTools(scan)
         tools.verbose = True
         prov.max_tool_calls = a.max_tool_calls
+        prov.budget_usd = a.budget_usd
         mode_label += " · ИИ сам смотрит сетку скана инструментами, без картинок"
         log(f"    ИИ смотрит сетку скана сам: {len(scan_tools.TOOLS)} инструментов, до {a.max_tool_calls} вызовов на попытку")
     views = out / "scan_views.png"
@@ -498,6 +499,10 @@ def main() -> None:
             best = it
         if good(it):
             log(f"    сошлось на попытке {n}")
+            break
+        spent = prov.cost_usd() if hasattr(prov, "cost_usd") else 0.0
+        if spent and spent + spent / n > a.budget_usd:  # следующая попытка в среднем столько же
+            log(f"    стоп: потрачено ${spent:.2f}, ещё одна попытка выйдет за бюджет ${a.budget_usd}")
             break
         if hasattr(prov, "cost_usd") and prov.cost_usd() > a.budget_usd:
             log(f"    стоп: расход ${prov.cost_usd():.2f} больше бюджета ${a.budget_usd}")

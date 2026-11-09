@@ -145,6 +145,7 @@ class Anthropic(Provider):
         self.client = client
         self.model = model
         self.max_tool_calls = max_tool_calls
+        self.budget_usd = 0.0  # если задан, при 70% расхода ИИ больше не зовёт инструменты, а отвечает
         self.label = f"живой прогон, Anthropic {model}"
         self.usage = {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0, "requests": 0}
         self.trace: list[dict] = []  # вызовы инструментов последней попытки
@@ -175,7 +176,7 @@ class Anthropic(Provider):
             content.append({"type": "text", "text": m["content"]})
             conv.append({"role": m["role"], "content": content})
         system = SYSTEM + (TOOLS_NOTE.format(limit=self.max_tool_calls) if tools else "")
-        kw: dict = {"model": self.model, "max_tokens": 8000,
+        kw: dict = {"model": self.model, "max_tokens": 32000,
                     "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]}
         if tools:
             from scan_tools import TOOLS
@@ -187,12 +188,21 @@ class Anthropic(Provider):
             req = [dict(m) for m in conv]
             last = dict(req[-1]["content"][-1], cache_control={"type": "ephemeral"})
             req[-1] = {"role": req[-1]["role"], "content": req[-1]["content"][:-1] + [last]}
-            if tools and len(self.trace) >= self.max_tool_calls:
-                kw["tool_choice"] = {"type": "none"}
-            r = self.client.messages.create(messages=req, **kw)
+            if tools and (len(self.trace) >= self.max_tool_calls or
+                          (self.budget_usd and self.cost_usd() > 0.7 * self.budget_usd)):
+                kw["tool_choice"] = {"type": "none"}  # лимит вызовов или денег: пора отвечать
+            if hasattr(self.client.messages, "stream"):  # длинный ответ: только потоком (ограничение API)
+                with self.client.messages.stream(messages=req, **kw) as st:
+                    r = st.get_final_message()
+            else:
+                r = self.client.messages.create(messages=req, **kw)
             self._count(r)
-            if getattr(r, "stop_reason", "") != "tool_use" or not tools:
-                return "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
+            stop = getattr(r, "stop_reason", "")
+            if stop != "tool_use" or not tools:
+                text = "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
+                if not text.strip():
+                    text = f"(ИИ не дал текста ответа, причина остановки: {stop})"
+                return text
             blocks = [b.model_dump(exclude_none=True) if hasattr(b, "model_dump") else dict(b) for b in r.content]
             conv.append({"role": "assistant", "content": blocks})
             results = []

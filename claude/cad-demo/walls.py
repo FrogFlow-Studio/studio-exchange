@@ -122,6 +122,8 @@ def walls(mesh: trimesh.Trimesh, max_thick: float = 25.0) -> list[dict]:
             out.append({"normal": a["normal"], "origin": a["point"], "u": u, "v": v, "thickness": t,
                         "outline": full, "area": float(full.area)})
     out += _single_sided(mesh, pats, frames, out, max_thick)
+    out = [_clip_depth(mesh, w) for w in out]
+    out = [w for w in out if w["outline"].area >= 15]
     if mesh.is_watertight:
         out = _check_material(mesh, out)
     out = [_grow(mesh, w) for w in out]
@@ -129,12 +131,16 @@ def walls(mesh: trimesh.Trimesh, max_thick: float = 25.0) -> list[dict]:
 
 
 GROW_MM = 0.5
+BAND_MM = 0.7
+CLIP_AT = (0.25, 0.5, 0.75, 0.95)
+CLIP_BUF = 0.1
+WEDGE = False  # «выдавить до грани»: на кронштейне студии давал лишнее, ступени по глубине точнее
 
 
 def _grow(mesh, w):
     """Стенка доходит до соседней: к контуру добавляется материал её среднего сечения в
     полосе GROW_MM вокруг. Без этого на стыках и в скруглениях остаются щели."""
-    if GROW_MM <= 0:
+    if GROW_MM <= 0 or w.get("until"):
         return w
     g = w["outline"]
     mid_o = w["origin"] - w["normal"] * w["thickness"] / 2
@@ -175,6 +181,37 @@ def _mid_section(mesh, origin, n, u, v, t, base):
     return base
 
 
+def _body_at(mesh, w, depth):
+    """Сечение тела плоскостью стенки на глубине depth, в координатах стенки."""
+    o = w["origin"] - w["normal"] * depth
+    sec = mesh.section(plane_origin=o, plane_normal=w["normal"])
+    if sec is None:
+        return None
+    T = np.eye(4)
+    T[:3, :3] = np.vstack([w["u"], w["v"], w["normal"]])
+    T[:3, 3] = -T[:3, :3] @ w["origin"]
+    pl, _ = sec.to_2D(to_2D=T)
+    return unary_union([p.buffer(0) for p in pl.polygons_full])
+
+
+def _clip_depth(mesh, w):
+    """Глубокая стенка (толстое место) не должна выходить из тела у дна: боковые грани
+    толстых мест бывают с уклоном, и прямая призма по контуру верха вылезает наружу.
+    Обрезаем контур по сечениям тела на половине и у дна стенки."""
+    if not w.get("single") or w["thickness"] < 3:
+        return w
+    g = w["outline"]
+    try:
+        for f in CLIP_AT:
+            b = _body_at(mesh, w, w["thickness"] * f)
+            if b is None:
+                return w
+            g = g.intersection(b.buffer(CLIP_BUF))
+    except Exception:  # noqa: BLE001
+        return w
+    return dict(w, outline=g, area=float(g.area))
+
+
 def _check_material(mesh, ws: list[dict]) -> list[dict]:
     """Стенка должна лежать в материале. Если толщина завышена (луч ушёл в ребро), пробуем
     обычную толщину детали; если и так большая часть вне тела — стенку выбрасываем.
@@ -206,7 +243,10 @@ def _check_material(mesh, ws: list[dict]) -> list[dict]:
             res = np.bincount(own, weights=ins, minlength=len(ws)) / np.maximum(np.bincount(own, minlength=len(ws)), 1)
         return res
 
-    first = share([w["thickness"] for w in ws])
+    first = share([None if w.get("until") else w["thickness"] for w in ws])
+    for i, w in enumerate(ws):
+        if w.get("until"):
+            first[i] = 1.0  # клин ограничен гранями скана с обеих сторон
     retry = [typical if (typical and first[i] < 0.8 and w["thickness"] > typical * 1.5) else None
              for i, w in enumerate(ws)]
     second = share(retry) if any(r is not None for r in retry) else np.zeros(len(ws))
@@ -236,50 +276,82 @@ def _single_sided(mesh, pats, frames, paired, max_thick) -> list[dict]:
     точек участка: первое попадание в поверхность, смотрящую навстречу, — другая сторона."""
     out = []
     fc, fn = mesh.triangles_center, mesh.face_normals
+    lab = -np.ones(len(mesh.faces), int)
+    for k, p in enumerate(pats):
+        lab[p["faces"]] = k
     for k, p in enumerate(pats):
         n = p["normal"]
         u, v = frames[k]
         faces = p["faces"]
-        cover = []
+        orig = fc[faces] - n * 0.05
+        dirs = np.repeat(-n[None], len(faces), axis=0)
+        try:
+            loc, ri, ti_ = mesh.ray.intersects_location(orig, dirs, multiple_hits=False)
+        except Exception:  # noqa: BLE001
+            continue
+        d = np.full(len(faces), np.inf)
+        d[ri] = np.einsum("ij,j->i", orig[ri] - loc, n)
+        d[ri[fn[ti_] @ n > -0.5]] = np.inf
+        hit_face = np.full(len(faces), -1)
+        hit_face[ri] = ti_
+        # Закрыт парной стенкой — только если под треугольником и глубина та же: за тонкой
+        # пластиной бывает толстый прилив, и его надо добрать, а не считать готовым.
+        covered = np.zeros(len(faces), bool)
+        q = fc[faces] - p["point"]
+        from shapely import contains_xy
         for w in paired:
             if abs(w["normal"] @ n) < 0.97:
                 continue
             mid = w["origin"] - w["normal"] * w["thickness"] / 2
             if abs((p["point"] - mid) @ w["normal"]) > w["thickness"] / 2 + 0.8:
                 continue
-            cover.append(_project(w, p["point"], u, v))
-        if cover:
-            cov = unary_union(cover).buffer(0.5)
-            q = fc[faces] - p["point"]
-            from shapely import contains_xy
-            faces = faces[~contains_xy(cov, q @ u, q @ v)]
+            inside = contains_xy(_project(w, p["point"], u, v).buffer(0.5), q @ u, q @ v)
+            same = ~np.isfinite(d) | (np.abs(d - w["thickness"]) < max(0.7, 0.3 * w["thickness"]))
+            covered |= inside & same
+        faces, d, hit_face = faces[~covered], d[~covered], hit_face[~covered]
         if len(faces) < 5 or mesh.area_faces[faces].sum() < 15:
             continue
-        orig = fc[faces] - n * 0.05
-        dirs = np.repeat(-n[None], len(faces), axis=0)
-        try:
-            loc, ri, ti = mesh.ray.intersects_location(orig, dirs, multiple_hits=False)
-        except Exception:  # noqa: BLE001
-            continue
-        d = np.full(len(faces), np.inf)
-        d[ri] = np.einsum("ij,j->i", orig[ri] - loc, n)
-        d[ri[fn[ti] @ n > -0.5]] = np.inf
         ok = (d > 0.6) & (d < max_thick)
         if ok.sum() < 0.5 * len(faces):
             continue
-        # лучи, попавшие в рёбра и стыки, дают толщину больше настоящей: берём самую
-        # частую толщину (пик гистограммы с шагом 0,25 мм), а не среднюю
-        h, e = np.histogram(d[ok], bins=np.arange(0.6, max_thick + 0.25, 0.25))
-        t = float(np.median(d[ok & (np.abs(d - e[h.argmax()] - 0.125) < 0.5)]))
-        # только те треугольники, за которыми эта же стенка (а не стык с другой)
-        faces = faces[ok]
-        if len(faces) < 5:
-            continue
-        g = _outline(mesh, faces, p["point"], u, v)
-        if g.area < 15:
-            continue
-        out.append({"normal": n, "origin": p["point"], "u": u, "v": v, "thickness": t,
-                    "outline": g, "area": float(g.area), "single": True})
+        # Клин: лучи упираются в одну и ту же плоскую грань, но на разной глубине (грань не
+        # параллельна). Такой кусок — не пластина, а тело «от грани до грани»: выдавливаем
+        # до противоположной плоскости, а не на одну толщину (иначе внутри остаются карманы).
+        hit = np.where(hit_face >= 0, lab[np.maximum(hit_face, 0)], -1)
+        hb = hit[ok & (hit >= 0) & (hit != k)]
+        if WEDGE and len(hb):
+            b = int(np.bincount(hb).argmax())
+            on_b = ok & (hit == b)
+            nb = pats[b]["normal"]
+            if (on_b.sum() >= 0.6 * ok.sum() and n @ nb > -0.97 and n @ nb < -0.2
+                    and np.ptp(d[on_b]) > 1.5 and on_b.sum() >= 5):
+                g = _outline(mesh, faces[on_b], p["point"], u, v)
+                if g.area >= 15:
+                    out.append({"normal": n, "origin": p["point"], "u": u, "v": v,
+                                "thickness": float(d[on_b].max()) + 1.0, "outline": g,
+                                "area": float(g.area), "single": True,
+                                "until": {"point": pats[b]["point"], "normal": nb}})
+                faces, d = faces[~on_b], d[~on_b]
+                ok = (d > 0.6) & (d < max_thick)
+                if ok.sum() < 5:
+                    continue
+        # Глубина под участком бывает разной (тонкая пластина переходит в толстый прилив).
+        # Ступени по глубине с шагом BAND_MM: ступень j — все треугольники глубже её нижней
+        # границы, выдавленные на её толщину. Ступени вложены, поэтому грань закрыта целиком
+        # (первой ступенью), а толстые места добираются следующими. Одна «типичная» толщина на
+        # весь участок оставляла в толстых местах карманы.
+        band = np.floor(d / BAND_MM)
+        for bv in np.unique(band[ok]):
+            sel = ok & (band == bv)
+            if sel.sum() < 5:
+                continue
+            deeper = ok & (band >= bv)
+            g = _outline(mesh, faces[deeper], p["point"], u, v)
+            if g.area < 15:
+                continue
+            out.append({"normal": n, "origin": p["point"], "u": u, "v": v,
+                        "thickness": float(np.median(d[sel])), "outline": g, "area": float(g.area),
+                        "single": True})
     return out
 
 
@@ -354,7 +426,15 @@ def draft_code(ws: list[dict], buf: float = 0.2) -> str:
                 if len(hole) >= 3 and Polygon(hole).area > 4:
                     lines.append(f"wp = wp.polyline({hole}).close()")
             # нормаль плоскости эскиза смотрит внутрь детали; xDir=u, ось y эскиза = n×u = v
-            lines.append(f"parts.append(wp.extrude({round(w['thickness'], 3)}))")
+            if w.get("until"):
+                pb, nb = w["until"]["point"], w["until"]["normal"]
+                xb = _frame(nb)[0]
+                hs = (f"cq.Workplane(cq.Plane(origin={tuple(np.round(pb, 3).tolist())}, "
+                      f"xDir={tuple(np.round(xb, 5).tolist())}, normal={tuple(np.round(-nb, 5).tolist())}))"
+                      ".rect(2000, 2000).extrude(1000)")
+                lines.append(f"parts.append(wp.extrude({round(w['thickness'], 3)}).intersect({hs}))  # клин до грани")
+            else:
+                lines.append(f"parts.append(wp.extrude({round(w['thickness'], 3)}))")
     lines += ["",
               "# попарно, деревом: так объединения короче и меньше копят ошибки OCC",
               "shapes = [p.val() for p in parts]",
@@ -374,5 +454,18 @@ def draft_code(ws: list[dict], buf: float = 0.2) -> str:
               "# мелкие оторванные куски (шум на краях) отбрасываем: деталь — одно тело",
               "sol = sorted(result.Solids(), key=lambda x: -x.Volume())",
               "if len(sol) > 1 and sum(x.Volume() for x in sol[1:]) < 0.03 * sol[0].Volume():",
-              "    result = sol[0]"]
+              "    result = sol[0]",
+              "# пустоты внутри (стенки сошлись не вплотную и замкнули полость) заполняем: оставляем",
+              "# только наружную оболочку — у литой детали внутренних полостей нет",
+              "from OCP.BRepClass3d import BRepClass3d",
+              "if not isinstance(result, cq.Solid) and len(result.Solids()) == 1:",
+              "    result = result.Solids()[0]",
+              "if isinstance(result, cq.Solid) and len(result.Shells()) > 1:",
+              "    outer = cq.Shell(BRepClass3d.OuterShell_s(result.wrapped))",
+              "    filled = cq.Solid.makeSolid(outer)",
+              "    # наружная оболочка не меняется, поэтому отверстия (они выходят наружу) остаются;",
+              "    # прибавиться может только объём закрытых полостей — иначе заливку отменяем",
+              "    voids = sum(abs(cq.Solid.makeSolid(sh).Volume()) for sh in result.Shells() if not sh.isSame(outer))",
+              "    if filled.isValid() and abs(filled.Volume() - result.Volume() - voids) < 0.01 * result.Volume() + 1:",
+              "        result = filled"]
     return "\n".join(lines)

@@ -395,7 +395,9 @@ def main() -> None:
         it_dir = out / f"iter{n}"
         it_dir.mkdir(exist_ok=True)
         log("3/4 строю модель…")
-        run = run_code(code, it_dir) if code else {"ok": False, "error": "в ответе нет блока python"}
+        # черновик из стенок собирается из сотен пластин: на крупной детали это минуты
+        limit = 420 if n == "0б" else 180
+        run = run_code(code, it_dir, timeout=limit) if code else {"ok": False, "error": "в ответе нет блока python"}
         cmp = None
         model = None
         if run.get("ok"):

@@ -25,6 +25,7 @@
 ## Разделы
 
 - `ghostos/` — полная концепция системы управления полномочиями ИИ-агентов.
+- `cad-intelligence/` — исследования автономной работы LLM в CAD; [ответ о CAD workflow](cad-intelligence/autonomous-cad-workflow.md).
 - `messages/` — место для явно порученной переписки с другими советниками.
 
 Регистрация: 09.11.2026. Общий репозиторий: `FrogFlow-Studio/studio-exchange`.

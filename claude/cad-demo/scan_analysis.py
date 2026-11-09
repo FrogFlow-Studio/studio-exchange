@@ -59,6 +59,12 @@ def align(mesh: trimesh.Trimesh) -> tuple[trimesh.Trimesh, np.ndarray]:
         a = areas[(normals @ n) > 0.995].sum()
         if a > best_a:
             best_a, best_n = a, n
+    # Уточняем: средняя нормаль всех граней этой плоскости (одна грань шумная,
+    # перекос в 0.5° даёт сдвиг осей на высоте детали).
+    for _ in range(3):
+        sel = (normals @ best_n) > 0.98
+        best_n = (normals[sel] * areas[sel, None]).sum(axis=0)
+        best_n /= np.linalg.norm(best_n)
     T = trimesh.geometry.align_vectors(best_n, [0, 0, -1])
     m.apply_transform(T)
     # Ось в плане: по боковым (вертикальным) граням. Берём углы их нормалей по
@@ -122,6 +128,84 @@ def fit_circle(pts: np.ndarray) -> tuple[np.ndarray, float, float]:
     return np.array([cx, cy]), r, resid
 
 
+def partial_circle(pts: np.ndarray, tol: float = 0.3, min_share: float = 0.45) -> dict | None:
+    rng = np.random.default_rng(0)
+    best = None
+    for _ in range(300):
+        tri = pts[rng.choice(len(pts), 3, replace=False)]
+        try:
+            c, r, _ = fit_circle(tri)
+        except Exception:  # noqa: BLE001
+            continue
+        if not np.isfinite(r) or r < 1:
+            continue
+        inl = np.abs(np.linalg.norm(pts - c, axis=1) - r) < tol
+        if best is None or inl.sum() > best[0].sum():
+            best = (inl, c, r)
+    if best is None or best[0].mean() < min_share:
+        return None
+    c, r, _ = fit_circle(pts[best[0]])
+    return {"center_xy": [round(float(c[0]), 2), round(float(c[1]), 2)], "diameter": round(2 * r, 2),
+            "share_of_contour": round(float(best[0].mean()), 2)}
+
+
+def hole_patterns(rings: list[dict]) -> list[dict]:
+    """Отверстия одного диаметра по окружности: шаг, PCD, где пропущены."""
+    circ = [r for r in rings if r.get("shape") == "окружность"]
+    out, used = [], set()
+    for i, a in enumerate(circ):
+        if i in used:
+            continue
+        grp = [j for j, b in enumerate(circ) if abs(b["diameter"] - a["diameter"]) < 0.3]
+        if len(grp) < 3:
+            continue
+        used |= set(grp)
+        P = np.array([circ[j]["center_xy"] for j in grp])
+        c, R, resid = fit_circle(P)
+        if resid > 0.5:
+            continue
+        ang = np.sort(np.degrees(np.arctan2(P[:, 1] - c[1], P[:, 0] - c[0])) % 360)
+        gaps = np.diff(np.r_[ang, ang[0] + 360])
+        n = int(round(360 / gaps.min()))
+        step = 360 / n
+        if n > 24 or np.abs(gaps / step - np.round(gaps / step)).max() > 0.04:
+            out.extend(rect_pattern(circ, grp))
+            continue
+        missing = []
+        for k in range(n):
+            t = ang[0] + k * 360 / n
+            if np.min(np.abs((ang - t + 180) % 360 - 180)) > 360 / n / 3:
+                missing.append([round(float(c[0] + R * np.cos(np.radians(t))), 2),
+                                round(float(c[1] + R * np.sin(np.radians(t))), 2)])
+        out.append({"pattern": "отверстия по окружности", "hole_diameter": round(float(np.mean([circ[j]["diameter"] for j in grp])), 2),
+                    "found": len(grp), "likely_total": n, "pcd_diameter": round(2 * R, 2),
+                    "center_xy": [round(float(c[0]), 2), round(float(c[1]), 2)],
+                    "first_angle_deg": round(float(ang[0]), 1), "missing_positions_xy": missing})
+    return out
+
+
+def rect_pattern(circ: list[dict], grp: list[int]) -> list[dict]:
+    """3–4 отверстия по углам прямоугольника; если одного нет — где оно было."""
+    P = np.array([circ[j]["center_xy"] for j in grp])
+    if len(P) not in (3, 4):
+        return []
+    from itertools import permutations
+
+    for a, b, c in permutations(range(len(P)), 3):
+        u, v = P[b] - P[a], P[c] - P[a]
+        if abs(np.dot(u, v)) < 0.02 * np.linalg.norm(u) * np.linalg.norm(v):
+            d = P[b] + P[c] - P[a]
+            have = len(P) == 4 and np.min(np.linalg.norm(P - d, axis=1)) < 0.5
+            if len(P) == 4 and not have:
+                continue
+            return [{"pattern": "отверстия по углам прямоугольника",
+                     "hole_diameter": round(float(np.mean([circ[j]["diameter"] for j in grp])), 2),
+                     "found": len(P), "likely_total": 4,
+                     "sides_mm": [round(float(np.linalg.norm(u)), 2), round(float(np.linalg.norm(v)), 2)],
+                     "missing_positions_xy": [] if have else [[round(float(d[0]), 2), round(float(d[1]), 2)]]}]
+    return []
+
+
 def describe_ring(pts: np.ndarray, tol_round: float = 0.25) -> dict:
     c, r, resid = fit_circle(pts)
     poly = trimesh.path.polygons.Polygon(pts)
@@ -130,6 +214,11 @@ def describe_ring(pts: np.ndarray, tol_round: float = 0.25) -> dict:
         d.update({"shape": "окружность", "center_xy": [round(float(c[0]), 2), round(float(c[1]), 2)],
                   "diameter": round(2 * r, 2), "roundness_err": round(resid, 3)})
     else:
+        # Частичная дуга: если большая часть контура лежит на одной окружности
+        # (край сломан), сообщаем её — это подсказка о целой форме.
+        arc = partial_circle(pts)
+        if arc:
+            d["partial_circle"] = arc
         simp = poly.simplify(0.4)
         coords = np.asarray(simp.exterior.coords)[:-1]
         lo, hi = pts.min(axis=0), pts.max(axis=0)
@@ -164,6 +253,9 @@ def sections(mesh: trimesh.Trimesh, levels: list[dict]) -> list[dict]:
                 if trimesh.path.polygons.Polygon(hole).area < 0.5:
                     continue
                 reg["inner"].append(describe_ring(np.asarray(hole.coords)[:-1]))
+            pats = hole_patterns(reg["inner"])
+            if pats:
+                reg["hole_patterns"] = pats
             regions.append(reg)
         out.append({"z_mm": round(h, 2), "regions": regions})
     return out
@@ -198,6 +290,7 @@ def measurement_sheet(path: str) -> tuple[dict, trimesh.Trimesh]:
         "diagnostics": diag,
         "frame": "Деталь выровнена: опорная (самая большая) плоскость на Z=0, "
                  "главная ось в плане по X, центр габарита в плане в (0,0). Все размеры в мм.",
+        "transform_from_scan_4x4": [[round(float(v), 6) for v in row] for row in T],
         "bounds_mm": [[round(float(v), 2) for v in mesh.bounds[0]], [round(float(v), 2) for v in mesh.bounds[1]]],
         "horizontal_planes": lv,
         "sections": sections(mesh, lv),

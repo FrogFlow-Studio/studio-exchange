@@ -51,10 +51,11 @@ Windows `set ANTHROPIC_API_KEY=...` перед `start.bat`, Mac `export ANTHROPI
 
 - `app.py` — страница в браузере; `demo.py` — цикл и отчёт; `scan_analysis.py` — замеры; `compare.py` — сравнение;
   `cad_runner.py` — запуск кода модели; `llm.py` — запросы к ИИ и подсказка.
+- `make_test_flange.py` — вторая тестовая деталь: фланец, отломан край вместе с одним из шести отверстий (`samples/flange_*`).
 - `make_test_part.py` — тестовая деталь: кронштейн, у которого мы сами отломали угол
   и добавили шум сканера. `samples/bracket_scan.stl` — «скан», `bracket_truth.step` —
   целая деталь (её ИИ не видит, она нужна только для проверки в конце).
-- `samples/scripted_bracket.json` — заготовленные ответы для режима без ИИ (их написал
+- `samples/scripted_<деталь>.json` — заготовленные ответы для режима без ИИ (их написал
   разработчик, а не ИИ).
 - `vendor/` — three.js 0.160 (MIT) для 3D в отчёте.
 - `PLAN.md` — план по дням и честное состояние. `DEMO_SCRIPT.md` — сценарий показа.

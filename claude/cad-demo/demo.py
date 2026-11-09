@@ -220,11 +220,16 @@ def main() -> None:
     ap.add_argument("--no-open", action="store_true")
     a = ap.parse_args()
 
-    if not a.truth and Path(a.scan).resolve() == (HERE / "samples" / "bracket_scan.stl").resolve():
-        a.truth = str(HERE / "samples" / "bracket_truth.step")  # эталон есть только у тестовой детали
+    sp = Path(a.scan).resolve()
+    if not a.truth and sp.parent == (HERE / "samples").resolve() and sp.stem.endswith("_scan"):
+        t = sp.with_name(sp.stem.replace("_scan", "_truth") + ".step")
+        if t.exists():
+            a.truth = str(t)  # эталон есть только у тестовых деталей
     mode = llm.auto_mode() if a.mode == "auto" else a.mode
     if mode == "scripted" and not a.replay:
-        a.replay = str(HERE / "samples" / "scripted_bracket.json")
+        stem = Path(a.scan).stem.split("-")[-1].replace("_scan", "")
+        cand = HERE / "samples" / f"scripted_{stem}.json"
+        a.replay = str(cand if cand.exists() else HERE / "samples" / "scripted_bracket.json")
     prov = llm.make(mode, a.model, a.replay)
     started = dt.datetime.now()
     out = Path(a.out) / started.strftime("%Y%m%d-%H%M%S")
@@ -296,6 +301,8 @@ def main() -> None:
                 tm = trimesh.load(out / "_truth.stl", force="mesh")
             else:
                 tm = trimesh.load(tp, force="mesh")
+            # эталон в координатах исходного скана → переводим в выровненные
+            tm.apply_transform(np.array(sheet["transform_from_scan_4x4"]))
             truth = cmpmod.compare(tm, trimesh.load(out / "model.stl", force="mesh"), tol=a.tol)
             log(f"эталон: в допуске {truth['within_tol_share']*100:.1f}% (тестовая деталь)")
     test_label = ""

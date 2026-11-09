@@ -22,24 +22,20 @@
 
 ## Запуск
 
-Один раз поставить (Python 3.10–3.12, Windows или Mac):
+Один раз: поставить Python 3.10–3.12 (Windows: с python.org, галочка «Add to PATH»),
+потом `install.bat` (Windows) или `pip install -r requirements.txt` (Mac).
 
-```bash
-pip install -r requirements.txt
-```
+Показ: `start.bat` / `./start.sh`. Откроется страница в браузере: перетащить скан
+(или «взять тестовую деталь»), написать, что сломано, «Построить модель». Видно
+журнал попыток, в конце отчёт со скачиванием STEP/STL. Страница работает на этом
+компьютере, скан никуда не уходит, интернет не нужен (кроме вызова ИИ).
 
-Ключ ИИ (иначе включится режим без ИИ, см. ниже):
+Ключ ИИ (без него включается режим без ИИ, см. ниже):
+Windows `set ANTHROPIC_API_KEY=...` перед `start.bat`, Mac `export ANTHROPIC_API_KEY=...`.
 
-```bash
-# Windows:  set ANTHROPIC_API_KEY=...      Mac:  export ANTHROPIC_API_KEY=...
-```
-
-Запуск одной командой: `run.bat` (Windows) или `./run.sh` (Mac). Без аргументов
-берётся тестовая деталь. Свой скан: `run.bat путь\к\скану.stl "что сломано"`.
-Отчёт откроется в браузере сам, лежит в `out/<время>/report.html`; 3D в нём
-работает без интернета.
-
-Полный вид: `python demo.py скан.stl --notes "..." [--image фото.jpg] [--iters 5] [--tol 0.3]`.
+Из командной строки: `run.bat` / `./run.sh [скан.stl] ["что сломано"]`, или полностью
+`python demo.py скан.stl --notes "..." [--image фото.jpg] [--iters 5] [--tol 0.3]`.
+Результаты: `out/<время>/report.html`, `model.step`, `model.stl`.
 
 ## Режимы — в отчёте всегда написан режим
 
@@ -53,7 +49,7 @@ pip install -r requirements.txt
 
 ## Файлы
 
-- `demo.py` — цикл и отчёт; `scan_analysis.py` — замеры; `compare.py` — сравнение;
+- `app.py` — страница в браузере; `demo.py` — цикл и отчёт; `scan_analysis.py` — замеры; `compare.py` — сравнение;
   `cad_runner.py` — запуск кода модели; `llm.py` — запросы к ИИ и подсказка.
 - `make_test_part.py` — тестовая деталь: кронштейн, у которого мы сами отломали угол
   и добавили шум сканера. `samples/bracket_scan.stl` — «скан», `bracket_truth.step` —

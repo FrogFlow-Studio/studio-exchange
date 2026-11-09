@@ -331,6 +331,7 @@ def main() -> None:
                     help="в чём записан скан: STL единиц не хранит (по умолчанию мм)")
     ap.add_argument("--no-restore", action="store_true",
                     help="не достраивать ничего (деталь целая); то же, если в заметке «деталь целая» или «не достраивать»")
+    ap.add_argument("--geo-timeout", type=int, default=120, help="сколько секунд ждать попытку 0 (алгоритм без ИИ)")
     ap.add_argument("--no-geometric", action="store_true", help="не строить черновик без ИИ (попытка 0)")
     ap.add_argument("--model", help="модель ИИ (по умолчанию: claude-sonnet-5-5 / gpt-4.1)")
     ap.add_argument("--replay", help="llm_log.json для режимов replay/scripted")
@@ -357,6 +358,12 @@ def main() -> None:
         stem = Path(a.scan).stem.split("-")[-1].replace("_scan", "")
         cand = HERE / "samples" / f"scripted_{stem}.json"
         a.replay = str(cand if cand.exists() else HERE / "samples" / "scripted_bracket.json")
+    if mode == "geometric" and a.no_geometric:
+        sys.exit("Ключ ИИ не найден (переменная ANTHROPIC_API_KEY пуста), а попытка без ИИ выключена (--no-geometric): "
+                 "строить нечем. В PowerShell ключ задаётся так: $env:ANTHROPIC_API_KEY=\"...\"; в cmd: set ANTHROPIC_API_KEY=...")
+    if mode == "geometric" and a.mode == "auto":
+        print("ВНИМАНИЕ: ключ ИИ не найден (ANTHROPIC_API_KEY пуст), работаю без ИИ. "
+              "PowerShell: $env:ANTHROPIC_API_KEY=\"...\"; cmd: set ANTHROPIC_API_KEY=...", flush=True)
     prov = None if mode == "geometric" else llm.make(mode, a.model, a.replay)
     mode_label = prov.label if prov else "БЕЗ ИИ: геометрический алгоритм (настоящий расчёт по скану, не заготовка)"
     started = dt.datetime.now()
@@ -422,13 +429,26 @@ def main() -> None:
         restore = not a.no_restore and not any(w in low for w in ("деталь целая", "не достраивать", "ничего не восстанавливать"))
         if not restore:
             log("    достройка выключена (заметка или --no-restore): строю только то, что есть в скане")
-        g_code, g_meta = geometric.build(scan, sheet, restore=restore)
-        for r in g_meta["restored"]:
-            log("    " + r)
-        it0 = evaluate(0, g_code, g_meta, t0, "алгоритм, без ИИ")
-        iterations.append(it0)
-        if it0["run"].get("ok"):
-            best = it0
+        gj = out / "geometric.json"
+        try:
+            subprocess.run([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
+                            str(out / "sheet.json"), "1" if restore else "0", str(gj)],
+                           timeout=a.geo_timeout, check=True, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+            g = json.loads(gj.read_text(encoding="utf-8"))
+            g_code, g_meta = g["code"], g["meta"]
+        except subprocess.TimeoutExpired:
+            g_code = None
+            log(f"    деталь слишком сложная для алгоритма без ИИ: не уложился в {a.geo_timeout} с, дальше работает ИИ")
+        except Exception as ex:  # noqa: BLE001
+            g_code = None
+            log(f"    алгоритм без ИИ не справился ({type(ex).__name__}), дальше работает ИИ")
+        if g_code is not None:
+            for r in g_meta["restored"]:
+                log("    " + r)
+            it0 = evaluate(0, g_code, g_meta, t0, "алгоритм, без ИИ")
+            iterations.append(it0)
+            if it0["run"].get("ok"):
+                best = it0
 
     hint = ""
     if iterations and iterations[0]["cmp"]:

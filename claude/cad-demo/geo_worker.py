@@ -15,8 +15,12 @@ sheet = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 if len(sys.argv) > 5 and sys.argv[5] == "walls":
     import walls
 
+    import pickle
+
     ws = walls.walls(scan)
     code = walls.draft_code(ws)
+    # те же стенки отдаст инструмент walls для ИИ, чтобы не считать их второй раз
+    Path(sys.argv[4]).with_suffix(".pkl").write_bytes(pickle.dumps(ws))
     meta = {"plan": f"черновик из стенок: найдено {len(ws)} стенок, каждая выдавлена по контуру",
             "restored": [], "assumptions": ["деталь тонкостенная: собрана из пластин"]}
 else:

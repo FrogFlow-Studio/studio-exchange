@@ -497,6 +497,14 @@ def main() -> None:
 
         tools = scan_tools.ScanTools(scan)
         tools.verbose = True
+        wp = out / "walls.pkl"
+        if wp.exists():  # стенки уже посчитаны для черновика: инструмент walls отвечает сразу
+            import pickle
+
+            try:
+                tools._walls = pickle.loads(wp.read_bytes())
+            except Exception:  # noqa: BLE001
+                pass
         prov.max_tool_calls = a.max_tool_calls
         prov.budget_usd = a.budget_usd
         mode_label += " · ИИ сам смотрит сетку скана инструментами, без картинок"

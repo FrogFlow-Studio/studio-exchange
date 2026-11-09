@@ -260,6 +260,29 @@ def describe_ring(pts: np.ndarray, tol_round: float = 0.25) -> dict:
     return d
 
 
+def _section_once(mesh: trimesh.Trimesh, z: float):
+    from shapely.geometry import Polygon
+
+    sec = mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
+    if sec is None:
+        return [], 0.0
+    planar, _ = sec.to_2D(to_2D=np.eye(4))
+    polys = [p.buffer(0) for p in planar.polygons_full if p.area > 1.0]
+    polys = [p for p in polys if isinstance(p, Polygon)]
+    # Кусок внутри отверстия другого куска — обрывок контура отверстия, не материал.
+    holes = [Polygon(r) for p in polys for r in p.interiors]
+    polys = [p for p in polys if not any(h.buffer(0.2).contains(p) for h in holes)]
+    # Доля линий сечения, вошедших в замкнутые контуры: шумное сечение теряет куски.
+    used = sum(p.exterior.length + sum(r.length for r in p.interiors) for p in polys)
+    return polys, used / max(sec.length, 1e-9)
+
+
+def best_section(mesh: trimesh.Trimesh, z: float) -> list:
+    """Сечение на нескольких близких высотах; берём то, где контуры замкнулись лучше всего."""
+    tries = [_section_once(mesh, z + dz) for dz in (0.0, 0.3, -0.3, 0.6, -0.6)]
+    return max(tries, key=lambda t: t[1])[0]
+
+
 def sections(mesh: trimesh.Trimesh, levels: list[dict]) -> list[dict]:
     zs = sorted({lv["z_mm"] for lv in levels} | {float(mesh.bounds[0][2]), float(mesh.bounds[1][2])})
     heights = []
@@ -270,12 +293,11 @@ def sections(mesh: trimesh.Trimesh, levels: list[dict]) -> list[dict]:
             heights.append((a + b) / 2)
     out = []
     for h in heights:
-        sec = mesh.section(plane_origin=[0, 0, h], plane_normal=[0, 0, 1])
-        if sec is None:
+        polys = best_section(mesh, h)
+        if not polys:
             continue
-        planar, _ = sec.to_2D(to_2D=np.eye(4))
         regions = []
-        for poly in planar.polygons_full:
+        for poly in polys:
             if poly.area < 1.0:
                 continue
             outer = np.asarray(poly.exterior.coords)[:-1]

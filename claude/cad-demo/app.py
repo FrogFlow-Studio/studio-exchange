@@ -112,7 +112,7 @@ class H(BaseHTTPRequestHandler):
             import llm
 
             labels = {"anthropic": "живой ИИ (Anthropic)", "openai": "живой ИИ (OpenAI)",
-                      "scripted": "БЕЗ ИИ: ключа нет, заготовленные ответы для тестовой детали"}
+                      "geometric": "БЕЗ ИИ: ключа нет, модель строит геометрический алгоритм"}
             return self.send(200, json.dumps({"label": labels[llm.auto_mode()]}, ensure_ascii=False).encode(),
                              "application/json")
         if path.startswith("/out/"):

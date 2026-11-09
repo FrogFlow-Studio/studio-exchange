@@ -180,4 +180,4 @@ def auto_mode() -> str:
         return "anthropic"
     if os.environ.get("OPENAI_API_KEY"):
         return "openai"
-    return "scripted"
+    return "geometric"  # без ключа: честный расчёт без ИИ, а не заготовки

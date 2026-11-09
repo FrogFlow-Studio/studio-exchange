@@ -26,6 +26,7 @@ import trimesh
 logging.getLogger("trimesh").setLevel(logging.ERROR)
 
 import compare as cmpmod
+import geometric
 import llm
 import scan_analysis
 
@@ -109,7 +110,7 @@ def write_report(out: Path, ctx: dict) -> Path:
         c = it.get("cmp")
         status = ("ошибка кода" if not it["run"].get("ok") else
                   ("тело невалидно" if not it["run"].get("valid") else "построено"))
-        rows.append(f"<tr{' class=best' if best and it['n'] == best['n'] else ''}><td>{it['n']}</td><td>{status}</td>"
+        rows.append(f"<tr{' class=best' if best and it['n'] == best['n'] else ''}><td>{it['n']}</td><td>{e(it.get('by', ''))}: {status}</td>"
                     f"<td>{'' if not c else f'{c['within_tol_share']*100:.1f}%'}</td>"
                     f"<td>{'' if not c else f'{c['outside_share']*100:.2f}%'}</td>"
                     f"<td>{'' if not c else c['p95_abs_dev_mm']}</td><td>{it['seconds']:.0f} с</td></tr>")
@@ -118,7 +119,7 @@ def write_report(out: Path, ctx: dict) -> Path:
         c, r, meta = it.get("cmp"), it["run"], it.get("meta", {})
         img = it.get("img")
         blocks.append(f"""
-<section class=it><h3>Попытка {it['n']}{' — лучшая' if best and it['n'] == best['n'] else ''}</h3>
+<section class=it><h3>Попытка {it['n']} · {e(it.get('by', ''))}{' — лучшая' if best and it['n'] == best['n'] else ''}</h3>
 <p><b>Замысел:</b> {e(str(meta.get('plan', '')))}</p>
 {'<p class=err><b>Ошибка:</b> ' + e(r.get('error', '')) + '</p>' if not r.get('ok') else ''}
 {f'<p>Тело валидно: <b>{"да" if r.get("valid") else "нет"}</b>, объём {r.get("volume_mm3")} мм³, граней {r.get("faces")}</p>' if r.get('ok') else ''}
@@ -140,7 +141,7 @@ def write_report(out: Path, ctx: dict) -> Path:
     if best and (out / "model.stl").exists():
         pts = best["cmp"]["_scan_pts"][::2]
         viewer = f"""<section><h2>3D: модель и точки скана</h2><div id=v></div>
-<p class=small>Крутить мышью. Полупрозрачная: модель ИИ. Точки: скан (красные — модели не хватает материала, синие — скол).</p>
+<p class=small>Крутить мышью. Полупрозрачная: модель. Точки: скан (красные — модели не хватает материала, синие — скол).</p>
 <script type=importmap>{importmap()}</script>
 <script type=module>
 import * as THREE from 'three';import {{OrbitControls}} from 'three/addons/controls/OrbitControls.js';import {{STLLoader}} from 'three/addons/loaders/STLLoader.js';
@@ -182,7 +183,7 @@ a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:
 {('<a class=btn href="model.step" download>Скачать STEP (КОМПАС-3D, SolidWorks и др.)</a><a class=btn href="model.stl" download>STL (для печати)</a><a class=btn href="model.py" download>Код модели</a>') if best else ''}
 </section>
 {truth_html}
-<section><h2>Что ИИ восстановил и что должен проверить инженер</h2>
+<section><h2>Что восстановлено и что должен проверить инженер</h2>
 <p><b>Как строил:</b> {e(str(meta.get('plan', '—')))}</p>
 <h3>Достроено (этого нет в скане)</h3><ul>{lst(meta.get('restored'))}</ul>
 <h3>Допущения</h3><ul>{lst(meta.get('assumptions'))}</ul>
@@ -210,7 +211,8 @@ def main() -> None:
     ap.add_argument("scan", help="STL/OBJ/PLY скана")
     ap.add_argument("--notes", default="", help="заметки мастера: что сломано, что важно")
     ap.add_argument("--image", help="фото или эскиз детали (png/jpg), необязательно")
-    ap.add_argument("--mode", choices=["auto", "anthropic", "openai", "replay", "scripted"], default="auto")
+    ap.add_argument("--mode", choices=["auto", "anthropic", "openai", "replay", "scripted", "geometric"], default="auto")
+    ap.add_argument("--no-geometric", action="store_true", help="не строить черновик без ИИ (попытка 0)")
     ap.add_argument("--model", help="модель ИИ (по умолчанию: claude-sonnet-5-5 / gpt-4.1)")
     ap.add_argument("--replay", help="llm_log.json для режимов replay/scripted")
     ap.add_argument("--iters", type=int, default=5)
@@ -231,11 +233,12 @@ def main() -> None:
         stem = Path(a.scan).stem.split("-")[-1].replace("_scan", "")
         cand = HERE / "samples" / f"scripted_{stem}.json"
         a.replay = str(cand if cand.exists() else HERE / "samples" / "scripted_bracket.json")
-    prov = llm.make(mode, a.model, a.replay)
+    prov = None if mode == "geometric" else llm.make(mode, a.model, a.replay)
+    mode_label = prov.label if prov else "БЕЗ ИИ: геометрический алгоритм (настоящий расчёт по скану, не заготовка)"
     started = dt.datetime.now()
     out = Path(a.out) / started.strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
-    log(f"режим: {prov.label}")
+    log(f"режим: {mode_label}")
     log(f"1/4 читаю скан {a.scan}")
     sheet, scan = scan_analysis.measurement_sheet(a.scan)
     scan.export(out / "scan_aligned.stl")
@@ -249,23 +252,12 @@ def main() -> None:
         log(f"    допуск сравнения поднят до {a.tol} мм: меньше шума скана мерить нельзя")
     (out / "sheet.json").write_text(json.dumps(sheet, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    messages = [{"role": "user", "content": llm.first_prompt(sheet, a.notes), "image": a.image}]
     iterations, llm_log, best, converged = [], [], None, False
     t_all = time.time()
-    for n in range(1, a.iters + 1):
-        t0 = time.time()
+
+    def evaluate(n: int, code: str, meta: dict, t0: float, by: str) -> dict:
         it_dir = out / f"iter{n}"
-        it_dir.mkdir()
-        log(f"2/4 попытка {n}: ИИ пишет модель…")
-        try:
-            answer = prov.chat(messages)
-        except Exception as ex:  # noqa: BLE001
-            log(f"    ИИ не ответил: {type(ex).__name__}: {ex}")
-            break
-        llm_log.append({"provider": prov.label, "answer": answer})
-        code, meta = llm.parse(answer)
-        messages.append({"role": "assistant", "content": answer})
-        log(f"    замысел: {str(meta.get('plan', ''))[:140]}")
+        it_dir.mkdir(exist_ok=True)
         log("3/4 строю модель…")
         run = run_code(code, it_dir) if code else {"ok": False, "error": "в ответе нет блока python"}
         cmp = None
@@ -276,20 +268,60 @@ def main() -> None:
             cmp = cmpmod.compare(scan, model, tol=a.tol)
             log(f"    в допуске {cmp['within_tol_share']*100:.1f}%, не хватает материала {cmp['outside_share']*100:.2f}%, "
                 f"скол/лишнее {cmp['inside_share']*100:.2f}%, 95% ближе {cmp['p95_abs_dev_mm']} мм")
-            render(cmp, it_dir / "deviation.png", f"Попытка {n}")
+            render(cmp, it_dir / "deviation.png", f"Попытка {n} ({by})")
         else:
             log(f"    ошибка: {run.get('error', '')[:200]}")
         fb = llm.feedback_prompt(run, cmp, a.target)
-        it = {"n": n, "code": code, "meta": meta, "run": run, "cmp": cmp, "feedback": fb,
-              "seconds": time.time() - t0, "img": (it_dir / "deviation.png") if cmp else None, "dir": it_dir}
+        return {"n": n, "by": by, "code": code, "meta": meta, "run": run, "cmp": cmp, "feedback": fb,
+                "seconds": time.time() - t0, "img": (it_dir / "deviation.png") if cmp else None, "dir": it_dir}
+
+    def good(it: dict) -> bool:
+        c = it["cmp"]
+        return bool(c and it["run"].get("valid") and c["within_tol_share"] >= a.target and c["outside_share"] < 0.005)
+
+    # Попытка 0: геометрический алгоритм без ИИ. Всегда есть, работает без ключа и сети.
+    if not a.no_geometric:
+        t0 = time.time()
+        log("2/4 попытка 0: алгоритм без ИИ строит черновик по сечениям…")
+        g_code, g_meta = geometric.build(scan, sheet)
+        for r in g_meta["restored"]:
+            log("    " + r)
+        it0 = evaluate(0, g_code, g_meta, t0, "алгоритм, без ИИ")
+        iterations.append(it0)
+        if score(it0["run"], it0["cmp"]) > -0.5:
+            best = it0
+
+    hint = ""
+    if iterations and iterations[0]["cmp"]:
+        c0 = iterations[0]["cmp"]
+        hint = ("\n\nДля справки: черновик без ИИ (слои по сечениям) совпал со сканом на "
+                f"{c0['within_tol_share']*100:.1f}%. Он копирует форму ступеньками и не знает замысла; "
+                "построй деталь по замыслу. Что черновик восстановил: " + "; ".join(iterations[0]["meta"]["restored"]))
+    messages = [{"role": "user", "content": llm.first_prompt(sheet, a.notes) + hint, "image": a.image}]
+    for n in range(1, a.iters + 1 if prov else 1):
+        t0 = time.time()
+        log(f"2/4 попытка {n}: ИИ пишет модель…")
+        try:
+            answer = prov.chat(messages)
+        except Exception as ex:  # noqa: BLE001
+            log(f"    ИИ не ответил: {type(ex).__name__}: {ex}")
+            break
+        llm_log.append({"provider": prov.label, "answer": answer})
+        code, meta = llm.parse(answer)
+        messages.append({"role": "assistant", "content": answer})
+        log(f"    замысел: {str(meta.get('plan', ''))[:140]}")
+        it = evaluate(n, code, meta, t0, "ИИ" if mode in ("anthropic", "openai") else
+                      ("повтор записи ИИ" if mode == "replay" else "заготовка, не ИИ"))
         iterations.append(it)
-        if score(run, cmp) > (score(best["run"], best["cmp"]) if best else -0.5):
+        if score(it["run"], it["cmp"]) > (score(best["run"], best["cmp"]) if best else -0.5):
             best = it
-        if cmp and run.get("valid") and cmp["within_tol_share"] >= a.target and cmp["outside_share"] < 0.005:
+        if good(it):
             converged = True
             log(f"    сошлось на попытке {n}")
             break
-        messages.append({"role": "user", "content": fb})
+        messages.append({"role": "user", "content": it["feedback"]})
+    if not converged and best and good(best):
+        converged = True
 
     (out / "llm_log.json").write_text(json.dumps(llm_log, ensure_ascii=False, indent=1), encoding="utf-8")
     truth = None
@@ -313,7 +345,7 @@ def main() -> None:
     if "samples" in Path(a.scan).resolve().parts:
         test_label = "Тестовая деталь, сломанная нами специально. Это не деталь студии."
     rep = write_report(out, {
-        "iterations": iterations, "best": best, "sheet": sheet, "mode": mode, "mode_label": prov.label,
+        "iterations": iterations, "best": best, "sheet": sheet, "mode": mode, "mode_label": mode_label,
         "started": started.strftime("%d.%m.%Y %H:%M"), "scan_name": Path(a.scan).name, "tol": a.tol,
         "target": a.target, "converged": converged, "total_s": time.time() - t_all, "truth": truth,
         "test_label": test_label})

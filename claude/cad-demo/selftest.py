@@ -82,12 +82,20 @@ for name, m in variants.items():
     except Exception as e:  # noqa: BLE001
         check(f"кронштейн {name}", False, f"{type(e).__name__}: {e}")
 
-print("Полный цикл без ИИ:")
+print("Полный цикл: алгоритм без ИИ (попытка 0), затем заготовленные ответы:")
+import re
+
 for part in ("bracket", "flange", "bushing"):
     r = subprocess.run([sys.executable, str(HERE / "demo.py"), str(S / f"{part}_scan.stl"), "--no-open",
-                        "--out", str(tmp / "out")], capture_output=True, text=True, encoding="utf-8")
+                        "--mode", "geometric", "--out", str(tmp / "out")], capture_output=True, text=True, encoding="utf-8")
+    m = re.search(r"эталон: в допуске ([\d.]+)%", r.stdout)
+    t = float(m.group(1)) if m else 0.0
+    check(f"{part}: алгоритм без ИИ построил модель, совпадение с целым эталоном ≥ 95% ({t}%)",
+          r.returncode == 0 and "готово:" in r.stdout and t >= 95, r.stdout[-400:] + r.stderr[-400:])
+    r = subprocess.run([sys.executable, str(HERE / "demo.py"), str(S / f"{part}_scan.stl"), "--no-open",
+                        "--mode", "scripted", "--out", str(tmp / "out")], capture_output=True, text=True, encoding="utf-8")
     ok = r.returncode == 0 and "сошлось" in r.stdout and "готово:" in r.stdout
-    check(f"{part}: модель сошлась, отчёт есть", ok, r.stdout[-400:] + r.stderr[-400:])
+    check(f"{part}: цикл с исправлениями сошёлся, отчёт есть", ok, r.stdout[-400:] + r.stderr[-400:])
 
 print("\nИТОГ: " + ("всё в порядке" if not fails else f"сбоев {len(fails)}: " + "; ".join(fails)))
 sys.exit(1 if fails else 0)

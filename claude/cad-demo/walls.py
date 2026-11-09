@@ -124,7 +124,33 @@ def walls(mesh: trimesh.Trimesh, max_thick: float = 25.0) -> list[dict]:
     out += _single_sided(mesh, pats, frames, out, max_thick)
     if mesh.is_watertight:
         out = _check_material(mesh, out)
+    out = [_grow(mesh, w) for w in out]
     return _dedupe(out)
+
+
+GROW_MM = 0.5
+
+
+def _grow(mesh, w):
+    """Стенка доходит до соседней: к контуру добавляется материал её среднего сечения в
+    полосе GROW_MM вокруг. Без этого на стыках и в скруглениях остаются щели."""
+    if GROW_MM <= 0:
+        return w
+    g = w["outline"]
+    mid_o = w["origin"] - w["normal"] * w["thickness"] / 2
+    sec = mesh.section(plane_origin=mid_o, plane_normal=w["normal"])
+    if sec is None:
+        return w
+    T = np.eye(4)
+    T[:3, :3] = np.vstack([w["u"], w["v"], w["normal"]])
+    T[:3, 3] = -T[:3, :3] @ w["origin"]
+    try:
+        pl, _ = sec.to_2D(to_2D=T)
+        body = unary_union([p.buffer(0) for p in pl.polygons_full])
+        g2 = unary_union([g, body.intersection(g.buffer(GROW_MM))])
+    except Exception:  # noqa: BLE001
+        return w
+    return dict(w, outline=g2, area=float(g2.area))
 
 
 def _mid_section(mesh, origin, n, u, v, t, base):

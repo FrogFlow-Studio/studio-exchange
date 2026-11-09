@@ -90,6 +90,9 @@ def align(mesh: trimesh.Trimesh) -> tuple[trimesh.Trimesh, np.ndarray]:
         peak -= 90
     R = trimesh.transformations.rotation_matrix(np.radians(-peak), [0, 0, 1])
     m.apply_transform(R)
+    Rf = refine_axes(m)
+    m.apply_transform(Rf)
+    R = Rf @ R
     # Z=0 по опорной плоскости (средняя высота её граней, а не по шумовому минимуму).
     bottom = (m.face_normals[:, 2] < -0.97)
     zb = m.triangles_center[bottom, 2] if bottom.any() else m.vertices[:, 2]
@@ -101,6 +104,71 @@ def align(mesh: trimesh.Trimesh) -> tuple[trimesh.Trimesh, np.ndarray]:
     total = Tt @ R @ T
     return m, total
 
+
+
+def refine_axes(m: trimesh.Trimesh, iters: int = 2) -> np.ndarray:
+    """Уточнение поворота по плоскостям, а не по нормалям треугольников.
+
+    Нормаль отдельного треугольника шумного скана гуляет на градусы, и средняя по
+    ним даёт перекос в пол-градуса: на стенке 40 мм это 0.3–0.4 мм. Здесь каждая
+    большая плоская грань, близкая к оси, подгоняется плоскостью по точкам (SVD),
+    и ищется поворот, который ставит все такие плоскости точно по осям
+    (задача Прокруста). Если есть только горизонтальные плоскости (круглая
+    деталь), выравнивается только наклон.
+    """
+    total = np.eye(4)
+    work = m.copy()
+    for _ in range(iters):
+        fn, fc, fa = work.face_normals, work.triangles_center, work.area_faces
+        min_area = 0.01 * fa.sum()
+        pairs = []
+        for e in np.vstack([np.eye(3), -np.eye(3)]):
+            sel = (fn @ e) > 0.9
+            if fa[sel].sum() < min_area:
+                continue
+            d = fc[sel] @ e
+            order = np.argsort(d)
+            idx = np.flatnonzero(sel)[order]
+            ds = d[order]
+            cuts = np.flatnonzero(np.diff(ds) > 0.8) + 1
+            for grp in np.split(idx, cuts):
+                if fa[grp].sum() < min_area or len(grp) < 30:
+                    continue
+                pts, w = fc[grp], fa[grp]
+                c = np.average(pts, axis=0, weights=w)
+                X = (pts - c) * np.sqrt(w)[:, None]
+                n = np.linalg.svd(X, full_matrices=False)[2][-1]
+                if n @ e < 0:
+                    n = -n
+                if n @ e < 0.99:  # не плоскость, а, скажем, фаска или цилиндр
+                    continue
+                res = np.abs((pts - c) @ n)
+                if np.average(res, weights=w) > 0.5:
+                    continue
+                pairs.append((n, e, float(w.sum())))
+        if not pairs:
+            break
+        horizontal = all(abs(e[2]) > 0.5 for _, e, _ in pairs)
+        if horizontal:
+            n = sum(w * (nv if e[2] > 0 else -nv) for nv, e, w in pairs)
+            Rm = trimesh.geometry.align_vectors(n / np.linalg.norm(n), [0, 0, 1])
+        else:
+            H = sum(w * np.outer(nv, e) for nv, e, w in pairs)
+            U, _, Vt = np.linalg.svd(H)
+            Rr = Vt.T @ U.T
+            if np.linalg.det(Rr) < 0:
+                Vt[-1] *= -1
+                Rr = Vt.T @ U.T
+            Rm = np.eye(4)
+            Rm[:3, :3] = Rr
+        ang = np.degrees(np.arccos(np.clip((np.trace(Rm[:3, :3]) - 1) / 2, -1, 1)))
+        if ang > 3.0:  # уточнение не должно переворачивать деталь
+            break
+        work.apply_transform(Rm)
+        total = Rm @ total
+        if ang < 0.005:
+            break
+    return total
 
 def noise_estimate(mesh: trimesh.Trimesh) -> float:
     """Шум скана: разброс точек опорной плоскости (Z≈0) по высоте, мм."""

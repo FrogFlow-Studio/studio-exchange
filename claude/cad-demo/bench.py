@@ -91,7 +91,27 @@ def shaft(rng):
     return body, f"ось {n} ступ., Ø{d[0]}…Ø{d[-1]}"
 
 
-FAMILIES = [plate, flange, bushing, shaft]
+def angle(rng):
+    """Уголок: основание + стенка, в стенке отверстия с горизонтальной осью (сложно для слоёв)."""
+    L, W, T = r_(rng, 40, 90), r_(rng, 30, 60), r_(rng, 5, 10)
+    H = r_(rng, 25, 60)
+    base = cq.Workplane("XY").box(L, W, T, centered=(True, True, False))
+    wall = cq.Workplane("XY").box(T, W, H, centered=(False, True, False)).translate((-L / 2, 0, 0))
+    body = base.union(wall)
+    hd = r_(rng, 5, 10)
+    body = body.faces(">Z").workplane().pushPoints([(L / 4, W / 4), (L / 4, -W / 4)]).hole(hd)
+    zc = T + (H - T) * 0.6
+    side = cq.Workplane("YZ").workplane(offset=-L / 2 - 1).pushPoints([(W / 4, zc), (-W / 4, zc)]).circle(hd / 2).extrude(T + 2)
+    body = body.cut(side)
+    if rng.random() < 0.6:  # косынка
+        g = r_(rng, 4, 8)
+        gus = (cq.Workplane("XZ").polyline([(-L / 2 + T, T), (-L / 2 + T + (L - T) * 0.45, T), (-L / 2 + T, T + (H - T) * 0.45)])
+               .close().extrude(g / 2, both=True))
+        body = body.union(gus)
+    return body, f"уголок {L}×{W}, стенка {H}"
+
+
+FAMILIES = [plate, flange, bushing, shaft, angle]
 
 
 def break_part(part, rng):
@@ -115,7 +135,8 @@ def break_part(part, rng):
 
 def make(seed: int, d: Path):
     rng = np.random.default_rng(seed)
-    fam = FAMILIES[seed % len(FAMILIES)]
+    fams = [f for f in FAMILIES if f.__name__ in ONLY] if ONLY else FAMILIES
+    fam = fams[seed % len(fams)]
     part, desc = fam(rng)
     broken = break_part(part, rng)
     cq.exporters.export(part, str(d / "truth.stl"), tolerance=0.02, angularTolerance=0.1)
@@ -131,7 +152,12 @@ def make(seed: int, d: Path):
     return desc, truth
 
 
+ONLY: list[str] = []
+
+
 def main():
+    global ONLY
+    ONLY = sys.argv[3].split(",") if len(sys.argv) > 3 else []
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 12
     seed0 = int(sys.argv[2]) if len(sys.argv) > 2 else 100
     tmp = Path(tempfile.mkdtemp())

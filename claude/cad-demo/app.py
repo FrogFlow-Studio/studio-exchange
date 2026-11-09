@@ -7,8 +7,16 @@ from __future__ import annotations
 
 import json
 import re
+import os
 import subprocess
 import sys
+
+# Windows: вывод в канал по умолчанию в cp1251, а страница и проверки читают UTF-8.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 import threading
 import time
 import webbrowser
@@ -70,7 +78,8 @@ def start_job(scan: Path, notes: str, units: str = "mm") -> None:
     def work():
         cmd = [sys.executable, "-u", str(HERE / "demo.py"), str(scan), "--notes", notes, "--no-open", "--units", units]
         p = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                             encoding="utf-8", errors="replace")
+                             encoding="utf-8", errors="replace",
+                             env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1"))
         for line in p.stdout:
             line = line.rstrip()
             with LOCK:

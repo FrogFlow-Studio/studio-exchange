@@ -16,6 +16,13 @@ import os
 import shutil
 import subprocess
 import sys
+
+# Windows: вывод в канал по умолчанию в cp1251, а страница и проверки читают UTF-8.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 import time
 from pathlib import Path
 

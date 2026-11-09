@@ -3,8 +3,16 @@
 Проверяет замеры на трёх тестовых деталях и на испорченных копиях скана
 (повёрнут, в метрах, дыры, мусор), затем полный цикл в режиме без ИИ.
 """
+import os
 import subprocess
 import sys
+
+# Windows: вывод в канал по умолчанию в cp1251, а страница и проверки читают UTF-8.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 import tempfile
 from pathlib import Path
 
@@ -41,6 +49,14 @@ import shutil  # noqa: E402
 
 for v in ("3.10", "3.11", "3.12"):
     exe = shutil.which(f"python{v}")
+    if not exe and shutil.which("py"):  # Windows: запускатель py -3.x
+        ok_py = subprocess.run(["py", f"-{v}", "--version"], capture_output=True).returncode == 0
+        exe = None
+        if ok_py:
+            fails_v = [f.name for f in HERE.glob("*.py")
+                       if subprocess.run(["py", f"-{v}", "-m", "py_compile", str(f)], capture_output=True).returncode != 0]
+            check(f"Python {v}: все файлы компилируются", not fails_v, fails_v)
+            continue
     if not exe:
         print(f"  --   Python {v} не установлен здесь, пропуск")
         continue
@@ -201,13 +217,15 @@ import re
 
 for part in ("bracket", "flange", "bushing"):
     r = subprocess.run([sys.executable, str(HERE / "demo.py"), str(S / f"{part}_scan.stl"), "--no-open",
-                        "--mode", "geometric", "--out", str(tmp / "out")], capture_output=True, text=True, encoding="utf-8")
+                        "--mode", "geometric", "--out", str(tmp / "out")], capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1"))
     m = re.search(r"эталон: в допуске ([\d.]+)%", r.stdout)
     t = float(m.group(1)) if m else 0.0
     check(f"{part}: алгоритм без ИИ построил модель, совпадение с целым эталоном ≥ 95% ({t}%)",
           r.returncode == 0 and "готово:" in r.stdout and t >= 95, r.stdout[-400:] + r.stderr[-400:])
     r = subprocess.run([sys.executable, str(HERE / "demo.py"), str(S / f"{part}_scan.stl"), "--no-open",
-                        "--mode", "scripted", "--out", str(tmp / "out")], capture_output=True, text=True, encoding="utf-8")
+                        "--mode", "scripted", "--out", str(tmp / "out")], capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1"))
     ok = r.returncode == 0 and "сошлось" in r.stdout and "готово:" in r.stdout
     check(f"{part}: цикл с исправлениями сошёлся, отчёт есть", ok, r.stdout[-400:] + r.stderr[-400:])
 

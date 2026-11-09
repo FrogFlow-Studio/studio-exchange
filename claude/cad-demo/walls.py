@@ -137,7 +137,43 @@ def walls(mesh: trimesh.Trimesh, max_thick: float = 25.0) -> list[dict]:
                     pass
             out.append({"normal": a["normal"], "origin": a["point"], "u": u, "v": v, "thickness": t,
                         "outline": full, "area": float(full.area)})
+    used = {k for pair in seen for k in pair}
+    out += _single_sided(mesh, pats, frames, used, max_thick)
     return _dedupe(out)
+
+
+def _single_sided(mesh, pats, frames, used, max_thick) -> list[dict]:
+    """Плоский участок без плоской пары: обратная сторона бывает кривой или разбитой на
+    мелочь. Толщину меряем лучами внутрь из точек участка: первое попадание в поверхность,
+    смотрящую навстречу, — другая сторона стенки."""
+    out = []
+    fc, fn = mesh.triangles_center, mesh.face_normals
+    for k, p in enumerate(pats):
+        if k in used:
+            continue
+        n = p["normal"]
+        faces = p["faces"]
+        pick = faces if len(faces) <= 300 else np.random.default_rng(k).choice(faces, 300, replace=False)
+        orig = fc[pick] - n * 0.05
+        dirs = np.repeat(-n[None], len(pick), axis=0)
+        try:
+            loc, ri, ti = mesh.ray.intersects_location(orig, dirs, multiple_hits=False)
+        except Exception:  # noqa: BLE001
+            continue
+        if len(ri) < 0.5 * len(pick):
+            continue
+        d = np.einsum("ij,j->i", orig[ri] - loc, n)
+        ok = (fn[ti] @ n < -0.5) & (d > 0.6) & (d < max_thick)
+        if ok.sum() < 0.5 * len(pick):
+            continue
+        t = float(np.median(d[ok]))
+        u, v = frames[k]
+        g = _outline(mesh, faces, p["point"], u, v)
+        if g.area < 15:
+            continue
+        out.append({"normal": n, "origin": p["point"], "u": u, "v": v, "thickness": t,
+                    "outline": g, "area": float(g.area), "single": True})
+    return out
 
 
 def _dedupe(ws: list[dict]) -> list[dict]:

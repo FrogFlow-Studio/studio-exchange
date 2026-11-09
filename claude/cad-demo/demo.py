@@ -193,6 +193,7 @@ a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:
 {''.join(blocks)}</section>
 <section><h2>Скан</h2><p>Граней {d['faces']}, замкнут: {'да' if d['watertight'] else 'нет'}, кусков: {d['components']}, габарит {d['extents_mm']} мм.
 {' '.join(e(w) for w in d['warnings'])}</p>
+<h3>Сводка замеров (геометрия, без ИИ)</h3><ul>{''.join('<li>' + e(x) + '</li>' for x in ctx['sheet'].get('summary', []))}</ul>
 <details><summary>Лист замеров, который получил ИИ</summary><pre>{e(json.dumps(ctx['sheet'], ensure_ascii=False, indent=1))}</pre></details></section>
 <section><h2>Ограничения</h2><ul>
 <li>STEP — точная геометрия (B-rep), но не дерево построения SolidWorks. Открывается в любой CAD (КОМПАС-3D, SolidWorks, Fusion, FreeCAD) как готовое тело.</li>
@@ -243,6 +244,9 @@ def main() -> None:
         f"сечений {len(sheet['sections'])}")
     for w in d["warnings"]:
         log("    внимание: " + w)
+    if d.get("noise_mm", 0) * 3 > a.tol:
+        a.tol = round(3 * d["noise_mm"], 2)
+        log(f"    допуск сравнения поднят до {a.tol} мм: меньше шума скана мерить нельзя")
     (out / "sheet.json").write_text(json.dumps(sheet, ensure_ascii=False, indent=1), encoding="utf-8")
 
     messages = [{"role": "user", "content": llm.first_prompt(sheet, a.notes), "image": a.image}]

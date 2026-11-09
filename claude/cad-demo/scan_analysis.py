@@ -52,19 +52,27 @@ def align(mesh: trimesh.Trimesh) -> tuple[trimesh.Trimesh, np.ndarray]:
     главные оси в плане по X/Y, центр габарита в плане в начале координат."""
     m = mesh.copy()
     normals, areas = m.face_normals, m.area_faces
-    # Кластеризуем нормали: ищем направление с наибольшей площадью граней.
-    best_n, best_a = None, -1.0
-    idx = np.argsort(-areas)[:4000]
-    for n in normals[idx[:: max(1, len(idx) // 400)]]:
-        a = areas[(normals @ n) > 0.995].sum()
-        if a > best_a:
-            best_a, best_n = a, n
-    # Уточняем: средняя нормаль всех граней этой плоскости (одна грань шумная,
-    # перекос в 0.5° даёт сдвиг осей на высоте детали).
-    for _ in range(3):
-        sel = (normals @ best_n) > 0.98
-        best_n = (normals[sel] * areas[sel, None]).sum(axis=0)
-        best_n /= np.linalg.norm(best_n)
+    # Кандидаты в опорную плоскость: направления нормалей с большой площадью.
+    # Опорная = на неё деталь можно положить: все точки по одну сторону от неё.
+    # Порог по нормали мягкий (0.97), чтобы шумный скан не терял грани.
+    V = m.vertices
+    idx = np.argsort(-areas)[:6000]
+    cands = []
+    for n in normals[idx[:: max(1, len(idx) // 500)]]:
+        if any(float(n @ c) > 0.97 for c, _, _ in cands):
+            continue
+        sel = (normals @ n) > 0.97
+        nn = (normals[sel] * areas[sel, None]).sum(axis=0)
+        nn /= np.linalg.norm(nn)
+        for _ in range(3):  # уточнение средней нормалью
+            sel = (normals @ nn) > 0.97
+            nn = (normals[sel] * areas[sel, None]).sum(axis=0)
+            nn /= np.linalg.norm(nn)
+        d = float(np.average(m.triangles_center[sel] @ nn, weights=areas[sel]))
+        support = float(((V @ nn) <= d + 0.5 + 0.01 * max(m.extents)).mean())
+        cands.append((nn, float(areas[sel].sum()), support))
+    ok = [c for c in cands if c[2] > 0.995]
+    best_n = max(ok or cands, key=lambda c: c[1])[0]
     T = trimesh.geometry.align_vectors(best_n, [0, 0, -1])
     m.apply_transform(T)
     # Ось в плане: по боковым (вертикальным) граням. Берём углы их нормалей по
@@ -83,8 +91,10 @@ def align(mesh: trimesh.Trimesh) -> tuple[trimesh.Trimesh, np.ndarray]:
     R = trimesh.transformations.rotation_matrix(np.radians(-peak), [0, 0, 1])
     m.apply_transform(R)
     # Z=0 по опорной плоскости (средняя высота её граней, а не по шумовому минимуму).
-    bottom = (m.face_normals[:, 2] < -0.985)
-    z0 = float(np.average(m.triangles_center[bottom, 2], weights=m.area_faces[bottom])) if bottom.any() else m.bounds[0][2]
+    bottom = (m.face_normals[:, 2] < -0.97)
+    zb = m.triangles_center[bottom, 2] if bottom.any() else m.vertices[:, 2]
+    zb = zb[zb < np.percentile(zb, 2) + 3.0]  # только нижняя плоскость, не другие грани «вниз»
+    z0 = float(np.median(zb))
     lo, hi = m.bounds
     Tt = trimesh.transformations.translation_matrix([-(lo[0] + hi[0]) / 2, -(lo[1] + hi[1]) / 2, -z0])
     m.apply_transform(Tt)
@@ -92,11 +102,21 @@ def align(mesh: trimesh.Trimesh) -> tuple[trimesh.Trimesh, np.ndarray]:
     return m, total
 
 
-def plane_levels(mesh: trimesh.Trimesh, min_share: float = 0.01) -> list[dict]:
+def noise_estimate(mesh: trimesh.Trimesh) -> float:
+    """Шум скана: разброс точек опорной плоскости (Z≈0) по высоте, мм."""
+    c, n = mesh.triangles_center, mesh.face_normals
+    sel = (n[:, 2] < -0.97) & (np.abs(c[:, 2]) < 2.0)
+    if sel.sum() < 30:
+        return 0.0
+    z = c[sel, 2]
+    return float(1.4826 * np.median(np.abs(z - np.median(z))))  # устойчивое СКО
+
+
+def plane_levels(mesh: trimesh.Trimesh, min_share: float = 0.01, noise: float = 0.0) -> list[dict]:
     n, a, c = mesh.face_normals, mesh.area_faces, mesh.triangles_center
     out = []
     for sign, name in ((1, "смотрит вверх"), (-1, "смотрит вниз")):
-        sel = (n[:, 2] * sign) > 0.985
+        sel = (n[:, 2] * sign) > 0.97
         if not sel.any():
             continue
         z, w = c[sel, 2], a[sel]
@@ -104,7 +124,7 @@ def plane_levels(mesh: trimesh.Trimesh, min_share: float = 0.01) -> list[dict]:
         z, w = z[order], w[order]
         groups, cur = [], [0]
         for i in range(1, len(z)):
-            if z[i] - z[i - 1] > 0.4:
+            if z[i] - z[i - 1] > max(0.4, 4 * noise):
                 groups.append(cur)
                 cur = []
             cur.append(i)
@@ -145,8 +165,16 @@ def partial_circle(pts: np.ndarray, tol: float = 0.3, min_share: float = 0.45) -
     if best is None or best[0].mean() < min_share:
         return None
     c, r, _ = fit_circle(pts[best[0]])
+    # Доля по ДЛИНЕ контура, а не по числу точек: прямой край скола описан
+    # редкими точками и иначе почти не влиял бы на долю.
+    inl = np.abs(np.linalg.norm(pts - c, axis=1) - r) < tol
+    seg = np.linalg.norm(np.roll(pts, -1, axis=0) - pts, axis=1)
+    on = inl & np.roll(inl, -1)
+    share = float(seg[on].sum() / seg.sum())
+    if share < min_share:
+        return None
     return {"center_xy": [round(float(c[0]), 2), round(float(c[1]), 2)], "diameter": round(2 * r, 2),
-            "share_of_contour": round(float(best[0].mean()), 2)}
+            "share_of_contour": round(share, 2)}
 
 
 def hole_patterns(rings: list[dict]) -> list[dict]:
@@ -210,9 +238,12 @@ def describe_ring(pts: np.ndarray, tol_round: float = 0.25) -> dict:
     c, r, resid = fit_circle(pts)
     poly = trimesh.path.polygons.Polygon(pts)
     d = {"area_mm2": round(float(poly.area), 1)}
-    if resid < max(tol_round, 0.03 * r) and len(pts) >= 8:
+    # Круглость по СКО отклонения, а не по максимуму: шумный скан даёт отдельные
+    # выбросы, а форма при этом круглая.
+    rms = float(np.sqrt(np.mean((np.linalg.norm(pts - c, axis=1) - r) ** 2)))
+    if len(pts) >= 8 and r < 1e4 and rms < max(tol_round * 0.6, 0.006 * r) and resid < max(4 * tol_round, 0.03 * r):
         d.update({"shape": "окружность", "center_xy": [round(float(c[0]), 2), round(float(c[1]), 2)],
-                  "diameter": round(2 * r, 2), "roundness_err": round(resid, 3)})
+                  "diameter": round(2 * r, 2), "roundness_rms": round(rms, 3)})
     else:
         # Частичная дуга: если большая часть контура лежит на одной окружности
         # (край сломан), сообщаем её — это подсказка о целой форме.
@@ -280,11 +311,89 @@ def vertical_sections(mesh: trimesh.Trimesh) -> list[dict]:
     return out
 
 
+def summary(sheet: dict) -> list[str]:
+    """Короткая сводка для человека и ИИ: главное из листа замеров простыми словами."""
+    out = []
+    lo, hi = sheet["bounds_mm"]
+    out.append(f"Габарит после выравнивания: {hi[0]-lo[0]:.1f} × {hi[1]-lo[1]:.1f} × {hi[2]-lo[2]:.1f} мм (X × Y × Z).")
+    up = [p["z_mm"] for p in sheet["horizontal_planes"] if p["facing"] == "смотрит вверх"]
+    if up:
+        out.append("Горизонтальные площадки сверху на высотах Z: " + ", ".join(f"{z:.2f}" for z in up) + " мм.")
+    seen = set()
+    for sec in sheet["sections"]:
+        for i, reg in enumerate(sec["regions"]):
+            o = reg["outer"]
+            if o.get("shape") == "окружность":
+                key = ("o", round(o["diameter"]), round(o["center_xy"][0]), round(o["center_xy"][1]))
+                txt = f"круглый контур Ø{o['diameter']} с центром {o['center_xy']}"
+            elif o.get("partial_circle"):
+                pc = o["partial_circle"]
+                key = ("p", round(pc["diameter"]))
+                txt = (f"контур — окружность Ø{pc['diameter']} с центром {pc['center_xy']}, но совпадает лишь "
+                       f"{int(pc['share_of_contour']*100)}% контура: остальное — выступы (рёбра) или скол")
+            else:
+                bb = o.get("bbox_xy")
+                key = ("c", tuple(round(v) for v in sum(bb, [])))
+                txt = f"контур {bb[1][0]-bb[0][0]:.1f} × {bb[1][1]-bb[0][1]:.1f} мм ({o.get('vertices_total')} вершин после упрощения)"
+            if key not in seen:
+                seen.add(key)
+                out.append(f"Сечение Z={sec['z_mm']}: {txt}.")
+            for h in reg["inner"]:
+                if h.get("shape") == "окружность":
+                    k2 = ("h", round(h["diameter"]), round(h["center_xy"][0]), round(h["center_xy"][1]))
+                    if k2 not in seen:
+                        seen.add(k2)
+                        out.append(f"Отверстие Ø{h['diameter']} в {h['center_xy']} (видно на Z={sec['z_mm']}).")
+                elif h.get("partial_circle"):
+                    pc = h["partial_circle"]
+                    k2 = ("hp", round(pc["diameter"]), round(pc["center_xy"][0]), round(pc["center_xy"][1]))
+                    if k2 not in seen:
+                        seen.add(k2)
+                        bb = h["bbox_xy"]
+                        out.append(f"Отверстие Ø{pc['diameter']} в {pc['center_xy']} с вырезом сбоку "
+                                   f"(паз/шпоночный паз?): отверстие целиком в рамке {bb}, Z={sec['z_mm']}.")
+            for pat in reg.get("hole_patterns", []):
+                k3 = ("pat", pat["pattern"], round(pat["hole_diameter"]))
+                if k3 in seen:
+                    continue
+                seen.add(k3)
+                t = f"{pat['pattern']}: Ø{pat['hole_diameter']}, найдено {pat['found']} из {pat['likely_total']}"
+                if pat.get("pcd_diameter"):
+                    t += f", диаметр окружности центров {pat['pcd_diameter']}, центр {pat['center_xy']}, первый угол {pat['first_angle_deg']}°"
+                if pat.get("sides_mm"):
+                    t += f", стороны прямоугольника {pat['sides_mm']}"
+                if pat["missing_positions_xy"]:
+                    t += f". НЕ ХВАТАЕТ отверстий в {pat['missing_positions_xy']} — вероятно, отломаны"
+                out.append(t + ".")
+    d = sheet["diagnostics"]
+    out.append(f"Шум скана ~{d.get('noise_mm', 0)} мм. " + " ".join(d["warnings"]))
+    return out
+
+
 def measurement_sheet(path: str) -> tuple[dict, trimesh.Trimesh]:
     raw = load_mesh(path)
     diag = diagnostics(raw)
+    # Единицы: STL их не хранит. Деталь меньше 2 единиц почти наверняка в метрах.
+    if max(raw.extents) < 2:
+        raw.apply_scale(1000.0)
+        diag["warnings"].append("файл похож на метры: увеличен в 1000 раз (в мм). Проверьте габарит")
+        diag["scaled_to_mm"] = 1000.0
+    # Дыры сетки (места, которые сканер не увидел): штопаем мелкие, чтобы сечения
+    # замыкались. Исходный файл не меняется.
+    if not raw.is_watertight:
+        before = len(raw.faces)
+        trimesh.repair.fill_holes(raw)
+        diag["holes_filled"] = bool(len(raw.faces) > before)
+        diag["watertight_after_repair"] = bool(raw.is_watertight)
+        if raw.is_watertight:
+            diag["warnings"] = [w for w in diag["warnings"] if not w.startswith("сетка не замкнута")]
+            diag["warnings"].append("в сетке были мелкие дыры, заштопаны автоматически")
     mesh, T = align(largest_component(raw))
-    lv = plane_levels(mesh)
+    noise = noise_estimate(mesh)
+    diag["noise_mm"] = round(noise, 3)
+    if noise > 0.1:
+        diag["warnings"].append(f"скан шумный (~{noise:.2f} мм): мелкие размеры менее надёжны")
+    lv = plane_levels(mesh, noise=noise)
     sheet = {
         "file": str(path),
         "diagnostics": diag,
@@ -296,4 +405,5 @@ def measurement_sheet(path: str) -> tuple[dict, trimesh.Trimesh]:
         "sections": sections(mesh, lv),
         "vertical_sections": vertical_sections(mesh),
     }
+    sheet = {"summary": summary(sheet), **sheet}
     return sheet, mesh

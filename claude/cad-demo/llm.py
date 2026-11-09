@@ -44,8 +44,11 @@ SYSTEM = """Ты инженер-конструктор. Восстанавлив
 
 
 def first_prompt(sheet: dict, notes: str) -> str:
-    s = json.dumps(sheet, ensure_ascii=False)
-    return (f"Лист замеров скана:\n{s}\n\nЗаметки мастера: {notes or 'нет'}\n\n"
+    rest = {k: v for k, v in sheet.items() if k not in ("summary", "transform_from_scan_4x4", "file")}
+    s = json.dumps(rest, ensure_ascii=False)
+    summ = "\n".join("- " + line for line in sheet.get("summary", []))
+    return (f"Сводка скана (посчитана геометрией, не догадка):\n{summ}\n\nПолный лист замеров:\n{s}\n\n"
+            f"Заметки мастера: {notes or 'нет'}\n\n"
             "Построй модель целой детали.")
 
 

@@ -1,0 +1,9 @@
+[
+ {
+  "provider": "заготовка разработчика (не ИИ)",
+  "answer": "```python\nimport cadquery as cq\n\n# Бурт Ø50×6, втулка Ø30 до Z=40, сквозное отверстие Ø16.\nflange = cq.Workplane(\"XY\").circle(25).extrude(6)\nsleeve = cq.Workplane(\"XY\").workplane(offset=6).circle(15).extrude(34)\nbody = flange.union(sleeve)\nresult = body.cut(cq.Workplane(\"XY\").circle(8).extrude(40))\n```\n```json\n{\n \"plan\": \"Втулка с буртом: бурт Ø50×6, втулка Ø30 до Z=40, отверстие Ø16.\",\n \"assumptions\": [\n  \"вырез сбоку отверстия принял за повреждение\"\n ],\n \"restored\": [\n  \"отколотый сектор бурта по окружности Ø50\"\n ],\n \"check_by_engineer\": [\n  \"Ø16 отверстия\",\n  \"Ø30 втулки\"\n ]\n}\n```"
+ },
+ {
+  "answer": "```python\nimport cadquery as cq\n\n# Бурт Ø50×6 (отколотый сектор восстановлен по окружности), втулка Ø30 до Z=40,\n# сквозное отверстие Ø16 со шпоночным пазом шириной 5 до Y=11 (по рамке выреза).\nflange = cq.Workplane(\"XY\").circle(25).extrude(6)\nsleeve = cq.Workplane(\"XY\").workplane(offset=6).circle(15).extrude(34)\nbody = flange.union(sleeve)\nbody = body.cut(cq.Workplane(\"XY\").circle(8).extrude(40))\nkey = cq.Workplane(\"XY\").center(0, 9.5).rect(5, 3.0).extrude(40)  # Y от 8 до 11\nresult = body.cut(key)\n```\n```json\n{\n \"plan\": \"Добавил шпоночный паз: проверка показала, что модель закрывает вырез у отверстия по всей высоте (Y≈8–11), значит это не скол, а паз.\",\n \"assumptions\": [\n  \"паз сквозной по всей высоте, ширина 5 (по рамке выреза)\"\n ],\n \"restored\": [\n  \"отколотый сектор бурта по окружности Ø50\"\n ],\n \"check_by_engineer\": [\n  \"ширина и глубина паза (5 × до Y=11) — подобрать под шпонку по стандарту\",\n  \"Ø16 отверстия\"\n ]\n}\n```"
+ }
+]

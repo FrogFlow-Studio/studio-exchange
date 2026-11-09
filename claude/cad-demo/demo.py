@@ -449,13 +449,33 @@ def main() -> None:
             iterations.append(it0)
             if it0["run"].get("ok"):
                 best = it0
+        # Тонкостенная деталь (пластик, лист): слои по сечениям не справляются — пробуем
+        # черновик из стенок (каждая пластина целиком по паре параллельных сторон).
+        if best is None or best["cmp"]["within_tol_share"] < 0.9:
+            t0 = time.time()
+            log("2/4 попытка 0б: черновик из стенок (для тонкостенных деталей), без ИИ…")
+            wj = out / "walls.json"
+            try:
+                subprocess.run([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
+                                str(out / "sheet.json"), "1", str(wj), "walls"],
+                               timeout=a.geo_timeout + 120, check=True, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                w = json.loads(wj.read_text(encoding="utf-8"))
+                log("    " + w["meta"]["plan"])
+                itw = evaluate("0б", w["code"], w["meta"], t0, "стенки, без ИИ")
+                iterations.append(itw)
+                if itw["run"].get("ok") and (best is None or rank(itw) > rank(best)):
+                    best = itw
+            except subprocess.TimeoutExpired:
+                log("    черновик из стенок не уложился во время, дальше работает ИИ")
+            except Exception as ex:  # noqa: BLE001
+                log(f"    черновик из стенок не получился ({type(ex).__name__})")
 
     hint = ""
-    if iterations and iterations[0]["cmp"]:
-        c0 = iterations[0]["cmp"]
+    if best is not None and best["n"] in (0, "0б") and best["cmp"]:
+        c0 = best["cmp"]
         hint = ("\n\nДля справки: черновик без ИИ (слои по сечениям) совпал со сканом на "
                 f"{c0['within_tol_share']*100:.1f}%. Он копирует форму ступеньками и не знает замысла; "
-                "построй деталь по замыслу. Что черновик восстановил: " + "; ".join(iterations[0]["meta"]["restored"]))
+                "построй деталь по замыслу. Что черновик восстановил: " + "; ".join(best["meta"].get("restored", [])))
     use_tools = bool(prov and a.ai_input == "tools" and prov.supports_tools)
     tools = None
     if use_tools:

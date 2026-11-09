@@ -66,6 +66,11 @@ TOOLS = [
          "center": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
          "radius_max": {"type": "number"}},
          "required": ["axis", "value", "center", "radius_max"]}},
+    {"name": "walls",
+     "description": "Стенки тонкостенной детали, найденные по сетке: пары параллельных сторон с "
+                    "материалом между ними. Для каждой: нормаль наружной стороны, толщина, площадь и "
+                    "контур (точки 3D на наружной стороне). Самые крупные первыми. Считается до минуты.",
+     "input_schema": {"type": "object", "properties": {"top": {"type": "integer", "default": 20}}}},
     {"name": "nearest",
      "description": "Для каждой точки (до 50): ближайшая точка поверхности скана, расстояние и нормаль. "
                     "Удобно проверить, лежит ли задуманная грань на скане.",
@@ -196,6 +201,14 @@ class ScanTools:
         rms = float(np.sqrt(np.mean((np.linalg.norm(pts - c, axis=1) - r) ** 2)))
         return {"count": int(len(pts)), "center": _r(c), "diameter_mm": round(2 * r, 3),
                 "rms_mm": round(rms, 3), "share_of_circle_covered": round(covered, 2)}
+
+    def walls(self, top: int = 20) -> dict:
+        import walls as wmod
+
+        if not hasattr(self, "_walls"):
+            self._walls = wmod.walls(self.mesh)
+        d = wmod.describe(self._walls, top=int(np.clip(top, 1, 40)))
+        return {"found": len(self._walls), "walls": d}
 
     def nearest(self, points) -> dict:
         p = np.asarray(points, float)[:50]

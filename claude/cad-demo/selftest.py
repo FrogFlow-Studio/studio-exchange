@@ -159,6 +159,25 @@ check("целая плита с тремя отверстиями: четвёр�
       and not any("добавлено" in r for r in tmeta["restored"]), tmeta["restored"])
 check("два тела не принимаются", bool(gates.check(dict(ok_run, solids=2), m_ok, psheet, pscan)))
 
+print("Тонкостенная деталь: черновик из стенок")
+import walls as _walls  # noqa: E402
+import compare as _cmp  # noqa: E402
+
+thin = (cq.Workplane("XY").box(60, 40, 2, centered=(True, True, False))
+        .union(cq.Workplane("XY").box(60, 2, 30, centered=(True, False, False)).translate((0, 18, 0)))
+        .union(cq.Workplane("XY").box(2, 40, 20, centered=(False, True, False)).translate((10, 0, 0))))
+tf2 = tmp / "thin.stl"
+cq.exporters.export(thin, str(tf2), tolerance=0.02)
+_, thin_scan = sa.measurement_sheet(str(tf2))
+twd = tmp / "thin_it"
+twd.mkdir(exist_ok=True)
+import demo as _demo  # noqa: E402
+
+trun = _demo.run_code(_walls.draft_code(_walls.walls(thin_scan)), twd)
+tfit = _cmp.compare(thin_scan, trimesh.load(twd / "model.stl", force="mesh"), tol=0.3)["within_tol_share"] if trun.get("ok") else 0
+check(f"тонкостенный уголок с ребром: одно тело, совпадение ≥ 95% ({tfit*100:.1f}%)",
+      trun.get("ok") and trun.get("solids") == 1 and tfit >= 0.95, trun.get("error", ""))
+
 print("ИИ смотрит сетку сам (инструменты), проверка цикла без сети:")
 import json as _json  # noqa: E402
 import types  # noqa: E402

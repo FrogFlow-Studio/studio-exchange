@@ -219,7 +219,7 @@ def draft_code(ws: list[dict]) -> str:
               "    nxt = []",
               "    for k in range(0, len(shapes) - 1, 2):",
               "        try:",
-              "            r = shapes[k].fuse(shapes[k + 1], tol=0.02)",
+              "            r = shapes[k].fuse(shapes[k + 1])",
               "            ok = r.isValid() and r.Volume() > 0.9 * max(shapes[k].Volume(), shapes[k + 1].Volume())",
               "            nxt.append(r if ok else cq.Compound.makeCompound([shapes[k], shapes[k + 1]]))",
               "        except Exception:",
@@ -227,5 +227,9 @@ def draft_code(ws: list[dict]) -> str:
               "    if len(shapes) % 2:",
               "        nxt.append(shapes[-1])",
               "    shapes = nxt",
-              "result = shapes[0].clean()"]
+              "result = shapes[0].clean()",
+              "# мелкие оторванные куски (шум на краях) отбрасываем: деталь — одно тело",
+              "sol = sorted(result.Solids(), key=lambda x: -x.Volume())",
+              "if len(sol) > 1 and sum(x.Volume() for x in sol[1:]) < 0.03 * sol[0].Volume():",
+              "    result = sol[0]"]
     return "\n".join(lines)

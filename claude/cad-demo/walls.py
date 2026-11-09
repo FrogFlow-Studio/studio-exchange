@@ -118,29 +118,35 @@ def walls(mesh: trimesh.Trimesh, max_thick: float = 25.0) -> list[dict]:
             if mesh.is_watertight and not mesh.contains(mids).all():
                 continue
             seen.add((min(i, j), max(i, j)))
-            # Точный контур стенки — сечение тела по её средней плоскости (там видны и стыки
-            # с соседними стенками, и настоящий свободный край), но только рядом с этой парой.
-            mid_o = o - a["normal"] * t / 2
-            sec = mesh.section(plane_origin=mid_o, plane_normal=a["normal"])
-            full = ov
-            if sec is not None:
-                T = np.eye(4)
-                T[:3, :3] = np.vstack([u, v, a["normal"]])
-                T[:3, 3] = -T[:3, :3] @ mid_o
-                try:
-                    pl, _ = sec.to_2D(to_2D=T)
-                    body = unary_union([p.buffer(0) for p in pl.polygons_full])
-                    cand = body.intersection(ov.buffer(min(3.0, 1.5 * t)))
-                    if cand.area > 0.7 * ov.area:
-                        full = cand
-                except Exception:  # noqa: BLE001
-                    pass
+            full = _mid_section(mesh, o, a["normal"], u, v, t, ov)
             out.append({"normal": a["normal"], "origin": a["point"], "u": u, "v": v, "thickness": t,
                         "outline": full, "area": float(full.area)})
     out += _single_sided(mesh, pats, frames, out, max_thick)
     if mesh.is_watertight:
         out = _check_material(mesh, out)
     return _dedupe(out)
+
+
+def _mid_section(mesh, origin, n, u, v, t, base):
+    """Точный контур стенки — сечение тела по её средней плоскости (там видны и стыки
+    с соседними стенками, и настоящий свободный край), но только рядом с base: так стенка
+    доходит до соседней через скругление, а не обрывается перед ним щелью."""
+    mid_o = origin - n * t / 2
+    sec = mesh.section(plane_origin=mid_o, plane_normal=n)
+    if sec is None:
+        return base
+    T = np.eye(4)
+    T[:3, :3] = np.vstack([u, v, n])
+    T[:3, 3] = -T[:3, :3] @ mid_o
+    try:
+        pl, _ = sec.to_2D(to_2D=T)
+        body = unary_union([p.buffer(0) for p in pl.polygons_full])
+        cand = body.intersection(base.buffer(min(3.0, 1.5 * t)))
+        if cand.area > 0.7 * base.area:
+            return cand
+    except Exception:  # noqa: BLE001
+        pass
+    return base
 
 
 def _check_material(mesh, ws: list[dict]) -> list[dict]:
@@ -297,7 +303,7 @@ def describe(ws: list[dict], top: int = 25) -> list[dict]:
     return res
 
 
-def draft_code(ws: list[dict]) -> str:
+def draft_code(ws: list[dict], buf: float = 0.2) -> str:
     """CadQuery: каждая стенка — контур на своей плоскости, выдавленный на толщину внутрь."""
     lines = ["import cadquery as cq", "", "parts = []"]
     for w in ws:
@@ -307,7 +313,7 @@ def draft_code(ws: list[dict]) -> str:
             if g.area < 15:
                 continue
             # контур уже доходит до стыков (сечение по средней плоскости); чуть-чуть нахлёста
-            g = g.buffer(0.2, join_style=2).simplify(0.3)
+            g = g.buffer(buf, join_style=2).simplify(0.3)
             if g.geom_type != "Polygon":
                 continue
             ext = [(round(x, 2), round(-y, 2)) for x, y in list(g.exterior.coords)[:-1]]  # ось y эскиза = -v

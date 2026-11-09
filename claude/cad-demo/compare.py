@@ -51,6 +51,9 @@ def compare(scan: trimesh.Trimesh, model: trimesh.Trimesh, tol: float = 0.3, n: 
     _, d_model, _ = trimesh.proximity.closest_point(scan, mp_pts)
     added = d_model > tol
     within = float((ad <= tol).mean())
+    # шаг между точками выборки: на большой детали он больше 2 мм, и с постоянной связью
+    # промахи не собирались в области — ИИ не видел, где чинить
+    link = max(2.0, 2.5 * float(np.sqrt(scan.area / n)))
     return {
         "tolerance_mm": tol,
         "scan_points": int(len(sp_pts)),
@@ -62,9 +65,9 @@ def compare(scan: trimesh.Trimesh, model: trimesh.Trimesh, tol: float = 0.3, n: 
         "outside_share": round(float(outside.mean()), 4),
         "inside_share": round(float(inside.mean()), 4),
         "added_surface_share": round(float(added.mean()), 4),
-        "clusters_outside": clusters(sp_pts[outside], sd[outside]),
-        "clusters_inside": clusters(sp_pts[inside], sd[inside]),
-        "clusters_added": clusters(mp_pts[added], d_model[added]),
+        "clusters_outside": clusters(sp_pts[outside], sd[outside], link=link, min_pts=8),
+        "clusters_inside": clusters(sp_pts[inside], sd[inside], link=link, min_pts=8),
+        "clusters_added": clusters(mp_pts[added], d_model[added], link=link, min_pts=8),
         # для картинок
         "_scan_pts": sp_pts, "_scan_dev": sd, "_model_pts": mp_pts, "_model_dev": d_model,
     }

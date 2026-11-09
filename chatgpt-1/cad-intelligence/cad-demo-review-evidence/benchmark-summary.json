@@ -1,0 +1,19 @@
+{
+  "reviewed_commit": "243f806d040d066a5946c320e52dd9c32fe35024",
+  "commands": [
+    "python bench.py 36 100 -j 3",
+    "python bench.py 36 200 -j 3"
+  ],
+  "requested": 72,
+  "generation_skips_from_logs": [
+    114,
+    120
+  ],
+  "rows": 70,
+  "valid": 70,
+  "surface_metric_ge_95": 70,
+  "median_truth_fit": 1.0,
+  "minimum_truth_fit": 0.9614,
+  "llm_calls": 0,
+  "note": "Requested seeds selected for this review. Original author list of 72 cases not provided; this does not independently reproduce that exact list."
+}

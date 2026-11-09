@@ -1,0 +1,47 @@
+<REVIEW_TMP>\.venv\Lib\site-packages\shapely\constructive.py:245: RuntimeWarning: divide by zero encountered in buffer
+  return lib.buffer(
+<REVIEW_TMP>\.venv\Lib\site-packages\shapely\constructive.py:245: RuntimeWarning: invalid value encountered in buffer
+  return lib.buffer(
+{"seed": 200, "part": "втулка Ø57.5/Ø26.5×28.5", "valid": true, "scan_fit": 0.9834, "truth_fit": 0.9992, "truth_p95": 0.102, "restored": 1, "sec": 24.3}
+{"seed": 201, "part": "ось 2 ступ., Ø32.5…Ø30.5", "valid": true, "scan_fit": 0.9262, "truth_fit": 1.0, "truth_p95": 0.122, "restored": 2, "sec": 10.4}
+{"seed": 202, "part": "уголок 57.5×43.5, стенка 49.0", "valid": true, "scan_fit": 0.9827, "truth_fit": 0.9874, "truth_p95": 0.1, "restored": 3, "sec": 20.9}
+{"seed": 203, "part": "точёная Ø53.5→Ø25.0, конус 9.0", "valid": true, "scan_fit": 0.9726, "truth_fit": 0.9969, "truth_p95": 0.134, "restored": 3, "sec": 11.7}
+{"seed": 204, "part": "плита 87.5×62.5×9.5, 4×Ø5.0", "valid": true, "scan_fit": 0.9847, "truth_fit": 1.0, "truth_p95": 0.138, "restored": 3, "sec": 37.3}
+{"seed": 205, "part": "фланец Ø132.5, 3×Ø6.0 на Ø97.0", "valid": true, "scan_fit": 0.9867, "truth_fit": 1.0, "truth_p95": 0.227, "restored": 2, "sec": 15.6}
+{"seed": 206, "part": "втулка Ø65.0/Ø48.5×31.0", "valid": true, "scan_fit": 0.9879, "truth_fit": 0.9988, "truth_p95": 0.051, "restored": 1, "sec": 12.1}
+{"seed": 207, "part": "ось 2 ступ., Ø45.5…Ø31.0", "valid": true, "scan_fit": 0.9686, "truth_fit": 1.0, "truth_p95": 0.137, "restored": 2, "sec": 22.6}
+{"seed": 208, "part": "уголок 87.5×50.5, стенка 44.0", "valid": true, "scan_fit": 1.0, "truth_fit": 0.9976, "truth_p95": 0.087, "restored": 3, "sec": 35.0}
+{"seed": 209, "part": "точёная Ø38.5→Ø23.5, конус 6.0", "valid": true, "scan_fit": 0.972, "truth_fit": 1.0, "truth_p95": 0.033, "restored": 2, "sec": 7.2}
+{"seed": 210, "part": "плита 100.5×57.5×8.0, 4×Ø7.0", "valid": true, "scan_fit": 0.9834, "truth_fit": 1.0, "truth_p95": 0.103, "restored": 3, "sec": 34.3}
+{"seed": 211, "part": "фланец Ø95.5, 5×Ø11.0 на Ø65.5", "valid": true, "scan_fit": 0.9887, "truth_fit": 1.0, "truth_p95": 0.016, "restored": 2, "sec": 16.8}
+<REVIEW_TMP>\.venv\Lib\site-packages\shapely\constructive.py:245: RuntimeWarning: divide by zero encountered in buffer
+  return lib.buffer(
+<REVIEW_TMP>\.venv\Lib\site-packages\shapely\constructive.py:245: RuntimeWarning: invalid value encountered in buffer
+  return lib.buffer(
+{"seed": 212, "part": "втулка Ø55.0/Ø32.5×44.5", "valid": true, "scan_fit": 0.9906, "truth_fit": 1.0, "truth_p95": 0.133, "restored": 2, "sec": 30.6}
+{"seed": 213, "part": "ось 2 ступ., Ø39.0…Ø27.5", "valid": true, "scan_fit": 0.9763, "truth_fit": 1.0, "truth_p95": 0.16, "restored": 2, "sec": 8.5}
+{"seed": 214, "part": "уголок 44.5×42.5, стенка 56.5", "valid": true, "scan_fit": 0.9952, "truth_fit": 0.9889, "truth_p95": 0.032, "restored": 2, "sec": 14.5}
+{"seed": 215, "part": "точёная Ø57.5→Ø15.5, конус 16.0", "valid": true, "scan_fit": 0.9718, "truth_fit": 0.9985, "truth_p95": 0.043, "restored": 4, "sec": 32.8}
+{"seed": 216, "part": "плита 114.5×59.0×7.5, 4×Ø7.0", "valid": true, "scan_fit": 1.0, "truth_fit": 1.0, "truth_p95": 0.033, "restored": 1, "sec": 17.9}
+{"seed": 217, "part": "фланец Ø128.5, 3×Ø10.5 на Ø93.5", "valid": true, "scan_fit": 0.9788, "truth_fit": 0.9767, "truth_p95": 0.053, "restored": 2, "sec": 17.4}
+{"seed": 218, "part": "втулка Ø69.5/Ø48.0×41.5", "valid": true, "scan_fit": 0.9893, "truth_fit": 1.0, "truth_p95": 0.202, "restored": 2, "sec": 31.0}
+{"seed": 219, "part": "ось 2 ступ., Ø43.0…Ø23.0", "valid": true, "scan_fit": 0.9559, "truth_fit": 1.0, "truth_p95": 0.032, "restored": 1, "sec": 9.4}
+{"seed": 220, "part": "уголок 84.5×35.5, стенка 57.0", "valid": true, "scan_fit": 0.9611, "truth_fit": 1.0, "truth_p95": 0.098, "restored": 5, "sec": 20.3}
+{"seed": 221, "part": "точёная Ø43.5→Ø19.5, конус 14.0", "valid": true, "scan_fit": 0.9648, "truth_fit": 1.0, "truth_p95": 0.032, "restored": 2, "sec": 26.9}
+{"seed": 222, "part": "плита 76.5×58.0×10.0, 4×Ø8.5", "valid": true, "scan_fit": 0.9832, "truth_fit": 1.0, "truth_p95": 0.089, "restored": 3, "sec": 25.2}
+{"seed": 223, "part": "фланец Ø131.0, 5×Ø6.0 на Ø93.5", "valid": true, "scan_fit": 0.9897, "truth_fit": 1.0, "truth_p95": 0.125, "restored": 2, "sec": 29.1}
+{"seed": 224, "part": "втулка Ø54.0/Ø34.5×24.0", "valid": true, "scan_fit": 0.9888, "truth_fit": 1.0, "truth_p95": 0.19, "restored": 2, "sec": 13.9}
+{"seed": 225, "part": "ось 4 ступ., Ø50.0…Ø20.5", "valid": true, "scan_fit": 0.9768, "truth_fit": 1.0, "truth_p95": 0.008, "restored": 2, "sec": 15.0}
+{"seed": 226, "part": "уголок 73.5×51.0, стенка 54.0", "valid": true, "scan_fit": 0.9789, "truth_fit": 0.9951, "truth_p95": 0.078, "restored": 4, "sec": 28.9}
+{"seed": 227, "part": "точёная Ø45.0→Ø25.5, конус 10.5", "valid": true, "scan_fit": 0.986, "truth_fit": 1.0, "truth_p95": 0.037, "restored": 2, "sec": 22.4}
+{"seed": 228, "part": "плита 96.5×48.0×8.5, 4×Ø5.5", "valid": true, "scan_fit": 0.981, "truth_fit": 1.0, "truth_p95": 0.129, "restored": 1, "sec": 14.6}
+{"seed": 229, "part": "фланец Ø130.5, 5×Ø7.5 на Ø86.0", "valid": true, "scan_fit": 0.9879, "truth_fit": 1.0, "truth_p95": 0.025, "restored": 2, "sec": 29.7}
+{"seed": 230, "part": "втулка Ø35.5/Ø25.5×52.0", "valid": true, "scan_fit": 0.9896, "truth_fit": 1.0, "truth_p95": 0.044, "restored": 1, "sec": 30.1}
+{"seed": 231, "part": "ось 2 ступ., Ø45.0…Ø18.0", "valid": true, "scan_fit": 0.9698, "truth_fit": 1.0, "truth_p95": 0.009, "restored": 2, "sec": 14.3}
+{"seed": 232, "part": "уголок 69.0×50.0, стенка 34.5", "valid": true, "scan_fit": 0.9657, "truth_fit": 0.9883, "truth_p95": 0.078, "restored": 4, "sec": 16.3}
+{"seed": 233, "part": "точёная Ø33.0→Ø20.5, конус 11.5", "valid": true, "scan_fit": 0.961, "truth_fit": 0.965, "truth_p95": 0.105, "restored": 2, "sec": 15.1}
+{"seed": 234, "part": "плита 106.0×48.0×7.0, 4×Ø5.5", "valid": true, "scan_fit": 1.0, "truth_fit": 1.0, "truth_p95": 0.076, "restored": 4, "sec": 16.8}
+{"seed": 235, "part": "фланец Ø100.0, 5×Ø7.0 на Ø67.0", "valid": true, "scan_fit": 0.9891, "truth_fit": 1.0, "truth_p95": 0.02, "restored": 1, "sec": 20.9}
+
+ИТОГ: деталей 36, построено 36
+  совпадение с целой деталью: медиана 100.0%, худшая 96.5%, ≥95%: 36 из 36

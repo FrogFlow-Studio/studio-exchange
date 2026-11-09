@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "<stdin>", line 7, in <module>
+  File "<REVIEW_TMP>\cad-demo\bench.py", line 35, in plate
+    m = r_(rng, hd + 3, min(L, W) / 4)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<REVIEW_TMP>\cad-demo\bench.py", line 29, in r_
+    return round(float(rng.uniform(a, b)) / step) * step
+                       ^^^^^^^^^^^^^^^^^
+  File "numpy/random/_generator.pyx", line 1102, in numpy.random._generator.Generator.uniform
+  File "numpy/random/_common.pyx", line 634, in numpy.random._common.cont
+  File "numpy/random/_common.pyx", line 432, in numpy.random._common.check_constraint
+ValueError: high - low < 0

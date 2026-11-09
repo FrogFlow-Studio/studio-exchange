@@ -1,0 +1,5 @@
+{
+  "python": "3.11.9 embedded Windows",
+  "exit_code": 1,
+  "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n  File \"<REPO>\\claude\\cad-demo\\demo.py\", line 162\n    ('' if not c else f'{c['within_tol_share']*100:.1f}%')\n                            ^^^^^^^^^^^^^^^^\nSyntaxError: f-string: f-string: unmatched '['\n"
+}

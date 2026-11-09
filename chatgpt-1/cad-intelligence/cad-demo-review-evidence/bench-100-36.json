@@ -1,0 +1,342 @@
+[
+ {
+  "seed": 100,
+  "part": "уголок 81.5×48.0, стенка 26.5",
+  "valid": true,
+  "scan_fit": 0.9875,
+  "truth_fit": 0.9965,
+  "truth_p95": 0.057,
+  "restored": 5,
+  "sec": 19.9
+ },
+ {
+  "seed": 101,
+  "part": "точёная Ø58.5→Ø27.0, конус 13.0",
+  "valid": true,
+  "scan_fit": 0.9632,
+  "truth_fit": 0.9984,
+  "truth_p95": 0.084,
+  "restored": 3,
+  "sec": 11.4
+ },
+ {
+  "seed": 102,
+  "part": "плита 61.0×53.5×11.0, 4×Ø5.5",
+  "valid": true,
+  "scan_fit": 0.9741,
+  "truth_fit": 1.0,
+  "truth_p95": 0.162,
+  "restored": 3,
+  "sec": 17.2
+ },
+ {
+  "seed": 103,
+  "part": "фланец Ø85.0, 5×Ø5.5 на Ø56.0",
+  "valid": true,
+  "scan_fit": 0.9857,
+  "truth_fit": 1.0,
+  "truth_p95": 0.013,
+  "restored": 1,
+  "sec": 17.0
+ },
+ {
+  "seed": 104,
+  "part": "втулка Ø64.5/Ø33.0×27.0",
+  "valid": true,
+  "scan_fit": 0.9858,
+  "truth_fit": 1.0,
+  "truth_p95": 0.143,
+  "restored": 2,
+  "sec": 20.6
+ },
+ {
+  "seed": 105,
+  "part": "ось 2 ступ., Ø49.5…Ø15.5",
+  "valid": true,
+  "scan_fit": 0.9681,
+  "truth_fit": 1.0,
+  "truth_p95": 0.007,
+  "restored": 1,
+  "sec": 14.9
+ },
+ {
+  "seed": 106,
+  "part": "уголок 89.0×31.0, стенка 41.0",
+  "valid": true,
+  "scan_fit": 0.9869,
+  "truth_fit": 0.9788,
+  "truth_p95": 0.135,
+  "restored": 3,
+  "sec": 35.5
+ },
+ {
+  "seed": 107,
+  "part": "точёная Ø49.5→Ø27.0, конус 15.0",
+  "valid": true,
+  "scan_fit": 0.9729,
+  "truth_fit": 1.0,
+  "truth_p95": 0.043,
+  "restored": 2,
+  "sec": 20.2
+ },
+ {
+  "seed": 108,
+  "part": "плита 110.0×55.5×6.0, 4×Ø6.0",
+  "valid": true,
+  "scan_fit": 0.9717,
+  "truth_fit": 0.9864,
+  "truth_p95": 0.092,
+  "restored": 2,
+  "sec": 20.5
+ },
+ {
+  "seed": 109,
+  "part": "фланец Ø103.5, 3×Ø6.0 на Ø73.5",
+  "valid": true,
+  "scan_fit": 0.9809,
+  "truth_fit": 1.0,
+  "truth_p95": 0.176,
+  "restored": 2,
+  "sec": 24.1
+ },
+ {
+  "seed": 110,
+  "part": "втулка Ø67.5/Ø45.0×37.0",
+  "valid": true,
+  "scan_fit": 0.991,
+  "truth_fit": 1.0,
+  "truth_p95": 0.071,
+  "restored": 1,
+  "sec": 19.1
+ },
+ {
+  "seed": 111,
+  "part": "ось 3 ступ., Ø37.0…Ø18.5",
+  "valid": true,
+  "scan_fit": 0.9708,
+  "truth_fit": 1.0,
+  "truth_p95": 0.01,
+  "restored": 2,
+  "sec": 13.7
+ },
+ {
+  "seed": 112,
+  "part": "уголок 46.0×55.5, стенка 25.5",
+  "valid": true,
+  "scan_fit": 0.9717,
+  "truth_fit": 0.9876,
+  "truth_p95": 0.177,
+  "restored": 3,
+  "sec": 13.5
+ },
+ {
+  "seed": 113,
+  "part": "точёная Ø32.0→Ø15.5, конус 13.5",
+  "valid": true,
+  "scan_fit": 0.9718,
+  "truth_fit": 1.0,
+  "truth_p95": 0.032,
+  "restored": 2,
+  "sec": 24.6
+ },
+ {
+  "seed": 115,
+  "part": "фланец Ø116.0, 3×Ø5.5 на Ø82.5",
+  "valid": true,
+  "scan_fit": 0.9881,
+  "truth_fit": 1.0,
+  "truth_p95": 0.018,
+  "restored": 2,
+  "sec": 24.5
+ },
+ {
+  "seed": 116,
+  "part": "втулка Ø41.0/Ø30.0×53.0",
+  "valid": true,
+  "scan_fit": 0.9887,
+  "truth_fit": 1.0,
+  "truth_p95": 0.165,
+  "restored": 2,
+  "sec": 32.9
+ },
+ {
+  "seed": 117,
+  "part": "ось 2 ступ., Ø35.0…Ø18.0",
+  "valid": true,
+  "scan_fit": 0.9732,
+  "truth_fit": 1.0,
+  "truth_p95": 0.012,
+  "restored": 1,
+  "sec": 13.1
+ },
+ {
+  "seed": 118,
+  "part": "уголок 86.5×58.0, стенка 32.5",
+  "valid": true,
+  "scan_fit": 0.9771,
+  "truth_fit": 0.9845,
+  "truth_p95": 0.071,
+  "restored": 3,
+  "sec": 16.9
+ },
+ {
+  "seed": 119,
+  "part": "точёная Ø58.5→Ø40.5, конус 7.5",
+  "valid": true,
+  "scan_fit": 0.9692,
+  "truth_fit": 0.9969,
+  "truth_p95": 0.178,
+  "restored": 2,
+  "sec": 36.1
+ },
+ {
+  "seed": 121,
+  "part": "фланец Ø110.5, 5×Ø10.0 на Ø81.0",
+  "valid": true,
+  "scan_fit": 0.9922,
+  "truth_fit": 0.9854,
+  "truth_p95": 0.181,
+  "restored": 4,
+  "sec": 20.1
+ },
+ {
+  "seed": 122,
+  "part": "втулка Ø64.0/Ø36.0×26.5",
+  "valid": true,
+  "scan_fit": 0.9906,
+  "truth_fit": 1.0,
+  "truth_p95": 0.049,
+  "restored": 1,
+  "sec": 11.6
+ },
+ {
+  "seed": 123,
+  "part": "ось 2 ступ., Ø20.5…Ø14.0",
+  "valid": true,
+  "scan_fit": 0.9668,
+  "truth_fit": 1.0,
+  "truth_p95": 0.058,
+  "restored": 2,
+  "sec": 6.9
+ },
+ {
+  "seed": 124,
+  "part": "уголок 79.5×53.5, стенка 51.0",
+  "valid": true,
+  "scan_fit": 1.0,
+  "truth_fit": 1.0,
+  "truth_p95": 0.023,
+  "restored": 2,
+  "sec": 19.9
+ },
+ {
+  "seed": 125,
+  "part": "точёная Ø55.5→Ø30.5, конус 8.0",
+  "valid": true,
+  "scan_fit": 0.9784,
+  "truth_fit": 1.0,
+  "truth_p95": 0.066,
+  "restored": 2,
+  "sec": 9.4
+ },
+ {
+  "seed": 126,
+  "part": "плита 50.5×67.5×5.5, 4×Ø9.0",
+  "valid": true,
+  "scan_fit": 1.0,
+  "truth_fit": 1.0,
+  "truth_p95": 0.145,
+  "restored": 0,
+  "sec": 12.7
+ },
+ {
+  "seed": 127,
+  "part": "фланец Ø65.0, 6×Ø8.5 на Ø46.0",
+  "valid": true,
+  "scan_fit": 0.9913,
+  "truth_fit": 1.0,
+  "truth_p95": 0.038,
+  "restored": 4,
+  "sec": 20.2
+ },
+ {
+  "seed": 128,
+  "part": "втулка Ø58.0/Ø33.5×34.0",
+  "valid": true,
+  "scan_fit": 0.9882,
+  "truth_fit": 1.0,
+  "truth_p95": 0.171,
+  "restored": 1,
+  "sec": 17.6
+ },
+ {
+  "seed": 129,
+  "part": "ось 3 ступ., Ø46.0…Ø21.0",
+  "valid": true,
+  "scan_fit": 0.9568,
+  "truth_fit": 1.0,
+  "truth_p95": 0.02,
+  "restored": 2,
+  "sec": 42.5
+ },
+ {
+  "seed": 130,
+  "part": "уголок 62.5×32.5, стенка 39.0",
+  "valid": true,
+  "scan_fit": 0.9225,
+  "truth_fit": 0.9614,
+  "truth_p95": 0.12,
+  "restored": 5,
+  "sec": 18.9
+ },
+ {
+  "seed": 131,
+  "part": "точёная Ø49.5→Ø30.5, конус 8.0",
+  "valid": true,
+  "scan_fit": 0.9614,
+  "truth_fit": 0.9962,
+  "truth_p95": 0.142,
+  "restored": 2,
+  "sec": 8.1
+ },
+ {
+  "seed": 132,
+  "part": "плита 60.0×62.0×10.0, 4×Ø8.5",
+  "valid": true,
+  "scan_fit": 0.9652,
+  "truth_fit": 0.9911,
+  "truth_p95": 0.247,
+  "restored": 1,
+  "sec": 17.7
+ },
+ {
+  "seed": 133,
+  "part": "фланец Ø138.0, 6×Ø6.5 на Ø96.0",
+  "valid": true,
+  "scan_fit": 0.9868,
+  "truth_fit": 1.0,
+  "truth_p95": 0.018,
+  "restored": 1,
+  "sec": 29.8
+ },
+ {
+  "seed": 134,
+  "part": "втулка Ø69.0/Ø42.5×45.5",
+  "valid": true,
+  "scan_fit": 0.991,
+  "truth_fit": 1.0,
+  "truth_p95": 0.127,
+  "restored": 2,
+  "sec": 25.6
+ },
+ {
+  "seed": 135,
+  "part": "ось 3 ступ., Ø49.5…Ø22.5",
+  "valid": true,
+  "scan_fit": 0.9627,
+  "truth_fit": 1.0,
+  "truth_p95": 0.039,
+  "restored": 2,
+  "sec": 13.0
+ }
+]

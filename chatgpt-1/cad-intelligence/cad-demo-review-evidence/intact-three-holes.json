@@ -1,0 +1,8 @@
+{
+  "probe": "intact_three_holes_modified",
+  "exit_code": 0,
+  "fourth_hole_added_log": true,
+  "converged_report": true,
+  "original_contains_material_at_fourth_position": true,
+  "output_contains_material_at_fourth_position": false
+}

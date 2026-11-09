@@ -1,0 +1,198 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "versions": {
+    "cadquery": "2.8.0",
+    "cadquery-ocp": "7.9.3.1.1",
+    "trimesh": "5.2.0",
+    "numpy": "2.5.4",
+    "scipy": "1.18.1",
+    "shapely": "2.2.0"
+  },
+  "llm_calls": 0,
+  "probes": [
+    {
+      "probe": "filled_functional_hole",
+      "hole_diameter_mm": 2,
+      "accepted_by_demo_good": true,
+      "score": 0.998,
+      "bench_truth_fit": 0.998,
+      "comparison": {
+        "tolerance_mm": 0.3,
+        "scan_points": 12000,
+        "within_tol_share": 0.998,
+        "mean_abs_dev_mm": 0.005,
+        "median_abs_dev_mm": 0.0,
+        "p95_abs_dev_mm": 0.0,
+        "max_abs_dev_mm": 4.963,
+        "outside_share": 0.0,
+        "inside_share": 0.002,
+        "added_surface_share": 0.0001,
+        "clusters_outside": [],
+        "clusters_inside": [
+          {
+            "points": 24,
+            "center_mm": [
+              -0.2,
+              0.3,
+              4.8
+            ],
+            "bbox_mm": [
+              [
+                -1.0,
+                -1.0,
+                0.5
+              ],
+              [
+                1.0,
+                1.0,
+                9.6
+              ]
+            ],
+            "mean_dev_mm": 2.37,
+            "max_dev_mm": 4.96
+          }
+        ],
+        "clusters_added": []
+      }
+    },
+    {
+      "probe": "unwanted_connected_tower",
+      "tower_height_mm": 100,
+      "accepted_by_demo_good": true,
+      "score": 0.9999,
+      "bench_truth_fit": 0.9689,
+      "comparison": {
+        "tolerance_mm": 0.3,
+        "scan_points": 12000,
+        "within_tol_share": 0.9999,
+        "mean_abs_dev_mm": 0.0,
+        "median_abs_dev_mm": 0.0,
+        "p95_abs_dev_mm": 0.0,
+        "max_abs_dev_mm": 0.745,
+        "outside_share": 0.0,
+        "inside_share": 0.0001,
+        "added_surface_share": 0.0311,
+        "clusters_outside": [],
+        "clusters_inside": [],
+        "clusters_added": [
+          {
+            "points": 373,
+            "center_mm": [
+              -0.0,
+              -0.0,
+              60.0
+            ],
+            "bbox_mm": [
+              [
+                -1.0,
+                -1.0,
+                10.3
+              ],
+              [
+                1.0,
+                1.0,
+                110.0
+              ]
+            ],
+            "mean_dev_mm": 50.02,
+            "max_dev_mm": 100.0
+          }
+        ]
+      }
+    },
+    {
+      "probe": "known_mm_part_rescaled",
+      "input_extents": [
+        1.0,
+        0.8,
+        0.5
+      ],
+      "processed_extents": [
+        1000.0,
+        800.000011920929,
+        500.0
+      ],
+      "diagnostics": {
+        "vertices": 8,
+        "faces": 12,
+        "watertight": true,
+        "components": 1,
+        "extents_mm": [
+          1.0,
+          0.8,
+          0.5
+        ],
+        "volume_mm3": 0.4,
+        "warnings": [
+          "габарит меньше 2 единиц: возможно, файл в метрах, проверьте единицы",
+          "файл похож на метры: увеличен в 1000 раз (в мм). Проверьте габарит"
+        ],
+        "scaled_to_mm": 1000.0,
+        "noise_mm": 0.0
+      },
+      "bounds_mm": [
+        [
+          -500.0,
+          -400.0,
+          0.0
+        ],
+        [
+          500.0,
+          400.0,
+          500.0
+        ]
+      ]
+    },
+    {
+      "probe": "runner_accepts_two_solids",
+      "run": {
+        "ok": true,
+        "valid": true,
+        "solids": 2,
+        "volume_mm3": 2000.0,
+        "bbox_mm": [
+          [
+            -5.0,
+            -5.0,
+            -5.0
+          ],
+          [
+            105.0,
+            5.0,
+            5.0
+          ]
+        ],
+        "faces": 12
+      }
+    },
+    {
+      "probe": "compound_step_round_trip",
+      "valid": true,
+      "solids": 2,
+      "volume_mm3": 1999.9999999999995
+    },
+    {
+      "probe": "score_and_acceptance_disagree",
+      "failing_good": false,
+      "passing_good": true,
+      "failing_score": 0.972,
+      "passing_score": 0.953
+    },
+    {
+      "probe": "scripted_cli_accepts_unwanted_tower",
+      "exit_code": 0,
+      "converged_log": true,
+      "converged_report": true,
+      "wall_seconds": 5.0,
+      "reported_seconds": 3
+    },
+    {
+      "probe": "intact_three_holes_modified",
+      "exit_code": 0,
+      "fourth_hole_added_log": true,
+      "converged_report": true
+    }
+  ],
+  "reviewed_commit": "243f806d040d066a5946c320e52dd9c32fe35024"
+}

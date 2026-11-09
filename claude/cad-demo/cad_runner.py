@@ -24,6 +24,10 @@ try:
     import cadquery as cq
 
     ns: dict = {"cq": cq, "__name__": "__ai_model__"}
+    import os
+
+    if os.environ.get("CAD_DRAFT") and Path(os.environ["CAD_DRAFT"]).exists():
+        ns["draft"] = cq.importers.importStep(os.environ["CAD_DRAFT"]).val()  # черновик без ИИ
     exec(compile(code_path.read_text(encoding="utf-8"), str(code_path), "exec"), ns)
     res = ns.get("result")
     if res is None:

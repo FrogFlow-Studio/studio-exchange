@@ -46,12 +46,17 @@ def log(msg: str) -> None:
     print(time.strftime("%H:%M:%S"), msg, flush=True)
 
 
+DRAFT: dict = {}  # путь к STEP черновика, который ИИ может взять за основу (переменная draft)
+
+
 def run_code(code: str, it_dir: Path, timeout: int = 90) -> dict:
     (it_dir / "model.py").write_text(code, encoding="utf-8")
     try:
         # код от ИИ не должен видеть ключи и прочие секреты окружения
         env = {k: v for k, v in os.environ.items()
                if not any(t in k.upper() for t in ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"))}
+        if DRAFT.get("step"):
+            env["CAD_DRAFT"] = str(DRAFT["step"])
         subprocess.run([sys.executable, str(HERE / "cad_runner.py"), str(it_dir / "model.py"), str(it_dir)],
                        timeout=timeout, capture_output=True, text=True, env=env)
     except subprocess.TimeoutExpired:
@@ -476,6 +481,15 @@ def main() -> None:
         hint = ("\n\nДля справки: черновик без ИИ (слои по сечениям) совпал со сканом на "
                 f"{c0['within_tol_share']*100:.1f}%. Он копирует форму ступеньками и не знает замысла; "
                 "построй деталь по замыслу. Что черновик восстановил: " + "; ".join(best["meta"].get("restored", [])))
+    if prov and best is not None and best["n"] == "0б":
+        DRAFT["step"] = best["dir"] / "model.step"
+        hint += ("\n\nВ коде доступна готовая переменная `draft` (cq.Shape): это черновик из стенок, "
+                 f"он уже совпал со сканом на {best['cmp']['within_tol_share']*100:.1f}%. Не строй деталь "
+                 "заново: начни с него (например, result = draft.fuse(...) или draft.cut(...)) и исправь "
+                 "только места, где не хватает материала или есть лишнее: стыки стенок, скругления, "
+                 "наклонные и кривые участки. Где именно — смотри сравнение ниже и инструменты.")
+        if best["feedback"]:
+            hint += "\n\nСравнение черновика со сканом:\n" + best["feedback"]
     use_tools = bool(prov and a.ai_input == "tools" and prov.supports_tools)
     tools = None
     if use_tools:

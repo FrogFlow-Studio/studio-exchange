@@ -179,7 +179,7 @@ a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:
 <div class=card>Время<b>{ctx['total_s']:.0f} с</b></div></div>
 <p>{'<b>Модель сошлась со сканом.</b>' if ctx['converged'] else '<b class=err>Не сошлась до цели</b>: смотреть лучшую попытку и замечания.' if best else '<b class=err>Ни одна попытка не дала тела.</b>'}
 Цель: не менее {ctx['target']*100:.0f}% точек в допуске и почти нет мест, где модели не хватает материала. Точки на сколе в допуск не попадают, так и должно быть.</p>
-{('<a class=btn href="model.step" download>Скачать STEP (для SolidWorks)</a><a class=btn href="model.stl" download>STL (для печати)</a><a class=btn href="model.py" download>Код модели</a>') if best else ''}
+{('<a class=btn href="model.step" download>Скачать STEP (КОМПАС-3D, SolidWorks и др.)</a><a class=btn href="model.stl" download>STL (для печати)</a><a class=btn href="model.py" download>Код модели</a>') if best else ''}
 </section>
 {truth_html}
 <section><h2>Что ИИ восстановил и что должен проверить инженер</h2>
@@ -187,7 +187,7 @@ a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:
 <h3>Достроено (этого нет в скане)</h3><ul>{lst(meta.get('restored'))}</ul>
 <h3>Допущения</h3><ul>{lst(meta.get('assumptions'))}</ul>
 <h3>Проверить инженеру</h3><ul>{lst(meta.get('check_by_engineer'))}</ul>
-<p class=small>Модель — черновик для инженера. Производственное решение принимает человек, проверив модель в SolidWorks и размеры по детали.</p></section>
+<p class=small>Модель — черновик для инженера. Производственное решение принимает человек, проверив размеры по детали (при желании в КОМПАС-3D или SolidWorks).</p></section>
 {viewer}
 <section><h2>Журнал попыток</h2><table><tr><th>#</th><th>Результат</th><th>В допуске</th><th>Не хватает</th><th>95% точек ближе, мм</th><th>Время</th></tr>{''.join(rows)}</table>
 {''.join(blocks)}</section>
@@ -195,7 +195,7 @@ a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:
 {' '.join(e(w) for w in d['warnings'])}</p>
 <details><summary>Лист замеров, который получил ИИ</summary><pre>{e(json.dumps(ctx['sheet'], ensure_ascii=False, indent=1))}</pre></details></section>
 <section><h2>Ограничения</h2><ul>
-<li>STEP — точная геометрия (B-rep), но не дерево построения SolidWorks. Дерево можно повторить по коду модели; прямой перенос в дерево SolidWorks — следующий шаг.</li>
+<li>STEP — точная геометрия (B-rep), но не дерево построения SolidWorks. Открывается в любой CAD (КОМПАС-3D, SolidWorks, Fusion, FreeCAD) как готовое тело.</li>
 <li>Работает для деталей из плоскостей, отверстий, цилиндров, рёбер. Свободные поверхности (литьё, органика) этим способом не восстанавливаются.</li>
 <li>Точность ограничена сканом: единицы и масштаб берутся из файла как есть.</li></ul></section>
 </body></html>"""

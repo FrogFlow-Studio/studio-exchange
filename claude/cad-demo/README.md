@@ -84,3 +84,18 @@ Windows `set ANTHROPIC_API_KEY=...` перед `start.bat`, Mac `export ANTHROPI
 Код, который пишет ИИ, исполняется на компьютере в отдельном процессе с тайм-аутом,
 лимитом памяти (кроме Windows) и без ключей в окружении. Это не песочница: для демо на
 своём ноутбуке приемлемо, для пилота с файлами клиента нужна изоляция (контейнер без сети).
+
+## Кандидат StepCAD (необязательно)
+
+StepCAD — открытая ИИ-модель (веса Apache-2.0), пишет программу CadQuery по скану. Программа
+берёт её результат, только если он точнее остальных кандидатов. Код StepCAD в репозиторий не входит:
+
+```
+git clone https://github.com/ghadinehme/StepCAD
+set STEPCAD_DIR=путь\к\StepCAD      (Linux: export STEPCAD_DIR=...)
+pip install torch transformers safetensors huggingface_hub pebble pyarrow manifold3d libigl pymeshlab scikit-learn
+```
+
+При видеокарте NVIDIA кандидат включается сам (`--stepcad auto`), на процессоре — по `--stepcad on`
+(около 15 минут на деталь). Веса (~3,3 ГБ) скачиваются при первом запуске. Сильная сторона —
+механические детали из простых форм; кривые корпуса StepCAD не умеет.

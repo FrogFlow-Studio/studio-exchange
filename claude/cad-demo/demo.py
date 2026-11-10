@@ -300,6 +300,26 @@ def dims_table(sheet: dict, model_step: Path | None = None) -> str:
             f"{body}</table></section>")
 
 
+
+def _viewer_mesh(m, n):
+    """Лёгкая копия модели для 3D-просмотра: вершины сливаются по сетке (кластеризация).
+    Грани STL гладкого тела разбиты каждая отдельно и не сшиты, поэтому обычное упрощение
+    почти не работает; кластеризации топология не важна. Ячейка растёт, пока граней не станет ≤ n."""
+    cell = float(np.linalg.norm(m.extents)) / 1000
+    while True:
+        _, inv = np.unique(np.round(m.vertices / cell).astype(np.int64), axis=0, return_inverse=True)
+        inv = inv.ravel()
+        f = inv[m.faces]
+        f = f[(f[:, 0] != f[:, 1]) & (f[:, 1] != f[:, 2]) & (f[:, 0] != f[:, 2])]
+        _, u = np.unique(np.sort(f, 1), axis=0, return_index=True)
+        if len(u) <= n:
+            break
+        cell *= 1.3
+    v = np.zeros((inv.max() + 1, 3))
+    np.add.at(v, inv, m.vertices)
+    v /= np.bincount(inv)[:, None]
+    return trimesh.Trimesh(v, f[np.sort(u)], process=False)
+
 def write_report(out: Path, ctx: dict) -> Path:
     e = html.escape
     its = ctx["iterations"]
@@ -350,6 +370,8 @@ def write_report(out: Path, ctx: dict) -> Path:
         dev = best["cmp"]["_scan_dev"][::2]
         tol = ctx["tol"]
         mdl = trimesh.load(out / "model.stl", force="mesh")
+        if len(mdl.faces) > 100000:  # гладкое тело даёт сотни тысяч треугольников: отчёт весил бы 70+ МБ
+            mdl = _viewer_mesh(mdl, 100000)
         scan_m = ctx["scan_mesh"]
         _, dist, _ = trimesh.proximity.closest_point(scan_m, mdl.triangles_center)
         tri = mdl.triangles.reshape(-1, 3).astype(np.float32)

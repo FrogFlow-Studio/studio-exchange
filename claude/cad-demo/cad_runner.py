@@ -48,6 +48,8 @@ try:
         "bbox_mm": [[round(bb.xmin, 2), round(bb.ymin, 2), round(bb.zmin, 2)],
                     [round(bb.xmax, 2), round(bb.ymax, 2), round(bb.zmax, 2)]],
         "faces": len(shape.Faces()),
+        # типы граней: точные (плоскость, цилиндр…) инженер правит размером, сплайн — только формой
+        "face_types": {t: n for t, n in __import__("collections").Counter(f.geomType() for f in shape.Faces()).items()},
     })
     cq.exporters.export(shape, str(out / "model.step"))
     # гладкое тело из тысяч B-сплайн граней при мелком угловом шаге даёт миллионы треугольников

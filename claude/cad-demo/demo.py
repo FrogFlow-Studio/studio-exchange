@@ -325,6 +325,26 @@ def dims_table(sheet: dict, model_step: Path | None = None) -> str:
 
 
 
+
+_EXACT = ("PLANE", "CYLINDER", "CONE", "SPHERE", "TORUS")
+
+
+def _faces_cell(run: dict) -> str:
+    """Сколько граней и сколько из них точные (плоскость, цилиндр, конус, сфера, тор)."""
+    if not run.get("ok"):
+        return ""
+    ft = run.get("face_types") or {}
+    exact = sum(v for k, v in ft.items() if k in _EXACT)
+    return f"{run.get('faces', '')} ({exact})" if ft else str(run.get("faces", ""))
+
+
+def _editable(code: str) -> str:
+    # тело, загруженное из готового STEP, — это поверхность без размеров; программа с размерами
+    # (выдавливания, отверстия) правится числом
+    if not code:
+        return ""
+    return "только форма (STEP)" if "importStep" in code else "с размерами"
+
 def _viewer_mesh(m, n):
     """Лёгкая копия модели для 3D-просмотра: вершины сливаются по сетке (кластеризация).
     Грани STL гладкого тела разбиты каждая отдельно и не сшиты, поэтому обычное упрощение
@@ -356,7 +376,10 @@ def write_report(out: Path, ctx: dict) -> Path:
         rows.append(f"<tr{' class=best' if best and it['n'] == best['n'] else ''}><td>{it['n']}</td><td>{e(it.get('by', ''))}: {status}</td>"
                     f"<td>{'' if not c else format(c['within_tol_share'] * 100, '.1f') + '%'}</td>"
                     f"<td>{'' if not c else format(c['outside_share'] * 100, '.2f') + '%'}</td>"
-                    f"<td>{'' if not c else c['p95_abs_dev_mm']}</td><td>{it['seconds']:.0f} с</td></tr>")
+                    f"<td>{'' if not c else format(c['median_abs_dev_mm']) + ' / ' + format(c['mean_abs_dev_mm'])}</td>"
+                    f"<td>{'' if not c else c['p95_abs_dev_mm']}</td>"
+                    f"<td>{_faces_cell(it['run'])}</td><td>{_editable(it.get('code') or '')}</td>"
+                    f"<td>{it['seconds']:.0f} с</td></tr>")
     blocks = []
     for it in its:
         c, r, meta = it.get("cmp"), it["run"], it.get("meta", {})
@@ -466,7 +489,7 @@ a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:
 <p class=small>Модель — черновик для инженера. Производственное решение принимает человек, проверив размеры по детали (при желании в КОМПАС-3D или SolidWorks).</p></section>
 {viewer}
 {dims}
-<section><h2>Журнал попыток</h2><table><tr><th>#</th><th>Результат</th><th>В допуске</th><th>Не хватает</th><th>95% точек ближе, мм</th><th>Время</th></tr>{''.join(rows)}</table>
+<section><h2>Журнал попыток</h2><table><tr><th>#</th><th>Результат</th><th>В допуске</th><th>Не хватает</th><th>Отклонение, мм: медиана / среднее</th><th>95% точек ближе, мм</th><th>Граней всего (точных)</th><th>Программа построения</th><th>Время</th></tr>{''.join(rows)}</table>
 {''.join(blocks)}</section>
 <section><h2>Скан</h2><p>Граней {d['faces']}, замкнут: {'да' if d['watertight'] else 'нет'}, кусков: {d['components']}, габарит {d['extents_mm']} мм.
 {' '.join(e(w) for w in d['warnings'])}</p>

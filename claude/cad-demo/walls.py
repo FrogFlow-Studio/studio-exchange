@@ -142,7 +142,10 @@ def walls(mesh: trimesh.Trimesh, max_thick: float = 25.0) -> list[dict]:
             if ov.geom_type != "Polygon":
                 pts = [g.representative_point() for g in ov.geoms if g.area > 5][:6] or pts
             mids = [o + u * c.x + v * c.y - a["normal"] * t / 2 for c in pts]
-            if mesh.is_watertight and not mesh.contains(mids).all():
+            # середина пары должна быть в материале (иначе это две стенки по разные стороны щели);
+            # у незамкнутого скана mesh.contains не работает — тогда проверяем по ближайшим точкам
+            inside = mesh.contains(mids) if mesh.is_watertight else _inside(mesh, np.asarray(mids))
+            if not inside.all():
                 continue
             seen.add((min(i, j), max(i, j)))
             full = _mid_section(mesh, o, a["normal"], u, v, t, ov)
@@ -151,8 +154,7 @@ def walls(mesh: trimesh.Trimesh, max_thick: float = 25.0) -> list[dict]:
     out += _single_sided(mesh, pats, frames, out, max_thick)
     out = [_clip_depth(mesh, w) for w in out]
     out = [w for w in out if w["outline"].area >= 15]
-    if mesh.is_watertight:
-        out = _check_material(mesh, out)
+    out = _check_material(mesh, out)
     out = [_grow(mesh, w) for w in out]
     # после вычитания соседних стенок отверстие, открытое в стык, становится замкнутым — скругляем ещё раз
     return [dict(w, outline=_carve_holes(_round_holes(w["outline"], w.get("body")), w.get("body")))

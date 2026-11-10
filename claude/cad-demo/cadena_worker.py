@@ -71,6 +71,9 @@ def windows_copy(src: Path, work: Path) -> Path:
         ("        self.plotter = Plotter()\n",
          '        self.plotter = Plotter()\n        self.openai_client = OpenAI(base_url=f"{self.base_url}/v1", api_key="EMPTY")\n'),
     ])
+    # снимки рисуются без окна через OSMesa, а на Windows его нет: там обычный OpenGL с off_screen
+    patch(run / "visualization.py", [("os.environ['VTK_DEFAULT_OPENGL_WINDOW'] = 'vtkOSOpenGLRenderWindow'",
+                                      "if os.name != 'nt':\n    os.environ['VTK_DEFAULT_OPENGL_WINDOW'] = 'vtkOSOpenGLRenderWindow'")])
     patch(run / "rl" / "cad_pool.py", [('get_context("forkserver")', 'get_context("spawn")'),
                                        ('ctx = get_context("fork")', 'ctx = get_context("spawn")')])
     patch(run / "dataset" / "create_hf_dataset.py", [('_TMP_DIR = f"/tmp/{getpass.getuser()}"',

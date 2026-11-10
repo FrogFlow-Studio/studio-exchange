@@ -21,6 +21,7 @@ sys.path.insert(0, str(HERE))
 
 
 SMOOTH = 10  # шаги сглаживания шума
+FLAT_MAX = 0.2  # мм: дальше от подогнанной плоскости вершину не двигаем
 
 
 def clean(mesh: trimesh.Trimesh, min_share: float = 0.02) -> trimesh.Trimesh:
@@ -168,7 +169,11 @@ def flatten_planes(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     for k, p in enumerate(pats):
         vs = np.where((owner == k) & ~shared)[0]
         n = p["normal"]
-        V[vs] -= np.outer((V[vs] - p["point"]) @ n, n)
+        d = (V[vs] - p["point"]) @ n
+        # участок, который на деле слегка изогнут, не выпрямляем: двигаем только вершины,
+        # лежащие у плоскости в пределах шума скана, иначе форма уходит от скана
+        near = np.abs(d) <= FLAT_MAX
+        V[vs[near]] -= np.outer(d[near], n)
     return trimesh.Trimesh(V, mesh.faces, process=False)
 
 

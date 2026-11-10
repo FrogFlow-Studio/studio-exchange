@@ -26,7 +26,8 @@ MAX_FACES = 300  # тело по поверхности из тысяч треу
 
 
 def p2s_dir() -> Path | None:
-    for p in (os.environ.get("POINT2STEP_DIR"), HERE / "ext" / "point2step", HERE.parent / "point2step"):
+    for p in (os.environ.get("POINT2STEP_DIR"), HERE / "ext" / "point2step", HERE.parent / "point2step",
+              Path.home() / "point2step"):
         if p and (Path(p) / "step_pipeline.py").exists():
             return Path(p)
     return None

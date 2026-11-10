@@ -29,7 +29,7 @@ HF_REPO = "kulibinai/cadena"
 
 
 def cadena_dir() -> Path | None:
-    for p in (os.environ.get("CADENA_DIR"), HERE / "ext" / "cadena", HERE.parent / "cadena"):
+    for p in (os.environ.get("CADENA_DIR"), HERE / "ext" / "cadena", HERE.parent / "cadena", Path.home() / "cadena"):
         if p and (Path(p) / "inference" / "main.py").exists():
             return Path(p)
     return None

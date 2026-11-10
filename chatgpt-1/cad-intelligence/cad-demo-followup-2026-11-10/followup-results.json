@@ -1,0 +1,105 @@
+{
+  "snapshot": "8b791e6",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "llm_calls": 0,
+  "results": [
+    {
+      "probe": "vertical_hole_filled",
+      "gates": [
+        "в модели нет отверстия Ø2.0 в [-0.0, -0.0] на высоте 5.0 (в скане оно есть)",
+        "в модели нет отверстия Ø2.0 в [-0.0, 0.0] на высоте 7.5 (в скане оно есть)",
+        "в модели нет отверстия Ø2.0 в [0.0, -0.0] на высоте 2.5 (в скане оно есть)"
+      ],
+      "good": false,
+      "within_tol_share": 0.998,
+      "outside_share": 0.0,
+      "holes_report": [
+        {
+          "center": [
+            -0.0,
+            0.0,
+            10.0
+          ],
+          "d_scan": 2.0,
+          "d_model": null,
+          "offset": null,
+          "ok": false
+        }
+      ]
+    },
+    {
+      "probe": "horizontal_hole_filled",
+      "gates": [],
+      "good": true,
+      "within_tol_share": 0.9751,
+      "outside_share": 0.0,
+      "holes_report": [
+        {
+          "center": [
+            -50.0,
+            -0.0,
+            5.0
+          ],
+          "d_scan": 2.0,
+          "d_model": null,
+          "offset": null,
+          "ok": false
+        }
+      ]
+    },
+    {
+      "probe": "unwanted_short_boss",
+      "gates": [],
+      "good": true,
+      "within_tol_share": 0.9999,
+      "outside_share": 0.0,
+      "holes_report": []
+    },
+    {
+      "probe": "unwanted_tall_boss",
+      "gates": [
+        "модель выходит за габарит скана по Z на 100.0 мм"
+      ],
+      "good": false,
+      "within_tol_share": 0.9999,
+      "outside_share": 0.0,
+      "holes_report": []
+    },
+    {
+      "probe": "tiny_mm_preserved",
+      "extents_mm": [
+        1.0,
+        0.800000011920929,
+        0.5
+      ],
+      "diagnostics": {
+        "vertices": 8,
+        "faces": 12,
+        "watertight": true,
+        "components": 1,
+        "extents_mm": [
+          1.0,
+          0.8,
+          0.5
+        ],
+        "volume_mm3": 0.4,
+        "warnings": [
+          "габарит меньше 2 единиц: возможно, файл в метрах, проверьте единицы",
+          "деталь меньше 2 мм: если файл в метрах, укажите единицы «м» и запустите снова"
+        ],
+        "units": "mm",
+        "scaled_to_mm": 1.0,
+        "noise_mm": 0.0
+      }
+    },
+    {
+      "probe": "soft_budget",
+      "fake_requests": 1,
+      "budget": 0.3,
+      "estimate_using_code_prices": 0.322,
+      "requested_max_tokens": 32000,
+      "note": "Synthetic usage, no provider called or charged."
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "snapshot": "8b791e6551ed5082a204047b335fa72eeb878462",
+  "sha256": {
+    "app.py": "5222993d824b38dd92169d8bdc656cc35dccdb80273702cadc630f7c29e82ec1",
+    "bench.py": "8d112aa31ed47d78e0144c88d5d8d1a524f9a3a976a29bbfd82c43d0f0688e1a",
+    "cad_runner.py": "4338d98a8aba226f5388af23d871c58d7175fd16bbc0ea7ae0f96260c8d4f20b",
+    "compare.py": "e4d3941e69cb153d8b75980d13caceccb0286458ba497621c93915501d9b89fb",
+    "demo.py": "7151e68eafcda35aaa2a9635503415a45fbae60a51fc93e38022c0f9a672de0e",
+    "gates.py": "c8a3503f4dd9683c7c79f9c2c20d45d0ca0934d717ca0c79cd464abad36c870a",
+    "geo_worker.py": "240c3e7616964cd16eecff241c36f84c48d20bec85667b116f7e5d5dc2c44f1b",
+    "geometric.py": "1c743d826b4d221a09b6688e4482164064db6f5d4efe6baae0c1b21deaaaf259",
+    "holes.py": "f4f45bcf2599de178bee3b09b21057a81e4deba1ff44c2f6b1d5759eda0fd2c8",
+    "llm.py": "2b2d581d46ef6e0b28db613b90cff30e36cf91a6f2d445b26cf632d526b75ded",
+    "make_test_bushing.py": "74c8198313ab3797fcc9c56e719e0014fb16ed472592f8a5f72b17ffce75bff3",
+    "make_test_flange.py": "d3654af6e4bca8124b9bdf914b7ac5b1841621a811c5e38f80dd1747aeec06c4",
+    "make_test_part.py": "97e1aeb855ea3fc02484e884c7207cc7ad648a9b423e9783cd5c741be9d3ca03",
+    "scan_analysis.py": "fee1adb62bea6a57ff6c98520afb1f698f95de51cf1fb63386f05c8f439f39c0",
+    "scan_tools.py": "8247fd7c7e0481fbfbdac1c10ac4ede5f01efa10ab4b86b072bfded6f5b9a482",
+    "selftest.py": "5e2364cfbcf7c87c145f3612c1dcdefa4da490a8597fc558b974b1a561432bdf",
+    "stepcad_shim/vllm/__init__.py": "318e910db775367a6731a3e7eeb94b8afd703721eea67fa255430f9d6910aa08",
+    "stepcad_shim_win/fcntl.py": "e9348273cd3883d8483ad8b2c4101d9a29ce2ac990b2199a48ae5a1b177cae62",
+    "stepcad_worker.py": "a80db42c5198b8d9f650888c3c7f3dbadea19d3bbd4bd3c28325c1fd41364e5c",
+    "surface.py": "1ddb1cb9a1051ba0690fab1c9868b65c0eb150a9c70f0e4b55258dac5530071e",
+    "thinbench.py": "ffbffda4e9990b6236ffe184bb613c11e3b712c202106966a42af29869c452e6",
+    "walls.py": "463795ac29653db41a335d5cdf1845e5305b1d9ca1b66d6e0f2de4a1c4fe3982"
+  }
+}

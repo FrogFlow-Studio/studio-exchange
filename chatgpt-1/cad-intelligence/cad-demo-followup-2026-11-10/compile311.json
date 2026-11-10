@@ -1,0 +1,90 @@
+[
+  {
+    "file": "app.py",
+    "ok": true
+  },
+  {
+    "file": "bench.py",
+    "ok": true
+  },
+  {
+    "file": "cad_runner.py",
+    "ok": true
+  },
+  {
+    "file": "compare.py",
+    "ok": true
+  },
+  {
+    "file": "demo.py",
+    "ok": true
+  },
+  {
+    "file": "gates.py",
+    "ok": true
+  },
+  {
+    "file": "geometric.py",
+    "ok": true
+  },
+  {
+    "file": "geo_worker.py",
+    "ok": true
+  },
+  {
+    "file": "holes.py",
+    "ok": true
+  },
+  {
+    "file": "llm.py",
+    "ok": true
+  },
+  {
+    "file": "make_test_bushing.py",
+    "ok": true
+  },
+  {
+    "file": "make_test_flange.py",
+    "ok": true
+  },
+  {
+    "file": "make_test_part.py",
+    "ok": true
+  },
+  {
+    "file": "scan_analysis.py",
+    "ok": true
+  },
+  {
+    "file": "scan_tools.py",
+    "ok": true
+  },
+  {
+    "file": "selftest.py",
+    "ok": true
+  },
+  {
+    "file": "stepcad_worker.py",
+    "ok": true
+  },
+  {
+    "file": "surface.py",
+    "ok": true
+  },
+  {
+    "file": "thinbench.py",
+    "ok": true
+  },
+  {
+    "file": "walls.py",
+    "ok": true
+  },
+  {
+    "file": "stepcad_shim\\vllm\\__init__.py",
+    "ok": true
+  },
+  {
+    "file": "stepcad_shim_win\\fcntl.py",
+    "ok": true
+  }
+]

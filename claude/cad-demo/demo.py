@@ -456,6 +456,8 @@ def main() -> None:
                     help="кандидат CADENA (экспериментально: редактируемая программа построения по снимкам скана): "
                          "по умолчанию выключен; auto — только при видеокарте NVIDIA и найденной CADENA (CADENA_DIR); "
                          "on — и на процессоре (~2–10 мин)")
+    ap.add_argument("--smooth", choices=["auto", "off"], default="auto",
+                    help="гладкое тело из B-сплайн граней для кривых деталей (попытка 0к)")
     ap.add_argument("--p2s", choices=["auto", "on", "off"], default="auto",
                     help="уточнить грани лучшей модели по скану через Point2STEP; auto — если он установлен "
                          "(POINT2STEP_DIR или папка point2step рядом / в домашней)")
@@ -517,7 +519,7 @@ def main() -> None:
         it_dir.mkdir(exist_ok=True)
         log("3/4 строю модель…")
         # черновик из стенок собирается из сотен пластин: на крупной детали это минуты
-        limit = 420 if n in ("0б", "0в") else 180
+        limit = 420 if n in ("0б", "0в", "0к") else 180
         run = run_code(code, it_dir, timeout=limit) if code else {"ok": False, "error": "в ответе нет блока python"}
         cmp = None
         model = None
@@ -644,6 +646,28 @@ def main() -> None:
                 log("    тело по поверхности не уложилось во время")
             except Exception as ex:  # noqa: BLE001
                 log(f"    тело по поверхности не получилось ({type(ex).__name__})")
+            # Те же формы гладкими гранями (B-сплайн), чтобы модель можно было править в CAD, а не
+            # тысячами треугольников. Берётся вместо треугольного тела, если почти не уступает ему.
+            if a.smooth != "off" and (best is None or best["n"] == "0в"):
+                t0 = time.time()
+                log("2/4 попытка 0к: гладкое тело из B-сплайн граней по скану, без ИИ…")
+                kj = out / "smooth.json"
+                try:
+                    subprocess.run([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
+                                    str(out / "sheet.json"), "1", str(kj), "smooth"],
+                                   timeout=1200, check=True, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                    g = json.loads(kj.read_text(encoding="utf-8"))
+                    log("    " + g["meta"]["plan"])
+                    itk = evaluate("0к", g["code"], g["meta"], t0, "гладкие грани, без ИИ")
+                    iterations.append(itk)
+                    if itk["run"].get("ok") and not itk["gates"] and itk["cmp"] and (
+                            best is None or best["cmp"] is None
+                            or itk["cmp"]["within_tol_share"] >= best["cmp"]["within_tol_share"] - 0.01):
+                        best = itk
+                except subprocess.TimeoutExpired:
+                    log("    гладкое тело не уложилось во время")
+                except Exception as ex:  # noqa: BLE001
+                    log(f"    гладкое тело не получилось ({type(ex).__name__})")
         # ИИ-модели-кандидаты пишут программу построения; берутся, только если по сравнению лучше
         titles = {"stepcad": ("0г", "StepCAD"), "cadena": ("0д", "CADENA")}
         for name, (proc, ans) in models.items():
@@ -780,15 +804,16 @@ def main() -> None:
                 proc.kill()  # не понадобился или не уложился во время
 
     hint = ""
-    if best is not None and best["n"] in (0, "0б", "0в") and best["cmp"]:
+    if best is not None and best["n"] in (0, "0б", "0в", "0к") and best["cmp"]:
         c0 = best["cmp"]
         hint = ("\n\nДля справки: черновик без ИИ совпал со сканом на "
                 f"{c0['within_tol_share']*100:.1f}%. Он копирует форму ступеньками и не знает замысла; "
                 "построй деталь по замыслу. Что черновик восстановил: " + "; ".join(best["meta"].get("restored", [])))
-    if prov and best is not None and best["n"] in ("0б", "0в"):
+    if prov and best is not None and best["n"] in ("0б", "0в", "0к"):
         DRAFT["step"] = best["dir"] / "model.step"
         hint += ("\n\nВ коде доступна готовая переменная `draft` (cq.Shape): это черновик "
-                 + ("из стенок, " if best["n"] == "0б" else "по поверхности скана (много мелких плоских граней), ")
+                 + {"0б": "из стенок, ", "0к": "по скану гладкими B-сплайн гранями, "}.get(
+                     best["n"], "по поверхности скана (много мелких плоских граней), ")
                  + f"он уже совпал со сканом на {best['cmp']['within_tol_share']*100:.1f}%. Не строй деталь "
                  "заново: начни с него (например, result = draft.fuse(...) или draft.cut(...)) и исправь "
                  "только места, где не хватает материала или есть лишнее: стыки стенок, скругления, "

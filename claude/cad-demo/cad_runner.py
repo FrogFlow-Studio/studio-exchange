@@ -50,7 +50,11 @@ try:
         "faces": len(shape.Faces()),
     })
     cq.exporters.export(shape, str(out / "model.step"))
-    cq.exporters.export(shape, str(out / "model.stl"), tolerance=0.02, angularTolerance=0.1)
+    # гладкое тело из тысяч B-сплайн граней при мелком угловом шаге даёт миллионы треугольников
+    # (сотни мегабайт и падение); точность STL задаёт линейный допуск, угол можно взять крупнее
+    many = len(shape.Faces()) > 1000
+    cq.exporters.export(shape, str(out / "model.stl"), tolerance=0.05 if many else 0.02,
+                        angularTolerance=1.0 if many else 0.1)
     info["ok"] = True
 except Exception as e:  # noqa: BLE001 — вся ошибка уходит обратно ИИ
     tb = traceback.format_exc()

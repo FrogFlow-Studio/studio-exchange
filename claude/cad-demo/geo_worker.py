@@ -1,6 +1,6 @@
 """Попытка 0 в отдельном процессе, чтобы на сложной детали её можно было остановить по времени.
 
-python geo_worker.py скан_выровненный.stl sheet.json 1|0 ответ.json [walls|surface]
+python geo_worker.py скан_выровненный.stl sheet.json 1|0 ответ.json [walls|surface|smooth]
 """
 import json
 import sys
@@ -34,6 +34,22 @@ elif len(sys.argv) > 5 and sys.argv[5] == "surface":
     code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
     meta = {"plan": f"тело по поверхности скана: {info['faces']} треугольников, отверстий вырезано точно {info['holes_cut']}",
             "restored": [], "assumptions": ["форма любая: тело повторяет поверхность скана, плоские участки выпрямлены"]}
+elif len(sys.argv) > 5 and sys.argv[5] == "smooth":
+    import cadquery as cq
+
+    import nurbs
+    import surface
+
+    body, info = nurbs.smooth_body(surface.flatten_planes(surface.surface_mesh(scan)), scan)
+    if body is None:
+        raise SystemExit("гладкое тело не собралось")
+    body, cut = surface.cut_holes(body, scan)
+    step = Path(sys.argv[4]).with_suffix(".step")
+    cq.exporters.export(body, str(step))
+    code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
+    meta = {"plan": f"гладкое тело: {info['faces']} B-сплайн граней по скану, {round(info['near'] * 100, 1)}% поверхности "
+                    f"в пределах 0,2 мм, отверстий вырезано точно {cut}",
+            "restored": [], "assumptions": ["форма любая: гладкие грани повторяют поверхность скана"]}
 else:
     code, meta = geometric.build(scan, sheet, restore=sys.argv[3] == "1")
 Path(sys.argv[4]).write_text(json.dumps({"code": code, "meta": meta}, ensure_ascii=False), encoding="utf-8")

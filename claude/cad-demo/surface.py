@@ -246,9 +246,8 @@ def solid_from_mesh(mesh: trimesh.Trimesh):
     return max(solids, key=lambda s: abs(s.Volume()))
 
 
-def surface_body(scan: trimesh.Trimesh, faces: int = 20000, holes: bool = True):
-    import walls as W
-
+def surface_mesh(scan: trimesh.Trimesh, faces: int = 20000) -> trimesh.Trimesh:
+    """Замкнутая чистая поверхность скана: без мусора и шума, упрощённая, с закрытыми дырами."""
     m = clean(scan.copy())
     trimesh.smoothing.filter_taubin(m, iterations=SMOOTH)
     if len(m.faces) > faces:
@@ -258,24 +257,35 @@ def surface_body(scan: trimesh.Trimesh, faces: int = 20000, holes: bool = True):
     r = repair(m)
     # свой ремонт сохраняет тонкие оболочки; MeshFix надёжнее, но тонкие стенки может
     # выбросить, поэтому он — только запасной путь, когда сетка так и не стала правильной
-    m = r if r.is_watertight and r.is_winding_consistent else meshfix(m)
-    m = flatten_planes(m)
+    return r if r.is_watertight and r.is_winding_consistent else meshfix(m)
+
+
+def cut_holes(s, scan: trimesh.Trimesh):
+    """Круглые отверстия вырезаются точно по диаметру из скана. Возвращает (тело, сколько)."""
+    import cadquery as cq
+
+    import walls as W
+
+    cut = 0
+    for w in W._hole_walls(scan):
+        c, d, r, h = w["origin"] + w["normal"] * 0.3, -w["normal"], w["hole"]["r"], w["hole"]["t"] + 0.3
+        try:
+            cyl = cq.Solid.makeCylinder(r, h, cq.Vector(*c), cq.Vector(*d))
+            res = s.cut(cyl)
+            if len(res.Solids()) == 1 and 0 <= s.Volume() - res.Volume() <= 1.05 * np.pi * r * r * h + 1:
+                s, cut = res.Solids()[0], cut + 1
+        except Exception:  # noqa: BLE001
+            pass
+    return s, cut
+
+
+def surface_body(scan: trimesh.Trimesh, faces: int = 20000, holes: bool = True):
+    m = flatten_planes(surface_mesh(scan, faces))
     s = solid_from_mesh(m)
     cut = 0
     if holes:
-        for w in W._hole_walls(scan):
-            import cadquery as cq
-
-            c, d, r, h = w["origin"] + w["normal"] * 0.3, -w["normal"], w["hole"]["r"], w["hole"]["t"] + 0.3
-            try:
-                cyl = cq.Solid.makeCylinder(r, h, cq.Vector(*c), cq.Vector(*d))
-                res = s.cut(cyl)
-                if len(res.Solids()) == 1 and 0 <= s.Volume() - res.Volume() <= 1.05 * np.pi * r * r * h + 1:
-                    s, cut = res.Solids()[0], cut + 1
-            except Exception:  # noqa: BLE001
-                pass
+        s, cut = cut_holes(s, scan)
     return s, {"faces": len(m.faces), "watertight": bool(m.is_watertight), "holes_cut": cut}
-
 
 if __name__ == "__main__":
     import time

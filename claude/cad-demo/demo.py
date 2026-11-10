@@ -477,6 +477,26 @@ def main() -> None:
     # Попытка 0: геометрический алгоритм без ИИ. Всегда есть, работает без ключа и сети.
     if not a.no_geometric:
         t0 = time.time()
+        # черновик из стенок и тело по поверхности считаются в фоне с самого начала, параллельно
+        # с попыткой 0: ждать её, чтобы потом начинать их с нуля, на крупной детали долго
+        def launch(kind: str, path: Path):
+            try:
+                return subprocess.Popen([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
+                                         str(out / "sheet.json"), "1", str(path), kind],
+                                        env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+            except Exception:  # noqa: BLE001
+                return None
+
+        sj, wj = out / "surface.json", out / "walls.json"
+        bg_limit, bg_started = a.geo_timeout + 300, time.time()
+        surf_proc, walls_proc = launch("surface", sj), launch("walls", wj)
+
+        def finish(proc) -> None:
+            if proc is None:
+                raise RuntimeError("процесс не запустился")
+            if proc.wait(timeout=max(10.0, bg_limit - (time.time() - bg_started))) != 0:
+                raise RuntimeError("процесс завершился с ошибкой")
+
         log("2/4 попытка 0: алгоритм без ИИ строит черновик по сечениям…")
         low = (a.notes or "").lower()
         restore = not a.no_restore and not any(w in low for w in ("деталь целая", "не достраивать", "ничего не восстанавливать"))
@@ -507,11 +527,8 @@ def main() -> None:
         if best is None or best["cmp"]["within_tol_share"] < 0.9:
             t0 = time.time()
             log("2/4 попытка 0б: черновик из стенок (для тонкостенных деталей), без ИИ…")
-            wj = out / "walls.json"
             try:
-                subprocess.run([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
-                                str(out / "sheet.json"), "1", str(wj), "walls"],
-                               timeout=a.geo_timeout + 300, check=True, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                finish(walls_proc)
                 w = json.loads(wj.read_text(encoding="utf-8"))
                 log("    " + w["meta"]["plan"])
                 itw = evaluate("0б", w["code"], w["meta"], t0, "стенки, без ИИ")
@@ -523,16 +540,14 @@ def main() -> None:
             except Exception as ex:  # noqa: BLE001
                 log(f"    черновик из стенок не получился ({type(ex).__name__})")
 
-        # Любая форма (кривые оболочки, линзы, корпуса): тело по поверхности скана. Строится,
-        # если черновики выше не дошли до цели; из всех попыток берётся лучшая по сравнению.
+        # Любая форма (кривые оболочки, линзы, корпуса): тело по поверхности скана. Считается
+        # параллельно с черновиками выше (запущено в начале), берётся, если они не дошли до
+        # цели; из всех попыток выбирается лучшая по сравнению.
         if best is None or not good(best):
             t0 = time.time()
             log("2/4 попытка 0в: тело по поверхности скана (для деталей любой формы), без ИИ…")
-            sj = out / "surface.json"
             try:
-                subprocess.run([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
-                                str(out / "sheet.json"), "1", str(sj), "surface"],
-                               timeout=a.geo_timeout + 300, check=True, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                finish(surf_proc)
                 g = json.loads(sj.read_text(encoding="utf-8"))
                 log("    " + g["meta"]["plan"])
                 its = evaluate("0в", g["code"], g["meta"], t0, "поверхность, без ИИ")
@@ -543,6 +558,9 @@ def main() -> None:
                 log("    тело по поверхности не уложилось во время")
             except Exception as ex:  # noqa: BLE001
                 log(f"    тело по поверхности не получилось ({type(ex).__name__})")
+        for proc in (surf_proc, walls_proc):
+            if proc is not None and proc.poll() is None:
+                proc.kill()  # не понадобился или не уложился во время
 
     hint = ""
     if best is not None and best["n"] in (0, "0б", "0в") and best["cmp"]:

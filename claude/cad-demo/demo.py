@@ -43,8 +43,32 @@ import scan_analysis
 HERE = Path(__file__).parent
 
 
-def log(msg: str) -> None:
+_STEP = {"t": 0.0, "last": 0.0, "limit": None}
+
+
+def log(msg: str, limit: float | None = None) -> None:
+    """limit — предел шага в секундах: пока шаг идёт, раз в минуту печатается, сколько прошло."""
+    now = time.time()
+    if msg.lstrip()[:3] in ("1/4", "2/4", "3/4", "4/4"):
+        _STEP.update(t=now, limit=limit)
+    _STEP["last"] = now
     print(time.strftime("%H:%M:%S"), msg, flush=True)
+
+
+def _ticker() -> None:
+    # длинный шаг без новых строк выглядит как зависание: напоминаем, что работа идёт
+    while True:
+        time.sleep(5)
+        now = time.time()
+        if _STEP["t"] and now - _STEP["last"] >= 60:
+            m = int((now - _STEP["t"]) // 60)
+            lim = f" из предела {round(_STEP['limit'] / 60)} мин" if _STEP["limit"] else ""
+            log(f"    …идёт {m} мин{lim}, работа продолжается")
+
+
+import threading  # noqa: E402
+
+threading.Thread(target=_ticker, daemon=True).start()
 
 
 DRAFT: dict = {}  # путь к STEP черновика, который ИИ может взять за основу (переменная draft)
@@ -588,6 +612,8 @@ def main() -> None:
 
         sj, wj = out / "surface.json", out / "walls.json"
         bg_limit, bg_started = a.geo_timeout + 300, time.time()
+        # тело по поверхности на огромном скане (миллионы треугольников) считается дольше: даём больше
+        surf_limit = bg_limit + (480 if sheet["diagnostics"]["faces"] > 1_000_000 else 0)
         surf_proc, walls_proc = launch("surface", sj), launch("walls", wj)
         models = {}  # ИИ-модели-кандидаты: имя -> (процесс, файл ответа)
         for name, mode in (("stepcad", a.stepcad), ("cadena", a.cadena)):
@@ -601,13 +627,18 @@ def main() -> None:
                 except Exception:  # noqa: BLE001
                     pass
 
-        def finish(proc) -> None:
+        def finish(proc, limit: float) -> None:
             if proc is None:
                 raise RuntimeError("процесс не запустился")
-            if proc.wait(timeout=max(10.0, bg_limit - (time.time() - bg_started))) != 0:
+            try:
+                code = proc.wait(timeout=max(10.0, limit - (time.time() - bg_started)))
+            except subprocess.TimeoutExpired:
+                proc.kill()  # иначе он продолжит считать и съест память следующим попыткам
+                raise
+            if code != 0:
                 raise RuntimeError("процесс завершился с ошибкой")
 
-        log("2/4 попытка 0: алгоритм без ИИ строит черновик по сечениям…")
+        log("2/4 попытка 0: алгоритм без ИИ строит черновик по сечениям…", a.geo_timeout)
         low = (a.notes or "").lower()
         restore = not a.no_restore and not any(w in low for w in ("деталь целая", "не достраивать", "ничего не восстанавливать"))
         if not restore:
@@ -636,9 +667,9 @@ def main() -> None:
         # черновик из стенок (каждая пластина целиком по паре параллельных сторон).
         if best is None or best["cmp"]["within_tol_share"] < 0.9:
             t0 = time.time()
-            log("2/4 попытка 0б: черновик из стенок (для тонкостенных деталей), без ИИ…")
+            log("2/4 попытка 0б: черновик из стенок (для тонкостенных деталей), без ИИ…", max(10.0, bg_limit - (time.time() - bg_started)))
             try:
-                finish(walls_proc)
+                finish(walls_proc, bg_limit)
                 w = json.loads(wj.read_text(encoding="utf-8"))
                 log("    " + w["meta"]["plan"])
                 itw = evaluate("0б", w["code"], w["meta"], t0, "стенки, без ИИ")
@@ -655,9 +686,9 @@ def main() -> None:
         # цели; из всех попыток выбирается лучшая по сравнению.
         if best is None or not good(best):
             t0 = time.time()
-            log("2/4 попытка 0в: тело по поверхности скана (для деталей любой формы), без ИИ…")
+            log("2/4 попытка 0в: тело по поверхности скана (для деталей любой формы), без ИИ…", max(10.0, surf_limit - (time.time() - bg_started)))
             try:
-                finish(surf_proc)
+                finish(surf_proc, surf_limit)
                 g = json.loads(sj.read_text(encoding="utf-8"))
                 log("    " + g["meta"]["plan"])
                 its = evaluate("0в", g["code"], g["meta"], t0, "поверхность, без ИИ")
@@ -672,7 +703,7 @@ def main() -> None:
             # тысячами треугольников. Берётся вместо треугольного тела, если почти не уступает ему.
             if a.smooth != "off" and (best is None or best["n"] == "0в"):
                 t0 = time.time()
-                log("2/4 попытка 0к: гладкое тело из B-сплайн граней по скану, без ИИ…")
+                log("2/4 попытка 0к: гладкое тело из B-сплайн граней по скану, без ИИ…", 1200)
                 kj = out / "smooth.json"
                 try:
                     subprocess.run([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
@@ -695,7 +726,7 @@ def main() -> None:
         for name, (proc, ans) in models.items():
             n, title = titles[name]
             t0 = time.time()
-            log(f"2/4 попытка {n}: {title} (ИИ-модель, локально, бесплатно)…")
+            log(f"2/4 попытка {n}: {title} (ИИ-модель, локально, бесплатно)…", 1500)
             try:
                 if proc.wait(timeout=1500) != 0:
                     raise RuntimeError("процесс завершился с ошибкой")
@@ -714,7 +745,7 @@ def main() -> None:
         # точные размеры пишутся обратно в редактируемую программу (fitfaces.py + merge.py)
         if best is not None and best["run"].get("ok") and "importStep" not in best["code"]:
             t0 = time.time()
-            log("2/4 попытка 0ж: уточняю размеры граней по точкам скана…")
+            log("2/4 попытка 0ж: уточняю размеры граней по точкам скана…", 300)
             try:
                 mj = out / "fit.json"
                 subprocess.run([sys.executable, str(HERE / "merge.py"), str(best["dir"] / "model.py"),
@@ -748,7 +779,7 @@ def main() -> None:
         # и рассыпается (накладка Hyundai: 39 мин, покрытие 14%), а на тысячах граней идёт часами
         if a.p2s == "on" and best is not None and best["run"].get("ok") and best["n"] not in ("0в", "0к"):
             t0 = time.time()
-            log("2/4 попытка 0е: Point2STEP уточняет грани лучшей модели по скану…")
+            log("2/4 попытка 0е: Point2STEP уточняет грани лучшей модели по скану…", 700)
             try:
                 pj = out / "p2s.json"
                 subprocess.run([sys.executable, str(HERE / "p2s_worker.py"), str(out / "scan_aligned.stl"),
@@ -769,7 +800,7 @@ def main() -> None:
                 # (только там, где новая поверхность ближе к скану, чем старая)
                 if "importStep" not in base["code"]:
                     t0 = time.time()
-                    log("2/4 попытка 0и: объединяю — размеры от Point2STEP в нашей программе построения…")
+                    log("2/4 попытка 0и: объединяю — размеры от Point2STEP в нашей программе построения…", 300)
                     mj = out / "merge.json"
                     subprocess.run([sys.executable, str(HERE / "merge.py"), str(base["dir"] / "model.py"),
                                     str(out / "p2s.step"), str(out / "scan_aligned.stl"), str(out / "merged.py"), str(mj)],
@@ -798,7 +829,7 @@ def main() -> None:
         cad_step = out / "cadena.step"
         if cad_step.exists() and best is not None and best["run"].get("ok") and "importStep" not in best["code"]:
             t0 = time.time()
-            log("2/4 попытка 0з: проверяю подсказки CADENA по скану…")
+            log("2/4 попытка 0з: проверяю подсказки CADENA по скану…", 300)
             try:
                 hj = out / "hints.json"
                 subprocess.run([sys.executable, str(HERE / "hints.py"), str(best["dir"] / "model.py"),
@@ -952,6 +983,7 @@ def main() -> None:
                     + (f", ошибка Ø в среднем {row['d_err']} мм, наибольшая {row['d_max']} мм" if errs else ""))
     holes_rows = None
     if best and (out / "model.stl").exists():
+        log("4/4 ищу отверстия скана и сверяю их с моделью…", 600)
         try:  # отверстия скана: на месте ли они в модели и того же ли размера
             holes_rows = holesmod.check(scan, trimesh.load(out / "model.stl", force="mesh"), tol=max(0.2, a.tol / 2))
             log(f"отверстия: найдено {len(holes_rows)}, совпали {sum(r['ok'] for r in holes_rows)}")

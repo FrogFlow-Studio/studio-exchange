@@ -40,12 +40,14 @@ def check(run: dict, model: trimesh.Trimesh | None, sheet: dict, scan: trimesh.T
     if model is None:
         return bad
     # 1) каждое круглое отверстие, найденное в скане, есть в модели (центр ±0.5, Ø ±0.4)
+    # отверстие мельче трёх шумов скана может оказаться просто шумом: его не требуем
+    min_d = 3 * float(sheet.get("diagnostics", {}).get("noise_mm") or 0)
     for sec in sheet.get("sections", []):
         z = sec["z_mm"]
         have = None
         for reg in sec["regions"]:
             for h in reg["inner"]:
-                if h.get("shape") != "окружность":
+                if h.get("shape") != "окружность" or h["diameter"] < min_d:
                     continue
                 if have is None:
                     have = _holes_at(model, z)

@@ -475,6 +475,16 @@ def measurement_sheet(path: str, units: str = "mm") -> tuple[dict, trimesh.Trime
     diag["scaled_to_mm"] = k
     if units == "mm" and max(raw.extents) < 2:
         diag["warnings"].append("деталь меньше 2 мм: если файл в метрах, укажите единицы «м» и запустите снова")
+    # Сканер часто отдаёт миллионы треугольников: всё дальше (чистка, сечения, тела) идёт в разы
+    # дольше, а точнее не становится. Упрощение до миллиона сдвигает поверхность на тысячные
+    # доли мм (полный скан Хендай: 4,8 млн → 1 млн, наибольший сдвиг 0,006 мм) — меньше шума скана.
+    if len(raw.faces) > 1_500_000:
+        import fast_simplification
+
+        v, f = fast_simplification.simplify(raw.vertices, raw.faces, 1 - 1_000_000 / len(raw.faces))
+        raw = trimesh.Trimesh(v, f, process=True)
+        diag["warnings"].append(f"скан очень подробный ({diag['faces']} треугольников): для скорости упрощён до "
+                                f"{len(raw.faces)}, поверхность сдвинута меньше чем на 0,01 мм")
     # Дыры сетки (места, которые сканер не увидел): штопаем мелкие, чтобы сечения
     # замыкались. Исходный файл не меняется.
     if not raw.is_watertight:

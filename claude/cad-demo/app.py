@@ -76,7 +76,7 @@ async function poll(){const j=await (await fetch('/api/status')).json();const L=
 
 def start_job(scan: Path, notes: str, units: str = "mm") -> None:
     def work():
-        cmd = [sys.executable, "-u", str(HERE / "demo.py"), str(scan), "--notes", notes, "--no-open", "--units", units]
+        cmd = [sys.executable, "-u", str(HERE / "demo.py"), str(scan), "--notes", notes, "--no-open", "--units", units, "--budget-usd", "0.3"]
         p = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                              encoding="utf-8", errors="replace",
                              env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1"))

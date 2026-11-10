@@ -15,6 +15,20 @@ import walls as W
 _circle = W._circle
 
 
+def _circle_robust(pts: np.ndarray):
+    """Окружность без пазов и выступов: подгоняем, отбрасываем точки, далеко ушедшие от
+    окружности (паз под ключ, скол кромки), и подгоняем снова по оставшимся."""
+    c, r, rms = _circle(pts)
+    for _ in range(3):
+        res = np.abs(np.linalg.norm(pts - c, axis=1) - r)
+        keep = res < max(0.3, 2.5 * np.median(res))
+        if keep.sum() < max(8, 0.6 * len(pts)) or keep.all():
+            break
+        pts = pts[keep]
+        c, r, rms = _circle(pts)
+    return c, r, rms
+
+
 def find_holes(scan: trimesh.Trimesh, d_min: float = 1.5, d_max: float = 40.0, depth: float = 0.8) -> list[dict]:
     """Отверстия ищем в сечении тела чуть под каждой плоской гранью: шумный скан режет саму
     грань на куски, и по её контуру круглая дыра не видна, а в сечении материала — видна."""
@@ -70,7 +84,7 @@ def _measure(mesh: trimesh.Trimesh, h: dict, depth: float):
         pts = np.c_[q @ h["u"], q @ h["v"]]
         if len(pts) < 8:
             continue
-        c, r, rms = _circle(pts)
+        c, r, rms = _circle_robust(pts)
         if np.linalg.norm(c) < max(1.0, 0.5 * r0) and 0.5 * r0 < r < 1.5 * r0 and rms < 0.2 * r:
             if best is None or np.linalg.norm(c) < np.linalg.norm(best[0]):
                 best = (c, r)

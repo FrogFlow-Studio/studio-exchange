@@ -157,8 +157,56 @@ def walls(mesh: trimesh.Trimesh, max_thick: float = 25.0) -> list[dict]:
     out = _check_material(mesh, out)
     out = [_grow(mesh, w) for w in out]
     # после вычитания соседних стенок отверстие, открытое в стык, становится замкнутым — скругляем ещё раз
-    return [dict(w, outline=_carve_holes(_round_holes(w["outline"], w.get("body")), w.get("body")))
-            for w in _dedupe(out)]
+    out = [dict(w, outline=_carve_holes(_round_holes(w["outline"], w.get("body")), w.get("body")))
+           for w in _dedupe(out)]
+    return out + (_hole_walls(mesh) if HOLES else [])
+
+
+HOLES = True  # отверстия скана переносим в модель точно: кольцо материала вокруг и цилиндр насквозь
+
+
+def _hole_walls(mesh) -> list[dict]:
+    """Посадочные отверстия — самое важное в детали. Каждое круглое отверстие скана
+    переносим в модель отдельно: кольцо материала шириной 2 мм вокруг (только там, где в
+    скане есть материал) и в конце вырез цилиндром диаметра из скана на толщину пластины."""
+    import holes as H
+
+    out = []
+    try:
+        found = H.find_holes(mesh)
+    except Exception:  # noqa: BLE001
+        return out
+    for h in found:
+        try:
+            m = H._measure(mesh, h, 0.6)
+            if m is None:
+                continue
+            r = m["d"] / 2
+            n, u, v, c = h["normal"], h["u"], h["v"], h["center"]
+            # длина отверстия — пока сечение скана на этой глубине даёт ту же окружность
+            t = 0.6
+            for dep in np.arange(0.9, 30, 0.3):
+                q = H._measure(mesh, h, float(dep))
+                if q is None or abs(q["d"] - m["d"]) > 0.4 or q["offset"] > 0.5:
+                    break
+                t = float(dep)
+            t += 0.3  # край отверстия: последнее ровное сечение чуть не доходит до грани
+            if not 0.6 < t < 30:
+                continue
+            wf = {"origin": c, "normal": n, "u": u, "v": v}
+            secs = [b for b in (_body_at(mesh, wf, dd) for dd in sorted({0.6, t / 2})) if b is not None and not b.is_empty]
+            if not secs:
+                continue
+            body = unary_union(secs)
+            ring = Point(0, 0).buffer(r + 2.0, 64).difference(Point(0, 0).buffer(r, 64))
+            g = ring.intersection(body.buffer(0.1))
+            if g.is_empty or g.area < 0.5 * ring.area:
+                continue
+            out.append(dict(wf, thickness=t, outline=g, area=float(g.area), single=True,
+                            hole={"r": r, "t": t}))
+        except Exception:  # noqa: BLE001
+            continue
+    return out
 
 
 GROW_MM = 0.5
@@ -590,6 +638,12 @@ def draft_code(ws: list[dict], buf: float = 0.2) -> str:
                 lines.append(f"    parts.append(wp.extrude({round(w['thickness'], 3)}))")
             lines.append("except Exception:  # одна неудачная пластина не роняет весь черновик")
             lines.append("    pass")
+    cuts = [w for w in ws if w.get("hole")]
+    lines += ["", "# посадочные отверстия: цилиндры диаметра из скана, вырезаются в самом конце",
+              "hole_cuts = [" + ", ".join(
+                  f"({tuple(np.round(w['origin'] + w['normal'] * 0.3, 3).tolist())}, "
+                  f"{tuple(np.round(-w['normal'], 5).tolist())}, {round(w['hole']['r'], 3)}, "
+                  f"{round(w['hole']['t'] + 0.3, 3)})" for w in cuts) + "]"]
     lines += ["",
               "# попарно, деревом: так объединения короче и меньше копят ошибки OCC",
               "shapes = [p.val() for p in parts]",
@@ -623,5 +677,16 @@ def draft_code(ws: list[dict], buf: float = 0.2) -> str:
               "    # прибавиться может только объём закрытых полостей — иначе заливку отменяем",
               "    voids = sum(abs(cq.Solid.makeSolid(sh).Volume()) for sh in result.Shells() if not sh.isSame(outer))",
               "    if filled.isValid() and abs(filled.Volume() - result.Volume() - voids) < 0.01 * result.Volume() + 1:",
-              "        result = filled"]
+              "        result = filled",
+              "import math",
+              "for c_, d_, r_, h_ in hole_cuts:",
+              "    try:",
+              "        cyl = cq.Solid.makeCylinder(r_, h_, cq.Vector(*c_), cq.Vector(*d_))",
+              "        cut = result.cut(cyl)",
+              "        removed = result.Volume() - cut.Volume()",
+              "        # вырез не должен задеть ничего, кроме самой пластины",
+              "        if len(cut.Solids()) == len(result.Solids()) and -1 < removed <= 1.05 * math.pi * r_ * r_ * h_ + 1:",
+              "            result = cut.Solids()[0] if len(cut.Solids()) == 1 else cut",
+              "    except Exception:",
+              "        pass"]
     return "\n".join(lines)

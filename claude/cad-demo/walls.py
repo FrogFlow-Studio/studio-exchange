@@ -13,7 +13,7 @@ from collections import deque
 
 import numpy as np
 import trimesh
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 
 
@@ -73,6 +73,33 @@ def planar_patches(mesh: trimesh.Trimesh, max_angle: float = 10.0, max_dist: flo
         n1 = np.average(fn[members], axis=0, weights=w)
         n0 = n1 / np.linalg.norm(n1)
         out.append({"faces": np.array(members), "normal": n0, "point": p0, "area": A})
+    return _merge_coplanar(out, area) if MERGE_COPLANAR else out
+
+
+def _merge_coplanar(pats: list[dict], area: np.ndarray) -> list[dict]:
+    """Шумный скан режет одну плоскую грань на много участков (рост области упирается в шум).
+    Участки в одной плоскости (нормали почти совпадают, плоскости ближе 0,4 мм) сливаем в один:
+    иначе одна пластина детали собиралась из десятка обрезков, а круглые отверстия в ней
+    терялись между кусками."""
+    order = sorted(range(len(pats)), key=lambda k: -pats[k]["area"])
+    groups: list[list[int]] = []
+    for k in order:
+        p = pats[k]
+        for g in groups:
+            q = pats[g[0]]
+            if p["normal"] @ q["normal"] > 0.995 and abs((p["point"] - q["point"]) @ q["normal"]) < 0.4:
+                g.append(k)
+                break
+        else:
+            groups.append([k])
+    out = []
+    for g in groups:
+        faces = np.concatenate([pats[k]["faces"] for k in g])
+        w = area[faces]
+        n = np.sum([pats[k]["normal"] * pats[k]["area"] for k in g], axis=0)
+        n /= np.linalg.norm(n)
+        p0 = np.sum([pats[k]["point"] * pats[k]["area"] for k in g], axis=0) / sum(pats[k]["area"] for k in g)
+        out.append({"faces": faces, "normal": n, "point": p0, "area": float(w.sum())})
     return out
 
 
@@ -127,7 +154,9 @@ def walls(mesh: trimesh.Trimesh, max_thick: float = 25.0) -> list[dict]:
     if mesh.is_watertight:
         out = _check_material(mesh, out)
     out = [_grow(mesh, w) for w in out]
-    return _dedupe(out)
+    # после вычитания соседних стенок отверстие, открытое в стык, становится замкнутым — скругляем ещё раз
+    return [dict(w, outline=_carve_holes(_round_holes(w["outline"], w.get("body")), w.get("body")))
+            for w in _dedupe(out)]
 
 
 GROW_MM = 0.5
@@ -136,6 +165,9 @@ CLIP_AT = (0.25, 0.5, 0.75, 0.95)
 CLIP_BUF = 0.1
 CHECK_PTS = 100
 CHECK_MIN = 0.9
+MERGE_COPLANAR = True
+MERGE_SAME = 0.0  # сливаем кусок пластины не больше этой площади, мм² (0 — не сливать)
+DEDUPE_GAP = 0.5
 WEDGE = False  # «выдавить до грани»: на кронштейне студии давал лишнее, ступени по глубине точнее
 
 
@@ -156,9 +188,88 @@ def _grow(mesh, w):
         pl, _ = sec.to_2D(to_2D=T)
         body = unary_union([p.buffer(0) for p in pl.polygons_full])
         g2 = unary_union([g, body.intersection(g.buffer(GROW_MM))])
+        g2 = _round_holes(g2, body)
     except Exception:  # noqa: BLE001
         return w
-    return dict(w, outline=g2, area=float(g2.area))
+    return dict(w, outline=g2, area=float(g2.area), body=body)
+
+
+def _circle(pts: np.ndarray):
+    """Окружность по точкам (алгебраическая подгонка): центр, радиус, СКО."""
+    x, y = pts[:, 0], pts[:, 1]
+    A = np.c_[2 * x, 2 * y, np.ones(len(x))]
+    sol, *_ = np.linalg.lstsq(A, x * x + y * y, rcond=None)
+    c = sol[:2]
+    r = float(np.sqrt(max(sol[2] + c @ c, 0)))
+    rms = float(np.sqrt(np.mean((np.linalg.norm(pts - c, axis=1) - r) ** 2)))
+    return c, r, rms
+
+
+def _round_holes(g, body):
+    """Круглые отверстия делаем круглыми: контур отверстия в скане — ломаная с шумом, а по
+    замыслу это окружность. Окружность подгоняем по сечению тела посередине стенки (там нет
+    фаски и скругления кромки)."""
+    if g.is_empty or body is None or body.is_empty:
+        return g
+    from shapely.geometry import Point
+
+    rings = [r for b in ([body] if body.geom_type == "Polygon" else list(body.geoms)) for r in b.interiors]
+    polys = [g] if g.geom_type == "Polygon" else list(g.geoms)
+    res = []
+    for poly in polys:
+        new_int = []
+        for ring in poly.interiors:
+            pts = np.asarray(ring.coords)[:-1]
+            c0, r0, rms0 = _circle(pts) if len(pts) >= 6 else (None, 0, 1e9)
+            if c0 is None or not (0.75 <= r0 <= 20) or rms0 > 0.15 * r0:
+                new_int.append(ring)
+                continue
+            cand = [r for r in rings if Point(c0).distance(Polygon(r).centroid) < max(1.0, 0.5 * r0)]
+            if not cand:  # в теле на этом месте отверстия нет — это не отверстие, а стык
+                new_int.append(ring)
+                continue
+            c, r, rms = _circle(np.asarray(cand[0].coords)[:-1])
+            if rms > 0.15 * r or abs(r - r0) > max(0.5, 0.3 * r0):
+                c, r = c0, r0
+            ang = np.linspace(0, 2 * np.pi, 49)[:-1]
+            new_int.append(np.c_[c[0] + r * np.cos(ang), c[1] + r * np.sin(ang)])
+        try:
+            res.append(Polygon(poly.exterior, new_int).buffer(0))
+        except Exception:  # noqa: BLE001
+            res.append(poly)
+    return unary_union(res)
+
+
+def _carve_holes(g, body):
+    """Круглое отверстие тела вырезаем в контуре стенки точной окружностью, даже если после
+    вычитания соседних стенок оно открылось в стык: вокруг отверстия возвращаем материал тела
+    (кольцо 1,5 мм), саму окружность вырезаем."""
+    if g.is_empty or body is None or body.is_empty:
+        return g
+    try:
+        for b in ([body] if body.geom_type == "Polygon" else list(body.geoms)):
+            for ring in b.interiors:
+                pts = np.asarray(ring.coords)[:-1]
+                if len(pts) < 8:
+                    continue
+                c, r, rms = _circle(pts)
+                if not (0.75 <= r <= 12) or rms > 0.1 * r:
+                    continue
+                disk = Point(c).buffer(r, 48)
+                ann = disk.buffer(1.5).difference(disk)
+                if body.intersection(ann).area < 0.9 * ann.area:
+                    continue  # вокруг нет сплошного материала — это не отверстие в пластине
+                if any(Polygon(q).contains(Point(c)) and abs(Polygon(q).area - disk.area) < 0.3 * disk.area
+                       for p in ([g] if g.geom_type == "Polygon" else list(g.geoms)) for q in p.interiors):
+                    continue  # отверстие в стенке уже есть
+                if g.buffer(0.05).intersection(disk.buffer(1.0)).area < 0.5 * disk.buffer(1.0).difference(disk).area:
+                    continue  # отверстие не в этой стенке
+                g2 = unary_union([g, body.intersection(disk.buffer(r * 0.3 + 1.5))]).difference(disk)
+                if not g2.is_empty and g2.is_valid and g2.area - g.area < 0.5 * ann.area:
+                    g = g2
+    except Exception:  # noqa: BLE001
+        return g
+    return g
 
 
 def _mid_section(mesh, origin, n, u, v, t, base):
@@ -377,31 +488,42 @@ def _single_sided(mesh, pats, frames, paired, max_thick) -> list[dict]:
     return out
 
 
+def _to_frame(geom, src: dict, dst: dict):
+    """Контур стенки src (вместе с отверстиями и всеми кусками) в координатах стенки dst."""
+    import shapely
+
+    def f(xy):
+        P = src["origin"] + xy[:, :1] * src["u"] + xy[:, 1:2] * src["v"] - dst["origin"]
+        return np.c_[P @ dst["u"], P @ dst["v"]]
+
+    return shapely.transform(geom, f).buffer(0)
+
+
 def _dedupe(ws: list[dict]) -> list[dict]:
-    """Одна и та же стенка находится несколько раз (большая сторона в паре с кусками другой).
-    Почти совпадающие пластины CAD-ядро сливает плохо, поэтому оставляем одну, а от
-    остальных — только то, что она не покрывает."""
+    """Одна и та же стенка находится несколько раз (большая сторона в паре с кусками другой,
+    шумная грань разбита на участки). Пластины в одной плоскости и одной толщины сливаем в
+    одну до выдавливания: так нет ни совпадающих граней (их CAD-ядро сливает долго и плохо),
+    ни щелей между кусками. От пластин другой толщины остаётся только то, что не покрыто."""
     keep: list[dict] = []
     for w in sorted(ws, key=lambda w: -w["area"]):
         g = w["outline"]
-        for k in keep:
+        merged = False
+        for i, k in enumerate(keep):
             if abs(k["normal"] @ w["normal"]) < 0.99:
                 continue
             mid_w = w["origin"] - w["normal"] * w["thickness"] / 2
             mid_k = k["origin"] - k["normal"] * k["thickness"] / 2
             if abs((mid_w - mid_k) @ k["normal"]) > 0.8:
                 continue
-            # контур k в координатах w
-            d = k["origin"] - w["origin"]
-            ring = np.asarray(k["outline"].exterior.coords) if k["outline"].geom_type == "Polygon" else None
-            if ring is None:
-                continue
-            pts3 = d + ring[:, :1] * k["u"] + ring[:, 1:2] * k["v"]
-            kp = Polygon(np.c_[pts3 @ w["u"], pts3 @ w["v"]]).buffer(0)
-            g = g.difference(kp.buffer(0.5))
+            if w["area"] <= MERGE_SAME and abs(w["thickness"] - k["thickness"]) < 0.4 and not w.get("until") and not k.get("until"):
+                u = unary_union([k["outline"], _to_frame(g, w, k)])
+                keep[i] = dict(k, outline=u, area=float(u.area))
+                merged = True
+                break
+            g = g.difference(_to_frame(k["outline"], k, w).buffer(DEDUPE_GAP))
             if g.is_empty or g.area < 15:
                 break
-        if g.is_empty or g.area < 15:
+        if merged or g.is_empty or g.area < 15:
             continue
         keep.append(dict(w, outline=g, area=float(g.area)))
     return keep
@@ -433,20 +555,27 @@ def draft_code(ws: list[dict], buf: float = 0.2) -> str:
             if g.area < 15:
                 continue
             # контур уже доходит до стыков (сечение по средней плоскости); чуть-чуть нахлёста
-            g = g.buffer(buf, join_style=2).simplify(0.3)
-            if g.geom_type != "Polygon":
+            # нахлёст наружу — только по внешнему краю: отверстия от него сужались бы
+            ext_g = Polygon(g.exterior).buffer(buf, join_style=2).simplify(0.3)
+            if ext_g.geom_type != "Polygon":
                 continue
+            inner = ext_g.buffer(-0.3)
+            rings = [Polygon(r).simplify(0.1) for r in g.interiors]
+            rings = [r for r in rings if r.is_valid and r.area > 4 and inner.contains(r)]
+            g2 = Polygon(ext_g.exterior, [r.exterior for r in rings])
+            g = g2 if g2.is_valid else ext_g
             ext = [(round(x, 2), round(-y, 2)) for x, y in list(g.exterior.coords)[:-1]]  # ось y эскиза = -v
             if len(ext) < 3:
                 continue
             o, u, n = w["origin"], w["u"], w["normal"]
             pl = (f"cq.Plane(origin={tuple(np.round(o, 3).tolist())}, xDir={tuple(np.round(u, 5).tolist())}, "
                   f"normal={tuple(np.round(-n, 5).tolist())})")
-            lines.append(f"wp = cq.Workplane({pl}).polyline({ext}).close()")
+            lines.append("try:")
+            lines.append(f"    wp = cq.Workplane({pl}).polyline({ext}).close()")
             for r in g.interiors:
                 hole = [(round(x, 2), round(-y, 2)) for x, y in list(r.coords)[:-1]]
                 if len(hole) >= 3 and Polygon(hole).area > 4:
-                    lines.append(f"wp = wp.polyline({hole}).close()")
+                    lines.append(f"    wp = wp.polyline({hole}).close()")
             # нормаль плоскости эскиза смотрит внутрь детали; xDir=u, ось y эскиза = n×u = v
             if w.get("until"):
                 pb, nb = w["until"]["point"], w["until"]["normal"]
@@ -454,9 +583,11 @@ def draft_code(ws: list[dict], buf: float = 0.2) -> str:
                 hs = (f"cq.Workplane(cq.Plane(origin={tuple(np.round(pb, 3).tolist())}, "
                       f"xDir={tuple(np.round(xb, 5).tolist())}, normal={tuple(np.round(-nb, 5).tolist())}))"
                       ".rect(2000, 2000).extrude(1000)")
-                lines.append(f"parts.append(wp.extrude({round(w['thickness'], 3)}).intersect({hs}))  # клин до грани")
+                lines.append(f"    parts.append(wp.extrude({round(w['thickness'], 3)}).intersect({hs}))  # клин до грани")
             else:
-                lines.append(f"parts.append(wp.extrude({round(w['thickness'], 3)}))")
+                lines.append(f"    parts.append(wp.extrude({round(w['thickness'], 3)}))")
+            lines.append("except Exception:  # одна неудачная пластина не роняет весь черновик")
+            lines.append("    pass")
     lines += ["",
               "# попарно, деревом: так объединения короче и меньше копят ошибки OCC",
               "shapes = [p.val() for p in parts]",

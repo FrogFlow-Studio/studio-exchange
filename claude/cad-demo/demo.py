@@ -34,6 +34,7 @@ import trimesh
 logging.getLogger("trimesh").setLevel(logging.ERROR)
 
 import compare as cmpmod
+import holes as holesmod
 import gates
 import geometric
 import llm
@@ -154,6 +155,21 @@ def importmap() -> str:
                                    "three/addons/loaders/STLLoader.js": url("STLLoader.js")}})
 
 
+def _holes_row(rows):
+    """Отверстия: сколько круглых отверстий нашлось в скане и все ли они в модели того же размера."""
+    title = "Отверстия на месте и того же диаметра, что в скане"
+    if rows is None:
+        return (None, title, "не проверялось — сверить по таблице размеров ниже или по детали")
+    if not rows:
+        return (None, title, "круглых отверстий в уцелевшей части скана не нашлось — сверить по детали")
+    bad = [r for r in rows if not r["ok"]]
+    note = f"найдено {len(rows)}, совпали {len(rows) - len(bad)}"
+    if bad:
+        note += "; не совпали: " + "; ".join(
+            f"Ø{r['d_scan']} в скане → " + (f"Ø{r['d_model']} в модели" if r["d_model"] else "в модели нет") for r in bad)
+    return (not bad, title, note)
+
+
 def print_ready_html(best: dict | None, ctx: dict) -> str:
     """Готово ли к печати: что проверено автоматически, а что — только инженером."""
     e = html.escape
@@ -172,15 +188,14 @@ def print_ready_html(best: dict | None, ctx: dict) -> str:
          f"{cmp.get('within_tol_share', 0)*100:.1f}%, нехватка {cmp.get('outside_share', 0)*100:.2f}%"),
         (None, "Скол восстановлен по замыслу",
          ("достроено: " + "; ".join(map(str, restored))) if restored else "достроенных мест модель не указала"),
-        (None, "Посадочные места (отверстия, крепления) по размеру",
-         "сверить по таблице размеров ниже или по детали"),
+        _holes_row(ctx.get("holes")),
     ]
     mark = {True: "<b style='color:var(--ok)'>да</b>", False: "<b class=err>нет</b>", None: "инженер"}
     auto = [r for r in rows if r[0] is not None]
     done = sum(1 for r in auto if r[0])
     body = "".join(f"<tr><td>{mark[ok]}</td><td>{e(t)}</td><td class=small>{e(n)}</td></tr>" for ok, t, n in rows)
     return (f"<section><h2>Готово к печати?</h2><p>Автоматические проверки: <b>{done} из {len(auto)}</b>. "
-            "Последние два пункта проверяет инженер: машина не знает замысла детали наверняка.</p>"
+            "Пункты с отметкой «инженер» проверяет человек: машина не знает замысла детали наверняка.</p>"
             f"<table><tr><th class=chk>Итог</th><th>Проверка</th><th>Что получилось</th></tr>{body}</table></section>")
 
 
@@ -604,13 +619,21 @@ def main() -> None:
             tm.apply_transform(np.array(sheet["transform_from_scan_4x4"]))
             truth = cmpmod.compare(tm, trimesh.load(out / "model.stl", force="mesh"), tol=a.tol)
             log(f"эталон: в допуске {truth['within_tol_share']*100:.1f}% (тестовая деталь)")
+    holes_rows = None
+    if best and (out / "model.stl").exists():
+        try:  # отверстия скана: на месте ли они в модели и того же ли размера
+            holes_rows = holesmod.check(scan, trimesh.load(out / "model.stl", force="mesh"), tol=max(0.2, a.tol / 2))
+            log(f"отверстия: найдено {len(holes_rows)}, совпали {sum(r['ok'] for r in holes_rows)}")
+        except Exception as ex:  # noqa: BLE001
+            log(f"проверка отверстий не удалась: {ex}")
     test_label = ""
     if "samples" in Path(a.scan).resolve().parts:
         test_label = "Тестовая деталь, сломанная нами специально. Это не деталь студии."
     rep = write_report(out, {
         "iterations": iterations, "best": best, "sheet": sheet, "mode": mode, "mode_label": mode_label,
         "started": started.strftime("%d.%m.%Y %H:%M"), "scan_name": Path(a.scan).name, "tol": a.tol,
-        "target": a.target, "converged": converged, "total_s": (dt.datetime.now() - started).total_seconds(),  # весь запуск, с замерами "truth": truth,
+        "target": a.target, "converged": converged, "total_s": (dt.datetime.now() - started).total_seconds(),  # весь запуск, с замерами
+        "truth": truth, "holes": holes_rows,
         "test_label": test_label, "scan_mesh": scan})
     log(f"готово: {rep}")
     if not a.no_open:

@@ -109,7 +109,7 @@ def split_pinches(m: trimesh.Trimesh) -> trimesh.Trimesh:
     return trimesh.Trimesh(np.array(V), F, process=False)
 
 
-def repair(m: trimesh.Trimesh, rounds: int = 4) -> trimesh.Trimesh:
+def repair(m: trimesh.Trimesh, rounds: int = 12) -> trimesh.Trimesh:
     """После упрощения тонкие стенки иногда слипаются: ребро на 3–4 треугольника. Такие
     треугольники убираем, мелкие оторванные куски выбрасываем, дыры закрываем — пока сетка
     не станет замкнутой."""
@@ -133,7 +133,29 @@ def repair(m: trimesh.Trimesh, rounds: int = 4) -> trimesh.Trimesh:
             m = split_pinches(m)
             trimesh.repair.fix_winding(m)
             trimesh.repair.fix_normals(m)
+            if m.is_winding_consistent:
+                break
+            # остались места, где соседние треугольники смотрят в разные стороны (кусок
+            # поверхности перекручен): убираем их, на следующем круге дыра закроется заново
+            bad = flipped_faces(m)
+            if len(bad):
+                keep = np.ones(len(m.faces), bool)
+                keep[bad] = False
+                m = trimesh.Trimesh(m.vertices, m.faces[keep], process=True)
     return m
+
+
+def flipped_faces(m: trimesh.Trimesh) -> np.ndarray:
+    """Треугольники по обе стороны ребра, которые проходят его в одну сторону."""
+    fa, e = m.face_adjacency, m.face_adjacency_edges
+
+    def forward(f, a, b):
+        F = m.faces[f]
+        i = np.argmax(F == a[:, None], axis=1)
+        return F[np.arange(len(f)), (i + 1) % 3] == b
+
+    same = forward(fa[:, 0], e[:, 0], e[:, 1]) == forward(fa[:, 1], e[:, 0], e[:, 1])
+    return np.unique(fa[same])
 
 
 def meshfix(m: trimesh.Trimesh) -> trimesh.Trimesh:

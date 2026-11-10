@@ -68,14 +68,13 @@ def run_code(code: str, it_dir: Path, timeout: int = 90) -> dict:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def want_stepcad(mode: str) -> bool:
-    """Запускать ли кандидата StepCAD: auto — при видеокарте NVIDIA и найденном StepCAD."""
+def want_model(mode: str, name: str) -> bool:
+    """Запускать ли ИИ-модель-кандидата (stepcad, cadena): auto — при видеокарте NVIDIA и найденном коде."""
     if mode == "off":
         return False
     try:
-        import stepcad_worker
-
-        if stepcad_worker.stepcad_dir() is None:
+        mod = __import__(f"{name}_worker")
+        if getattr(mod, f"{name}_dir")() is None:
             return False
         if mode == "on":
             return True
@@ -406,6 +405,10 @@ def main() -> None:
                     help="кандидат StepCAD (экспериментально; на сканах студии пока грубый, ~15 мин): по умолчанию выключен; "
                          "auto — только при видеокарте NVIDIA "
                          "и найденном StepCAD (STEPCAD_DIR); on — и на процессоре (медленно, ~15 мин)")
+    ap.add_argument("--cadena", choices=["auto", "on", "off"], default="off",
+                    help="кандидат CADENA (экспериментально: редактируемая программа построения по снимкам скана): "
+                         "по умолчанию выключен; auto — только при видеокарте NVIDIA и найденной CADENA (CADENA_DIR); "
+                         "on — и на процессоре (~2–10 мин)")
     ap.add_argument("--model", help="модель ИИ (по умолчанию: claude-sonnet-5-5 / gpt-4.1)")
     ap.add_argument("--replay", help="llm_log.json для режимов replay/scripted")
     ap.add_argument("--ai-input", choices=["tools", "sheet"], default="tools",
@@ -512,14 +515,17 @@ def main() -> None:
         sj, wj = out / "surface.json", out / "walls.json"
         bg_limit, bg_started = a.geo_timeout + 300, time.time()
         surf_proc, walls_proc = launch("surface", sj), launch("walls", wj)
-        stepcad_proc, scj = None, out / "stepcad.json"
-        if want_stepcad(a.stepcad):
-            try:
-                stepcad_proc = subprocess.Popen([sys.executable, str(HERE / "stepcad_worker.py"), str(out / "scan_aligned.stl"),
-                                                 str(out / "stepcad"), str(scj), "900"],
-                                                env=dict(os.environ, PYTHONIOENCODING="utf-8"))
-            except Exception:  # noqa: BLE001
-                stepcad_proc = None
+        models = {}  # ИИ-модели-кандидаты: имя -> (процесс, файл ответа)
+        for name, mode in (("stepcad", a.stepcad), ("cadena", a.cadena)):
+            if want_model(mode, name):
+                try:
+                    models[name] = (subprocess.Popen([sys.executable, str(HERE / f"{name}_worker.py"),
+                                                      str(out / "scan_aligned.stl"), str(out / name),
+                                                      str(out / f"{name}.json"), "900"],
+                                                     env=dict(os.environ, PYTHONIOENCODING="utf-8")),
+                                    out / f"{name}.json")
+                except Exception:  # noqa: BLE001
+                    pass
 
         def finish(proc) -> None:
             if proc is None:
@@ -588,24 +594,26 @@ def main() -> None:
                 log("    тело по поверхности не уложилось во время")
             except Exception as ex:  # noqa: BLE001
                 log(f"    тело по поверхности не получилось ({type(ex).__name__})")
-        # StepCAD: ИИ-модель пишет программу CadQuery; берётся, только если по сравнению лучше
-        if stepcad_proc is not None:
+        # ИИ-модели-кандидаты пишут программу построения; берутся, только если по сравнению лучше
+        titles = {"stepcad": ("0г", "StepCAD"), "cadena": ("0д", "CADENA")}
+        for name, (proc, ans) in models.items():
+            n, title = titles[name]
             t0 = time.time()
-            log("2/4 попытка 0г: StepCAD (ИИ-модель, локально, бесплатно)…")
+            log(f"2/4 попытка {n}: {title} (ИИ-модель, локально, бесплатно)…")
             try:
-                if stepcad_proc.wait(timeout=1500) != 0:
+                if proc.wait(timeout=1500) != 0:
                     raise RuntimeError("процесс завершился с ошибкой")
-                g = json.loads(scj.read_text(encoding="utf-8"))
+                g = json.loads(ans.read_text(encoding="utf-8"))
                 log("    " + g["meta"]["plan"])
-                itc = evaluate("0г", g["code"], g["meta"], t0, "StepCAD")
+                itc = evaluate(n, g["code"], g["meta"], t0, title)
                 iterations.append(itc)
                 if itc["run"].get("ok") and (best is None or rank(itc) > rank(best)):
                     best = itc
             except subprocess.TimeoutExpired:
-                log("    StepCAD не уложился во время")
+                log(f"    {title} не уложилась во время")
             except Exception as ex:  # noqa: BLE001
-                log(f"    StepCAD не дал рабочей модели ({type(ex).__name__})")
-        for proc in (surf_proc, walls_proc, stepcad_proc):
+                log(f"    {title} не дала рабочей модели ({type(ex).__name__})")
+        for proc in [surf_proc, walls_proc] + [p for p, _ in models.values()]:
             if proc is not None and proc.poll() is None:
                 proc.kill()  # не понадобился или не уложился во время
 

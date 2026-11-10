@@ -99,3 +99,25 @@ pip install torch transformers safetensors huggingface_hub pebble pyarrow manifo
 По умолчанию выключен: на фланце дал 2,6% против 97,8% у нашего алгоритма. Включается `--stepcad auto` (только при видеокарте NVIDIA) или `--stepcad on` (и на процессоре,
 около 15 минут на деталь). Веса (~3,3 ГБ) скачиваются при первом запуске. Сильная сторона —
 механические детали из простых форм; кривые корпуса StepCAD не умеет.
+
+## Кандидат CADENA (необязательно)
+
+CADENA — открытая ИИ-модель (код и веса MIT, Qwen2-VL-2B). Она смотрит на снимки скана и
+пишет программу построения по шагам: вращение, выдавливание, отверстия. После каждого шага
+результат сверяется со сканом. Главное отличие от остальных попыток — **редактируемая
+программа** (`*.cadena.py` рядом с ответом), а не только STEP.
+
+```
+git clone https://github.com/kulibinai/cadena
+set CADENA_DIR=путь\к\cadena      (Linux: export CADENA_DIR=...)
+pip install torch torchvision transformers qwen-vl-utils openai datasets pyvista vtk point-cloud-utils pykdtree manifold3d huggingface_hub
+```
+
+Включается `--cadena auto` (только при видеокарте NVIDIA) или `--cadena on` (и на процессоре).
+Веса (~4,2 ГБ) скачиваются при первом запуске, либо путь к ним задаётся в `CADENA_WEIGHTS`.
+vLLM не нужен: модель раздаёт `cadena_shim/server.py` (transformers, видеокарта или процессор).
+На Windows код CADENA запускается с правками (нет fork и /tmp), на Linux их включает `CADENA_SPAWN=1`.
+
+На процессоре (широкий поиск, 8–11 минут): фланец 94,7–98,7% совпадения со сканом
+(89–93% с целым эталоном), кронштейн 87%. Наш алгоритм на тех же деталях даёт 97,8–100%.
+Программа берёт результат CADENA, только если он точнее остальных попыток.

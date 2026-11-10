@@ -402,8 +402,9 @@ def main() -> None:
                     help="не достраивать ничего (деталь целая); то же, если в заметке «деталь целая» или «не достраивать»")
     ap.add_argument("--geo-timeout", type=int, default=120, help="сколько секунд ждать попытку 0 (алгоритм без ИИ)")
     ap.add_argument("--no-geometric", action="store_true", help="не строить черновик без ИИ (попытка 0)")
-    ap.add_argument("--stepcad", choices=["auto", "on", "off"], default="auto",
-                    help="кандидат StepCAD (ИИ-модель, локально, бесплатно): auto — только при видеокарте NVIDIA "
+    ap.add_argument("--stepcad", choices=["auto", "on", "off"], default="off",
+                    help="кандидат StepCAD (экспериментально; на сканах студии пока грубый, ~15 мин): по умолчанию выключен; "
+                         "auto — только при видеокарте NVIDIA "
                          "и найденном StepCAD (STEPCAD_DIR); on — и на процессоре (медленно, ~15 мин)")
     ap.add_argument("--model", help="модель ИИ (по умолчанию: claude-sonnet-5-5 / gpt-4.1)")
     ap.add_argument("--replay", help="llm_log.json для режимов replay/scripted")

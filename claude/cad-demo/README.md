@@ -96,6 +96,6 @@ set STEPCAD_DIR=путь\к\StepCAD      (Linux: export STEPCAD_DIR=...)
 pip install torch transformers safetensors huggingface_hub pebble pyarrow manifold3d libigl pymeshlab scikit-learn
 ```
 
-При видеокарте NVIDIA кандидат включается сам (`--stepcad auto`), на процессоре — по `--stepcad on`
-(около 15 минут на деталь). Веса (~3,3 ГБ) скачиваются при первом запуске. Сильная сторона —
+По умолчанию выключен: на фланце дал 2,6% против 97,8% у нашего алгоритма. Включается `--stepcad auto` (только при видеокарте NVIDIA) или `--stepcad on` (и на процессоре,
+около 15 минут на деталь). Веса (~3,3 ГБ) скачиваются при первом запуске. Сильная сторона —
 механические детали из простых форм; кривые корпуса StepCAD не умеет.

@@ -722,7 +722,9 @@ def main() -> None:
             a.p2s = "on" if p2s_dir() else "off"
             if a.p2s == "on":
                 log(f"    Point2STEP найден ({p2s_dir()}), включаю уточнение граней")
-        if a.p2s == "on" and best is not None and best["run"].get("ok"):
+        # тело по поверхности (0в, 0к) Point2STEP не улучшает: на кривых корпусах он проверен
+        # и рассыпается (накладка Hyundai: 39 мин, покрытие 14%), а на тысячах граней идёт часами
+        if a.p2s == "on" and best is not None and best["run"].get("ok") and best["n"] not in ("0в", "0к"):
             t0 = time.time()
             log("2/4 попытка 0е: Point2STEP уточняет грани лучшей модели по скану…")
             try:

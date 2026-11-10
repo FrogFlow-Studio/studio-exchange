@@ -22,6 +22,7 @@ class LLM:
         self.dev = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.m = AutoModelForCausalLM.from_pretrained(model, torch_dtype=torch.bfloat16).to(self.dev).eval()
         self.cap = int(os.environ.get('SHIM_MAX_NEW', '1200'))
+        self.batch = int(os.environ.get('SHIM_BATCH', '4'))
 
     @torch.no_grad()
     def generate(self, prompts, sp, use_tqdm=False):
@@ -31,13 +32,21 @@ class LLM:
             if sp.seed is not None:
                 torch.manual_seed(sp.seed)
             t = time.time()
-            out = self.m.generate(inputs_embeds=emb, attention_mask=torch.ones(emb.shape[:2], dtype=torch.long, device=self.dev),
-                                  do_sample=True, temperature=sp.temperature, top_p=sp.top_p,
-                                  repetition_penalty=sp.repetition_penalty, max_new_tokens=min(sp.max_tokens, self.cap),
-                                  num_return_sequences=sp.n, eos_token_id=sp.stop_token_ids or None,
-                                  pad_token_id=(sp.stop_token_ids or [0])[0])
+            rows = []
+            # по нескольку вариантов за раз: 16 сразу не помещаются в 8 ГБ видеопамяти, и Windows
+            # молча уводит память в общую ОЗУ — генерация становится в разы медленнее
+            left = sp.n
+            while left > 0:
+                k = min(left, self.batch)
+                out = self.m.generate(inputs_embeds=emb, attention_mask=torch.ones(emb.shape[:2], dtype=torch.long, device=self.dev),
+                                      do_sample=True, temperature=sp.temperature, top_p=sp.top_p,
+                                      repetition_penalty=sp.repetition_penalty, max_new_tokens=min(sp.max_tokens, self.cap),
+                                      num_return_sequences=k, eos_token_id=sp.stop_token_ids or None,
+                                      pad_token_id=(sp.stop_token_ids or [0])[0])
+                rows += out.tolist()
+                left -= k
             outs = []
-            for row in out.tolist():
+            for row in rows:
                 ids = []
                 for x in row:
                     if x in sp.stop_token_ids: break

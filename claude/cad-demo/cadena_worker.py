@@ -159,7 +159,8 @@ def main() -> None:
             shutil.rmtree(res)
         # на видеокарте — поиск по нескольким вариантам на каждом шаге, на процессоре — один вариант
         mode = os.environ.get("CADENA_MODE") or ("beam_topk" if gpu else "greedy")
-        width, exp = ("2", "4") if mode != "greedy" else ("1", "12")
+        # на видеокарте шаг быстрый — больше вариантов на шаг
+        width, exp = (("3", "8") if gpu else ("2", "4")) if mode != "greedy" else ("1", "12")
         left = budget - (time.time() - t_start)
         if left < 60:
             raise SystemExit("CADENA: не осталось времени на построение")
@@ -197,6 +198,12 @@ def main() -> None:
     shape = r.val() if hasattr(r, "val") else r
     if hasattr(r, "vals") and len(r.vals()) > 1:
         shape = cq.Compound.makeCompound(r.vals())
+    solids = shape.Solids()
+    if len(solids) > 1:  # модель иногда кладёт операции отдельными телами: деталь одна — склеиваем
+        fused = solids[0]
+        for s in solids[1:]:
+            fused = fused.fuse(s)
+        shape = fused.clean()
     shape = shape.scale(k).translate(cq.Vector(*centre))
     step = answer.with_suffix(".step")
     cq.exporters.export(cq.Workplane().add(shape), str(step))

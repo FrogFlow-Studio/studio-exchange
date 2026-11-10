@@ -412,6 +412,8 @@ def main() -> None:
                     help="кандидат CADENA (экспериментально: редактируемая программа построения по снимкам скана): "
                          "по умолчанию выключен; auto — только при видеокарте NVIDIA и найденной CADENA (CADENA_DIR); "
                          "on — и на процессоре (~2–10 мин)")
+    ap.add_argument("--p2s", choices=["on", "off"], default="off",
+                    help="уточнить грани лучшей модели по скану через Point2STEP (экспериментально; POINT2STEP_DIR)")
     ap.add_argument("--model", help="модель ИИ (по умолчанию: claude-sonnet-5-5 / gpt-4.1)")
     ap.add_argument("--replay", help="llm_log.json для режимов replay/scripted")
     ap.add_argument("--ai-input", choices=["tools", "sheet"], default="tools",
@@ -616,6 +618,29 @@ def main() -> None:
                 log(f"    {title} не уложилась во время")
             except Exception as ex:  # noqa: BLE001
                 log(f"    {title} не дала рабочей модели ({type(ex).__name__})")
+        # Point2STEP: грани лучшей модели уточняются по скану; утраченное берётся из неё же
+        if a.p2s == "on" and best is not None and best["run"].get("ok"):
+            t0 = time.time()
+            log("2/4 попытка 0е: Point2STEP уточняет грани лучшей модели по скану…")
+            try:
+                pj = out / "p2s.json"
+                subprocess.run([sys.executable, str(HERE / "p2s_worker.py"), str(out / "scan_aligned.stl"),
+                                str(best["dir"] / "model.step"), str(out / "p2s"), str(pj), "600"],
+                               check=True, timeout=700, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                g = json.loads(pj.read_text(encoding="utf-8"))
+                g["meta"]["restored"] = list(best["meta"].get("restored") or []) + g["meta"]["restored"]
+                log("    " + g["meta"]["plan"])
+                itp = evaluate("0е", g["code"], g["meta"], t0, "Point2STEP")
+                iterations.append(itp)
+                # совпадение со сканом почти то же, выигрыш — в точности размеров: берём, если не хуже
+                if (itp["run"].get("ok") and rank(itp)[:2] >= rank(best)[:2]
+                        and itp["cmp"]["within_tol_share"] >= best["cmp"]["within_tol_share"] - 0.003
+                        and itp["cmp"]["outside_share"] <= best["cmp"]["outside_share"] + 0.001):
+                    best = itp
+            except subprocess.TimeoutExpired:
+                log("    Point2STEP не уложился во время")
+            except Exception as ex:  # noqa: BLE001
+                log(f"    Point2STEP не дал рабочей модели ({type(ex).__name__})")
         for proc in [surf_proc, walls_proc] + [p for p, _ in models.values()]:
             if proc is not None and proc.poll() is None:
                 proc.kill()  # не понадобился или не уложился во время

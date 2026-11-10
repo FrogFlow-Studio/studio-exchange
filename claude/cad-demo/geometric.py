@@ -19,7 +19,7 @@ import json
 import numpy as np
 import trimesh
 from shapely.affinity import scale as sh_scale, translate as sh_translate
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 
 import scan_analysis as sa
@@ -387,6 +387,25 @@ def _radius_at(mesh: trimesh.Trimesh, z: float, c, r_ref: float) -> float | None
     return pc["diameter"] / 2
 
 
+def _keyway(c: Polygon, pts: np.ndarray, groups: list[dict]) -> list[Polygon] | None:
+    """Отверстие с пазом: круглую часть режет точное отверстие (оно уже в groups), здесь —
+    только сам паз (всё, что выходит за окружность). None — это не отверстие с пазом."""
+    pc = sa.partial_circle(pts, tol=0.15)
+    if not pc or pc["share_of_contour"] < 0.6:
+        return None
+    cx, cy = pc["center_xy"]
+    r = pc["diameter"] / 2
+    if not any(np.hypot(g["c"][0] - cx, g["c"][1] - cy) < 0.8 and abs(g["d"] - 2 * r) < 0.4 for g in groups):
+        return None
+    rest = c.difference(Point(cx, cy).buffer(r, 128))
+    out = []
+    for piece in getattr(rest, "geoms", [rest]):
+        # узкие серпы вдоль окружности — шум сечения, не паз
+        if piece.geom_type == "Polygon" and piece.area >= 1.5 and 2 * piece.area / piece.length >= 0.5:
+            out.append(Polygon(piece.exterior))
+    return out
+
+
 def _cone_layer(mesh: trimesh.Trimesh, outer: Polygon, a: float, b: float):
     """Круглый слой → тело вращения по профилю радиуса, замеренному по высоте слоя
     через 0.5 мм. Конусы, фаски и скругления идут гладко, а не ступенькой.
@@ -448,6 +467,10 @@ def build(mesh: trimesh.Trimesh, sheet: dict, restore: bool = True) -> tuple[str
             for h in reg["inner"]:
                 if h.get("shape") == "окружность":
                     holes.append((tuple(h["center_xy"]), h["diameter"], sec["z_mm"]))
+                elif (h.get("partial_circle") or {}).get("share_of_contour", 0) >= 0.6:
+                    # отверстие со шпоночным пазом: круглая часть — точным отверстием, паз — отдельно
+                    pc = h["partial_circle"]
+                    holes.append((tuple(pc["center_xy"]), pc["diameter"], sec["z_mm"]))
             patterns += reg.get("hole_patterns", [])
     # Сгруппировать одинаковые отверстия, взять высоты, где они видны.
     groups: list[dict] = []
@@ -517,7 +540,8 @@ def build(mesh: trimesh.Trimesh, sheet: dict, restore: bool = True) -> tuple[str
                 c = Polygon(pts)
                 # щель тоньше ~0.5 мм или меньше 1.5 мм² — это шум сечения, а не вырез
                 if d.get("shape") != "окружность" and c.is_valid and c.area >= 1.5 and 2 * c.area / c.length >= 0.5:
-                    cuts.append(c)  # паз или вырез — как в скане
+                    key = _keyway(c, pts, groups)
+                    cuts += key if key is not None else [c]  # паз или вырез — как в скане
             shapes.append((outer, cuts))
         if prev is not None and _same(prev["shapes"], shapes):
             prev["b"] = b  # тот же контур — продлеваем слой, а не плодим ступеньки

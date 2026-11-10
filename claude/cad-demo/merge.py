@@ -46,6 +46,7 @@ def refine(code: str, cyl: list, pl: list, pts=None, pos_tol: float = 0.3, r_tol
     import numpy as np
 
     changes = []
+    refined: list[tuple[float, float]] = []  # (радиус в программе, уточнённый) у отверстий, найденных в скане
 
     def cyl_err(x, y, r, band=0.5):
         if pts is None:
@@ -76,12 +77,33 @@ def refine(code: str, cyl: list, pl: list, pts=None, pos_tol: float = 0.3, r_tol
             return m.group(0)
         cx, cy, cr, _ = max(near, key=lambda c: c[3])
         if (abs(cr - r) < 0.001 and abs(cx - x) < 0.001 and abs(cy - y) < 0.001) or not cyl_better((x, y, r), (cx, cy, cr)):
+            refined.append((r, r))
             return m.group(0)
+        refined.append((r, cr))
         changes.append(f"отверстие в [{x:.2f}, {y:.2f}]: Ø{2 * r:.3f} → Ø{2 * cr:.3f} мм, центр сдвинут на "
                        f"{((cx - x) ** 2 + (cy - y) ** 2) ** 0.5:.3f} мм")
         return f".center({cx:.3f}, {cy:.3f}).circle({cr:.3f})"
 
     code = HOLE.sub(hole, code)
+
+    # достроенное отверстие (в скане его нет, Point2STEP его не видел) — того же размера, что его
+    # соседи из того же массива: берём медиану их уточнённых радиусов
+    def restored(line: str) -> str:
+        m = HOLE.search(line)
+        if not m or "# восстановлено" not in line:
+            return line
+        r = float(m.group(3))
+        sib = sorted(n for o, n in refined if abs(o - r) < 0.05)
+        if len(sib) < 2:
+            return line
+        nr = sib[len(sib) // 2] if len(sib) % 2 else (sib[len(sib) // 2 - 1] + sib[len(sib) // 2]) / 2
+        if abs(nr - r) < 0.001:
+            return line
+        changes.append(f"достроенное отверстие в [{float(m.group(1)):.2f}, {float(m.group(2)):.2f}]: Ø{2 * r:.3f} → "
+                       f"Ø{2 * nr:.3f} мм, как у уточнённых соседей ({len(sib)} шт.)")
+        return line[:m.start(3)] + f"{nr:.3f}" + line[m.end(3):]
+
+    code = "\n".join(restored(x) for x in code.split("\n"))
 
     # профиль вращения: точки [радиус, высота]; ось вращения — по translate после revolve
     def profile(m: re.Match) -> str:

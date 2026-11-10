@@ -216,15 +216,46 @@ def print_ready_html(best: dict | None, ctx: dict) -> str:
             f"<table><tr><th class=chk>Итог</th><th>Проверка</th><th>Что получилось</th></tr>{body}</table></section>")
 
 
-def dims_table(sheet: dict) -> str:
-    """Таблица размеров по скану для сверки штангенциркулем (можно распечатать)."""
+def model_dims(step: Path | None) -> dict:
+    """Что в итоговой модели: габарит и цилиндры с осью вдоль Z (центр, Ø, отверстие или нет)."""
+    if step is None or not step.exists():
+        return {}
+    try:
+        import cadquery as cq
+        from hints import cylinders
+
+        bb = cq.importers.importStep(str(step)).val().BoundingBox()
+        cyl = [c for c in cylinders(step, holes_only=False) if abs(abs(c["d"][2]) - 1) < 1e-3]
+        return {"box": (bb.xlen, bb.ylen, bb.zlen), "cyl": cyl}
+    except Exception:  # noqa: BLE001 — таблица без столбца модели лучше, чем отчёт без таблицы
+        return {}
+
+
+def _model_d(md: dict, d: float, hole: bool, c=None) -> str:
+    """Диаметр той же поверхности в модели: ближайший по размеру цилиндр (у отверстия — с тем же центром)."""
+    best = None
+    for x in md.get("cyl", []):
+        if x["hole"] != hole or abs(2 * x["r"] - d) > 1.0:
+            continue
+        if c is not None and ((x["o"][0] - c[0]) ** 2 + (x["o"][1] - c[1]) ** 2) ** 0.5 > 1.0:
+            continue
+        if best is None or abs(2 * x["r"] - d) < abs(2 * best - d):
+            best = x["r"]
+    return "" if best is None else f"{2 * best:.2f}"
+
+
+def dims_table(sheet: dict, model_step: Path | None = None) -> str:
+    """Таблица размеров для сверки штангенциркулем (можно распечатать): по скану и в итоговой модели."""
     e = html.escape
+    md = model_dims(model_step)
     rows, seen = [], set()
     lo, hi = sheet["bounds_mm"]
-    rows.append(("Габарит X × Y × Z", f"{hi[0]-lo[0]:.2f} × {hi[1]-lo[1]:.2f} × {hi[2]-lo[2]:.2f}", "с учётом скола"))
+    box = md.get("box")
+    rows.append(("Габарит X × Y × Z", f"{hi[0]-lo[0]:.2f} × {hi[1]-lo[1]:.2f} × {hi[2]-lo[2]:.2f}",
+                 " × ".join(f"{v:.2f}" for v in box) if box else "", "по скану — с учётом скола"))
     for p in sheet["horizontal_planes"]:
         if p["facing"] == "смотрит вверх":
-            rows.append(("Высота площадки от опорной плоскости", f"{p['z_mm']:.2f}", ""))
+            rows.append(("Высота площадки от опорной плоскости", f"{p['z_mm']:.2f}", "", ""))
     for sec in sheet["sections"]:
         for reg in sec["regions"]:
             o = reg["outer"]
@@ -232,12 +263,13 @@ def dims_table(sheet: dict) -> str:
                 k = ("o", round(o["diameter"]))
                 if k not in seen:
                     seen.add(k)
-                    rows.append(("Наружный Ø", f"{o['diameter']:.2f}", f"на высоте {sec['z_mm']}"))
+                    rows.append(("Наружный Ø", f"{o['diameter']:.2f}", _model_d(md, o["diameter"], False), f"на высоте {sec['z_mm']}"))
             elif o.get("partial_circle"):
                 k = ("o", round(o["partial_circle"]["diameter"]))
                 if k not in seen:
                     seen.add(k)
-                    rows.append(("Наружный Ø (по уцелевшей дуге)", f"{o['partial_circle']['diameter']:.2f}", f"на высоте {sec['z_mm']}"))
+                    rows.append(("Наружный Ø (по уцелевшей дуге)", f"{o['partial_circle']['diameter']:.2f}",
+                                 _model_d(md, o["partial_circle"]["diameter"], False), f"на высоте {sec['z_mm']}"))
             for h in reg["inner"]:
                 d = h.get("diameter") or (h.get("partial_circle") or {}).get("diameter")
                 c = h.get("center_xy") or (h.get("partial_circle") or {}).get("center_xy")
@@ -246,7 +278,8 @@ def dims_table(sheet: dict) -> str:
                 k = ("h", round(d), round(c[0]), round(c[1]))
                 if k not in seen:
                     seen.add(k)
-                    rows.append(("Отверстие Ø" + (" (с пазом)" if h.get("partial_circle") else ""), f"{d:.2f}", f"центр {c}"))
+                    rows.append(("Отверстие Ø" + (" (с пазом)" if h.get("partial_circle") else ""), f"{d:.2f}",
+                                 _model_d(md, d, True, c), f"центр {c}"))
             for pat in reg.get("hole_patterns", []):
                 k = ("p", pat["pattern"], round(pat["hole_diameter"]))
                 if k in seen:
@@ -254,13 +287,16 @@ def dims_table(sheet: dict) -> str:
                 seen.add(k)
                 if pat.get("pcd_diameter"):
                     rows.append(("Диаметр окружности центров отверстий", f"{pat['pcd_diameter']:.2f}",
-                                 f"{pat['likely_total']} отв., шаг {360 / pat['likely_total']:.0f}°"))
+                                 "", f"{pat['likely_total']} отв., шаг {360 / pat['likely_total']:.0f}°"))
                 if pat.get("sides_mm"):
-                    rows.append(("Межосевые отверстий (прямоугольник)", " × ".join(f"{v:.2f}" for v in pat["sides_mm"]), ""))
-    body = "".join(f"<tr><td>{e(a)}</td><td><b>{e(b)}</b></td><td>{e(c)}</td><td class=chk></td></tr>" for a, b, c in rows)
-    return (f"<section><h2>Размеры для сверки штангенциркулем</h2><p class=small>Посчитаны по скану, мм. "
-            f"Шум скана ~{sheet['diagnostics'].get('noise_mm', 0)} мм. Последний столбец — для отметки инженера "
-            f"(страницу можно распечатать).</p><table><tr><th>Что</th><th>По скану</th><th>Где</th><th>Замер</th></tr>"
+                    rows.append(("Межосевые отверстий (прямоугольник)", " × ".join(f"{v:.2f}" for v in pat["sides_mm"]), "", ""))
+    body = "".join(f"<tr><td>{e(a)}</td><td>{e(b)}</td><td><b>{e(m)}</b></td><td>{e(c)}</td><td class=chk></td></tr>"
+                   for a, b, m, c in rows)
+    return (f"<section><h2>Размеры для сверки штангенциркулем</h2><p class=small>Мм. «По скану» — грубый замер "
+            f"по сечениям скана (шум ~{sheet['diagnostics'].get('noise_mm', 0)} мм), «в модели» — что в итоговом STEP "
+            f"после уточнения; пусто — в модели такой поверхности нет или размер не круглый. Последний столбец — для "
+            f"отметки инженера (страницу можно распечатать).</p><table><tr><th>Что</th><th>По скану</th><th>В модели</th>"
+            f"<th>Где</th><th>Замер</th></tr>"
             f"{body}</table></section>")
 
 
@@ -344,7 +380,7 @@ document.querySelectorAll('.vbtns button').forEach(b=>b.onclick=()=>{{document.q
 const v=b.dataset.v;m.visible=v!=='scan';p.visible=v!=='model';mm.opacity=v==='model'?1:0.6;mm.transparent=v!=='model';mm.needsUpdate=true;}});
 addEventListener('resize',()=>{{r.setSize(W(),480);cam.aspect=W()/480;cam.updateProjectionMatrix();}});
 </script></section>"""
-    dims = dims_table(ctx["sheet"])
+    dims = dims_table(ctx["sheet"], out / "model.step" if best else None)
     page = f"""<!doctype html><html lang=ru><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>Скан → CAD: отчёт</title><style>
 :root{{--bg:#fff;--fg:#1d2330;--mut:#5b6474;--line:#e3e6eb;--acc:#2f6fd6;--warn:#b3261e;--ok:#1e7d3c}}

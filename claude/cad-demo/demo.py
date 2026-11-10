@@ -442,7 +442,7 @@ def main() -> None:
         it_dir.mkdir(exist_ok=True)
         log("3/4 строю модель…")
         # черновик из стенок собирается из сотен пластин: на крупной детали это минуты
-        limit = 420 if n == "0б" else 180
+        limit = 420 if n in ("0б", "0в") else 180
         run = run_code(code, it_dir, timeout=limit) if code else {"ok": False, "error": "в ответе нет блока python"}
         cmp = None
         model = None
@@ -523,16 +523,38 @@ def main() -> None:
             except Exception as ex:  # noqa: BLE001
                 log(f"    черновик из стенок не получился ({type(ex).__name__})")
 
+        # Любая форма (кривые оболочки, линзы, корпуса): тело по поверхности скана. Строится,
+        # если черновики выше не дошли до цели; из всех попыток берётся лучшая по сравнению.
+        if best is None or not good(best):
+            t0 = time.time()
+            log("2/4 попытка 0в: тело по поверхности скана (для деталей любой формы), без ИИ…")
+            sj = out / "surface.json"
+            try:
+                subprocess.run([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
+                                str(out / "sheet.json"), "1", str(sj), "surface"],
+                               timeout=a.geo_timeout + 300, check=True, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                g = json.loads(sj.read_text(encoding="utf-8"))
+                log("    " + g["meta"]["plan"])
+                its = evaluate("0в", g["code"], g["meta"], t0, "поверхность, без ИИ")
+                iterations.append(its)
+                if its["run"].get("ok") and (best is None or rank(its) > rank(best)):
+                    best = its
+            except subprocess.TimeoutExpired:
+                log("    тело по поверхности не уложилось во время")
+            except Exception as ex:  # noqa: BLE001
+                log(f"    тело по поверхности не получилось ({type(ex).__name__})")
+
     hint = ""
-    if best is not None and best["n"] in (0, "0б") and best["cmp"]:
+    if best is not None and best["n"] in (0, "0б", "0в") and best["cmp"]:
         c0 = best["cmp"]
-        hint = ("\n\nДля справки: черновик без ИИ (слои по сечениям) совпал со сканом на "
+        hint = ("\n\nДля справки: черновик без ИИ совпал со сканом на "
                 f"{c0['within_tol_share']*100:.1f}%. Он копирует форму ступеньками и не знает замысла; "
                 "построй деталь по замыслу. Что черновик восстановил: " + "; ".join(best["meta"].get("restored", [])))
-    if prov and best is not None and best["n"] == "0б":
+    if prov and best is not None and best["n"] in ("0б", "0в"):
         DRAFT["step"] = best["dir"] / "model.step"
-        hint += ("\n\nВ коде доступна готовая переменная `draft` (cq.Shape): это черновик из стенок, "
-                 f"он уже совпал со сканом на {best['cmp']['within_tol_share']*100:.1f}%. Не строй деталь "
+        hint += ("\n\nВ коде доступна готовая переменная `draft` (cq.Shape): это черновик "
+                 + ("из стенок, " if best["n"] == "0б" else "по поверхности скана (много мелких плоских граней), ")
+                 + f"он уже совпал со сканом на {best['cmp']['within_tol_share']*100:.1f}%. Не строй деталь "
                  "заново: начни с него (например, result = draft.fuse(...) или draft.cut(...)) и исправь "
                  "только места, где не хватает материала или есть лишнее: стыки стенок, скругления, "
                  "наклонные и кривые участки. Где именно — смотри сравнение ниже и инструменты.")

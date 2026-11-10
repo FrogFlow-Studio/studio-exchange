@@ -1,6 +1,6 @@
 """Попытка 0 в отдельном процессе, чтобы на сложной детали её можно было остановить по времени.
 
-python geo_worker.py скан_выровненный.stl sheet.json 1|0 ответ.json [walls]
+python geo_worker.py скан_выровненный.stl sheet.json 1|0 ответ.json [walls|surface]
 """
 import json
 import sys
@@ -23,6 +23,17 @@ if len(sys.argv) > 5 and sys.argv[5] == "walls":
     Path(sys.argv[4]).with_suffix(".pkl").write_bytes(pickle.dumps(ws))
     meta = {"plan": f"черновик из стенок: найдено {len(ws)} стенок, каждая выдавлена по контуру",
             "restored": [], "assumptions": ["деталь тонкостенная: собрана из пластин"]}
+elif len(sys.argv) > 5 and sys.argv[5] == "surface":
+    import cadquery as cq
+
+    import surface
+
+    body, info = surface.surface_body(scan)
+    step = Path(sys.argv[4]).with_suffix(".step")
+    cq.exporters.export(body, str(step))
+    code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
+    meta = {"plan": f"тело по поверхности скана: {info['faces']} треугольников, отверстий вырезано точно {info['holes_cut']}",
+            "restored": [], "assumptions": ["форма любая: тело повторяет поверхность скана, плоские участки выпрямлены"]}
 else:
     code, meta = geometric.build(scan, sheet, restore=sys.argv[3] == "1")
 Path(sys.argv[4]).write_text(json.dumps({"code": code, "meta": meta}, ensure_ascii=False), encoding="utf-8")

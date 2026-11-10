@@ -299,7 +299,15 @@ def write_report(out: Path, ctx: dict) -> Path:
         truth_html = (f"<section><h2>Проверка по эталону (только для тестовой детали)</h2><p>Целая деталь до поломки "
                       f"известна, потому что мы её сами сломали. Совпадение модели с эталоном: "
                       f"<b>{t['within_tol_share']*100:.1f}%</b> точек эталона в допуске {t['tolerance_mm']} мм, "
-                      f"95% ближе {t['p95_abs_dev_mm']} мм, включая восстановленный угол.</p></section>")
+                      f"95% ближе {t['p95_abs_dev_mm']} мм, включая восстановленный угол.</p>"
+                      + ("<table><tr><th>Попытка</th><th>С эталоном</th><th>Отверстия</th><th>Ошибка Ø, средняя</th>"
+                         "<th>Ошибка Ø, наибольшая</th></tr>" + "".join(
+                             f"<tr{' class=bestrow' if r['best'] else ''}><td>{e(str(r['n']))} — {e(r['by'])}</td>"
+                             f"<td>{r['fit']*100:.1f}%</td><td>{r['holes'] - r['missing']} из {r['holes']}</td>"
+                             f"<td>{'—' if r['d_err'] is None else str(r['d_err']) + ' мм'}</td>"
+                             f"<td>{'—' if r['d_max'] is None else str(r['d_max']) + ' мм'}</td></tr>"
+                             for r in t.get("by_attempt", [])) + "</table>" if t.get("by_attempt") else "")
+                      + "</section>")
     viewer = ""
     if best and (out / "model.stl").exists():
         pts = best["cmp"]["_scan_pts"][::2]
@@ -628,6 +636,7 @@ def main() -> None:
                                 str(best["dir"] / "model.step"), str(out / "p2s"), str(pj), "600"],
                                check=True, timeout=700, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
                 g = json.loads(pj.read_text(encoding="utf-8"))
+                base = best  # модель, которую уточняем: ниже в её программу запишутся точные размеры
                 g["meta"]["restored"] = list(best["meta"].get("restored") or []) + g["meta"]["restored"]
                 log("    " + g["meta"]["plan"])
                 itp = evaluate("0е", g["code"], g["meta"], t0, "Point2STEP")
@@ -637,6 +646,31 @@ def main() -> None:
                         and itp["cmp"]["within_tol_share"] >= best["cmp"]["within_tol_share"] - 0.003
                         and itp["cmp"]["outside_share"] <= best["cmp"]["outside_share"] + 0.001):
                     best = itp
+                # Объединение: точные размеры Point2STEP — обратно в нашу редактируемую программу
+                # (только там, где новая поверхность ближе к скану, чем старая)
+                if "importStep" not in base["code"]:
+                    t0 = time.time()
+                    log("2/4 попытка 0ж: объединяю — размеры от Point2STEP в нашей программе построения…")
+                    mj = out / "merge.json"
+                    subprocess.run([sys.executable, str(HERE / "merge.py"), str(base["dir"] / "model.py"),
+                                    str(out / "p2s.step"), str(out / "scan_aligned.stl"), str(out / "merged.py"), str(mj)],
+                                   check=True, timeout=300, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                    changes = json.loads(mj.read_text(encoding="utf-8"))["changes"]
+                    for c in changes:
+                        log("    " + c)
+                    if changes:
+                        meta = dict(base["meta"])
+                        meta["plan"] = (str(meta.get("plan") or "") + f" Размеры {len(changes)} элементов уточнены по скану "
+                                        "(Point2STEP): " + "; ".join(changes))
+                        itm = evaluate("0ж", (out / "merged.py").read_text(encoding="utf-8"), meta, t0,
+                                       "наш алгоритм + Point2STEP")
+                        iterations.append(itm)
+                        if (itm["run"].get("ok") and rank(itm)[:2] >= rank(best)[:2]
+                                and itm["cmp"]["within_tol_share"] >= best["cmp"]["within_tol_share"] - 0.003
+                                and itm["cmp"]["outside_share"] <= best["cmp"]["outside_share"] + 0.001):
+                            best = itm
+                    else:
+                        log("    уточнять нечего: размеры Point2STEP не ближе к скану")
             except subprocess.TimeoutExpired:
                 log("    Point2STEP не уложился во время")
             except Exception as ex:  # noqa: BLE001
@@ -742,6 +776,31 @@ def main() -> None:
             tm.apply_transform(np.array(sheet["transform_from_scan_4x4"]))
             truth = cmpmod.compare(tm, trimesh.load(out / "model.stl", force="mesh"), tol=a.tol)
             log(f"эталон: в допуске {truth['within_tol_share']*100:.1f}% (тестовая деталь)")
+            # каждая попытка против эталона: совпадение и точность диаметров отверстий
+            try:
+                th = [(h, holesmod._measure(tm, h, 0.6)) for h in holesmod.find_holes(tm)]
+                th = [(h, m) for h, m in th if m]
+            except Exception:  # noqa: BLE001
+                th = []
+            truth["by_attempt"] = []
+            for it in iterations:
+                if not it["run"].get("ok") or not (it["dir"] / "model.stl").exists():
+                    continue
+                mm = trimesh.load(it["dir"] / "model.stl", force="mesh")
+                errs, miss = [], 0
+                for h, m in th:
+                    r = holesmod._measure(mm, h, 0.6)
+                    if r is None:
+                        miss += 1
+                    else:
+                        errs.append(abs(r["d"] - m["d"]))
+                row = {"n": it["n"], "by": it["by"], "fit": cmpmod.compare(tm, mm, tol=a.tol)["within_tol_share"],
+                       "holes": len(th), "missing": miss,
+                       "d_err": round(float(np.mean(errs)), 3) if errs else None,
+                       "d_max": round(float(np.max(errs)), 3) if errs else None, "best": it is best}
+                truth["by_attempt"].append(row)
+                log(f"    эталон, попытка {it['n']} ({it['by']}): {row['fit']*100:.1f}%, отверстия {len(th) - miss}/{len(th)}"
+                    + (f", ошибка Ø в среднем {row['d_err']} мм, наибольшая {row['d_max']} мм" if errs else ""))
     holes_rows = None
     if best and (out / "model.stl").exists():
         try:  # отверстия скана: на месте ли они в модели и того же ли размера

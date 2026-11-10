@@ -129,7 +129,15 @@ class H(BaseHTTPRequestHandler):
             f = (OUT / path[5:]).resolve()
             if OUT.resolve() in f.parents and f.is_file():
                 ctype = {".html": "text/html; charset=utf-8", ".png": "image/png"}.get(f.suffix, "application/octet-stream")
-                return self.send(200, f.read_bytes(), ctype)
+                body = f.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                if f.suffix not in (".html", ".png"):
+                    # STEP — текст, без этого браузер показывает его вместо скачивания
+                    self.send_header("Content-Disposition", f'attachment; filename="{f.name}"')
+                self.end_headers()
+                return self.wfile.write(body)
         self.send(404, "не найдено".encode())
 
     def do_POST(self):

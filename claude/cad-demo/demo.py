@@ -361,7 +361,10 @@ a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:
 <div class=card>Время<b>{ctx['total_s']:.0f} с</b></div></div>
 <p>{'<b>Модель сошлась с уцелевшей частью скана.</b> Это не доказывает, что достроенное место верно: его проверяет инженер.' if ctx['converged'] else '<b class=err>Не сошлась до цели</b>: смотреть лучшую попытку и замечания.' if best else '<b class=err>Ни одна попытка не дала тела.</b>'}
 Цель: не менее {ctx['target']*100:.0f}% точек скана в допуске и почти нет мест, где модели не хватает материала. Точки на сколе в допуск не попадают, так и должно быть.</p>
-{('<a class=btn href="model.step" download>Скачать STEP (КОМПАС-3D, SolidWorks и др.)</a><a class=btn href="model.stl" download>STL (для печати)</a><a class=btn href="model.py" download>Код модели</a>') if best else ''}
+{('<a class=btn href="model.step" download>Скачать STEP (КОМПАС-3D, SolidWorks и др.)</a><a class=btn href="model.stl" download>STL (для печати)</a><a class=btn href="model.py" download>Код модели</a>'
+  '<p class=filehint hidden>Отчёт открыт как файл, поэтому браузер может показать STEP вместо скачивания. '
+  'Все файлы лежат в папке: <b>' + e(str(out.resolve())) + '</b> (или запускайте через start.bat — там кнопки скачивают).</p>'
+  '<script>if(location.protocol==="file:")document.querySelectorAll(".filehint").forEach(function(x){x.hidden=false})</script>') if best else ''}
 </section>
 {print_ready_html(best, ctx)}
 {truth_html}

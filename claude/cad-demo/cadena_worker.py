@@ -71,6 +71,10 @@ def windows_copy(src: Path, work: Path) -> Path:
         ("        self.plotter = Plotter()\n",
          '        self.plotter = Plotter()\n        self.openai_client = OpenAI(base_url=f"{self.base_url}/v1", api_key="EMPTY")\n'),
     ])
+    # в Windows нет os.sysconf
+    patch(run / "utils" / "gms.py", [("_ORIGINAL_OS_SYSCONF = os.sysconf", "_ORIGINAL_OS_SYSCONF = getattr(os, 'sysconf', None)"),
+                                     ('    _ORIGINAL_OS_SYSCONF("SC_SEM_NSEMS_MAX")',
+                                      '    _ORIGINAL_OS_SYSCONF and _ORIGINAL_OS_SYSCONF("SC_SEM_NSEMS_MAX")')])
     # снимки рисуются без окна через OSMesa, а на Windows его нет: там обычный OpenGL с off_screen
     patch(run / "visualization.py", [("os.environ['VTK_DEFAULT_OPENGL_WINDOW'] = 'vtkOSOpenGLRenderWindow'",
                                       "if os.name != 'nt':\n    os.environ['VTK_DEFAULT_OPENGL_WINDOW'] = 'vtkOSOpenGLRenderWindow'")])

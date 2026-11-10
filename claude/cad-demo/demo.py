@@ -664,6 +664,34 @@ def main() -> None:
             except Exception as ex:  # noqa: BLE001
                 log(f"    {title} не дала рабочей модели ({type(ex).__name__})")
         # Point2STEP: грани лучшей модели уточняются по скану; утраченное берётся из неё же
+        # Уточнение по скану: каждая грань нашей модели заново подгоняется по своим точкам скана,
+        # точные размеры пишутся обратно в редактируемую программу (fitfaces.py + merge.py)
+        if best is not None and best["run"].get("ok") and "importStep" not in best["code"]:
+            t0 = time.time()
+            log("2/4 попытка 0ж: уточняю размеры граней по точкам скана…")
+            try:
+                mj = out / "fit.json"
+                subprocess.run([sys.executable, str(HERE / "merge.py"), str(best["dir"] / "model.py"),
+                                str(best["dir"] / "model.step"), str(out / "scan_aligned.stl"), str(out / "fitted.py"),
+                                str(mj), "--fit"], check=True, timeout=300, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                changes = json.loads(mj.read_text(encoding="utf-8"))["changes"]
+                for c in changes:
+                    log("    " + c)
+                if changes:
+                    meta = dict(best["meta"])
+                    meta["plan"] = (str(meta.get("plan") or "") + f" Размеры {len(changes)} элементов уточнены по точкам "
+                                    "скана: " + "; ".join(changes))
+                    itf = evaluate("0ж", (out / "fitted.py").read_text(encoding="utf-8"), meta, t0,
+                                   "наш алгоритм, размеры уточнены по скану")
+                    iterations.append(itf)
+                    if (itf["run"].get("ok") and rank(itf)[:2] >= rank(best)[:2]
+                            and itf["cmp"]["within_tol_share"] >= best["cmp"]["within_tol_share"] - 0.003
+                            and itf["cmp"]["outside_share"] <= best["cmp"]["outside_share"] + 0.001):
+                        best = itf
+                else:
+                    log("    уточнять нечего: размеры и так ближе всего к скану")
+            except Exception as ex:  # noqa: BLE001
+                log(f"    уточнение по скану не удалось ({type(ex).__name__})")
         if a.p2s == "auto":
             from p2s_worker import p2s_dir
 
@@ -693,7 +721,7 @@ def main() -> None:
                 # (только там, где новая поверхность ближе к скану, чем старая)
                 if "importStep" not in base["code"]:
                     t0 = time.time()
-                    log("2/4 попытка 0ж: объединяю — размеры от Point2STEP в нашей программе построения…")
+                    log("2/4 попытка 0и: объединяю — размеры от Point2STEP в нашей программе построения…")
                     mj = out / "merge.json"
                     subprocess.run([sys.executable, str(HERE / "merge.py"), str(base["dir"] / "model.py"),
                                     str(out / "p2s.step"), str(out / "scan_aligned.stl"), str(out / "merged.py"), str(mj)],
@@ -705,7 +733,7 @@ def main() -> None:
                         meta = dict(base["meta"])
                         meta["plan"] = (str(meta.get("plan") or "") + f" Размеры {len(changes)} элементов уточнены по скану "
                                         "(Point2STEP): " + "; ".join(changes))
-                        itm = evaluate("0ж", (out / "merged.py").read_text(encoding="utf-8"), meta, t0,
+                        itm = evaluate("0и", (out / "merged.py").read_text(encoding="utf-8"), meta, t0,
                                        "наш алгоритм + Point2STEP")
                         iterations.append(itm)
                         if (itm["run"].get("ok") and rank(itm)[:2] >= rank(best)[:2]

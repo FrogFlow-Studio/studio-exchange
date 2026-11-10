@@ -6,6 +6,7 @@
 найдена та же грань, получает её размер. На выходе — одна программа с точными размерами.
 
 python merge.py model.py p2s.step скан.stl новая_model.py отчёт.json
+python merge.py model.py model.step скан.stl новая_model.py отчёт.json --fit   (без Point2STEP: fitfaces.py)
 """
 from __future__ import annotations
 
@@ -139,15 +140,22 @@ def refine(code: str, cyl: list, pl: list, pts=None, pos_tol: float = 0.3, r_tol
 
 def main() -> None:
     src, step, scan, dst, rep = (Path(x) for x in sys.argv[1:6])
+    own = "--fit" in sys.argv[6:]  # step — наша модель, поверхности подгоняются по скану здесь же
     import trimesh
 
-    cyl, pl = faces(step)
     m = trimesh.load(scan, force="mesh")
     pts, _ = trimesh.sample.sample_surface(m, 200000, seed=2)
+    if own:
+        from fitfaces import fit
+
+        cyl, pl = fit(step, pts)
+    else:
+        cyl, pl = faces(step)
     code, changes = refine(src.read_text(encoding="utf-8"), cyl, pl, pts)
     if changes:
         code = code.replace("import cadquery as cq\n",
-                            "import cadquery as cq\n# Размеры видимых граней уточнены по скану (Point2STEP).\n", 1)
+                            "import cadquery as cq\n# Размеры видимых граней уточнены по скану"
+                            + ("" if own else " (Point2STEP)") + ".\n", 1)
     dst.write_text(code, encoding="utf-8")
     rep.write_text(json.dumps({"changes": changes}, ensure_ascii=False), encoding="utf-8")
 

@@ -43,8 +43,12 @@ def make_part(seed: int):
             wall = cq.Workplane("XY").box(t, W, H, centered=(True, True, False))
             wall = wall.rotate((0, 0, 0), (0, 1, 0), -tilt * (1 if s == 2 else -1)).translate((x, 0, 0))
         part = part.union(wall)
-    for _ in range(int(r.integers(1, 4))):  # рёбра
+    xs: list[float] = []
+    for _ in range(int(r.integers(1, 4))):  # рёбра, не ближе 6 мм друг к другу (иначе щель 0,3 мм)
         x = r.uniform(-L / 3, L / 3)
+        if any(abs(x - q) < 6 for q in xs):
+            continue
+        xs.append(x)
         part = part.union(cq.Workplane("XY").box(t, W * 0.8, r.uniform(8, H * 0.8),
                                                  centered=(True, True, False)).translate((x, 0, 0)))
     if r.random() < 0.7:  # толстый прилив

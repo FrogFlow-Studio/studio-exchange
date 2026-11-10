@@ -675,6 +675,35 @@ def main() -> None:
                 log("    Point2STEP не уложился во время")
             except Exception as ex:  # noqa: BLE001
                 log(f"    Point2STEP не дал рабочей модели ({type(ex).__name__})")
+        # Подсказки CADENA: наш алгоритм проверяет её отверстия по скану и достраивает недостающее сам
+        cad_step = out / "cadena.step"
+        if cad_step.exists() and best is not None and best["run"].get("ok") and "importStep" not in best["code"]:
+            t0 = time.time()
+            log("2/4 попытка 0з: проверяю подсказки CADENA по скану…")
+            try:
+                hj = out / "hints.json"
+                subprocess.run([sys.executable, str(HERE / "hints.py"), str(best["dir"] / "model.py"),
+                                str(best["dir"] / "model.step"), str(cad_step), str(out / "scan_aligned.stl"),
+                                str(out / "hinted.py"), str(hj)],
+                               check=True, timeout=300, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                h = json.loads(hj.read_text(encoding="utf-8"))
+                log(f"    CADENA предложила отверстий: {h['hints']}; уже есть у нас: {h['confirmed']}; "
+                    f"достроено по скану: {len(h['added'])}; не подтверждено сканом: {len(h['unconfirmed'])}")
+                for s in h["added"] + h["unconfirmed"]:
+                    log("    " + s)
+                meta = dict(best["meta"])
+                meta["assumptions"] = list(meta.get("assumptions") or []) + [s + " — проверить" for s in h["unconfirmed"]]
+                if h["added"]:
+                    meta["restored"] = list(meta.get("restored") or []) + h["added"]
+                    ith = evaluate("0з", (out / "hinted.py").read_text(encoding="utf-8"), meta, t0,
+                                   "наш алгоритм + подсказки CADENA")
+                    iterations.append(ith)
+                    if ith["run"].get("ok") and rank(ith) >= rank(best):
+                        best = ith
+                else:
+                    best["meta"] = meta
+            except Exception as ex:  # noqa: BLE001
+                log(f"    подсказки CADENA проверить не удалось ({type(ex).__name__})")
         for proc in [surf_proc, walls_proc] + [p for p, _ in models.values()]:
             if proc is not None and proc.poll() is None:
                 proc.kill()  # не понадобился или не уложился во время

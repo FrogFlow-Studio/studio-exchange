@@ -9,3 +9,4 @@ matplotlib
 anthropic
 pymeshfix==0.18.1
 fast-simplification
+psutil

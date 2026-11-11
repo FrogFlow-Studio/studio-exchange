@@ -93,9 +93,20 @@ def _measure(mesh: trimesh.Trimesh, h: dict, depth: float):
     return {"d": 2 * best[1], "offset": float(np.linalg.norm(best[0]))}
 
 
+
+def _coarse(scan: trimesh.Trimesh, faces: int = 300_000) -> trimesh.Trimesh:
+    """Для поиска отверстий хватает 300 тыс. треугольников: на миллионе поиск плоских участков
+    идёт минуты. Диаметр потом меряется по полному скану."""
+    if len(scan.faces) <= faces:
+        return scan
+    import fast_simplification
+
+    v, f = fast_simplification.simplify(scan.vertices, scan.faces, 1 - faces / len(scan.faces))
+    return trimesh.Trimesh(v, f, process=True)
+
 def check(scan: trimesh.Trimesh, model: trimesh.Trimesh, tol: float = 0.2, depth: float = 0.6) -> list[dict]:
     rows = []
-    for h in find_holes(scan):
+    for h in find_holes(_coarse(scan)):
         s = _measure(scan, h, depth)
         if s is None:
             continue

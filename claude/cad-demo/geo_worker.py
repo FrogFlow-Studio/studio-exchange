@@ -10,7 +10,42 @@ import trimesh
 
 import geometric
 
+
+
+def _memory_guard(share: float = 0.45) -> None:
+    """Попытки считаются параллельно. Если одна разрастается (черновик из стенок на огромной
+    кривой детали брал больше 13 ГБ), она не должна уронить соседние: выходит сама."""
+    try:
+        import psutil
+    except ImportError:
+        return
+    import os
+    import threading
+    import time
+
+    limit = share * psutil.virtual_memory().total
+    me = psutil.Process()
+
+    def watch() -> None:
+        while True:
+            if me.memory_info().rss > limit:
+                sys.stderr.write(f"попытка заняла больше {limit / 2**30:.1f} ГБ памяти и остановлена\n")
+                sys.stderr.flush()
+                os._exit(3)
+            time.sleep(1)
+
+    threading.Thread(target=watch, daemon=True).start()
+
+
+_memory_guard()
 scan = trimesh.load(sys.argv[1], force="mesh")
+KIND = sys.argv[5] if len(sys.argv) > 5 else "geometric"
+if KIND in ("walls", "geometric") and len(scan.faces) > 300_000:
+    # стенкам и сечениям хватает 300 тыс. треугольников (сдвиг поверхности сотые доли мм), а на
+    # миллионе они не успевают за отведённое время
+    from holes import _coarse
+
+    scan = _coarse(scan)
 sheet = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 if len(sys.argv) > 5 and sys.argv[5] == "walls":
     import walls

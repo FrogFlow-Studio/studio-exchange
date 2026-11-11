@@ -1,0 +1,276 @@
+diff --git a/claude/cad-demo/cad_checks.py b/claude/cad-demo/cad_checks.py
+index 43ac177..d298cbc 100644
+--- a/claude/cad-demo/cad_checks.py
++++ b/claude/cad-demo/cad_checks.py
+@@ -16,10 +16,33 @@ def measured(timings, key):
+         timings[key] = timings.get(key, 0.0) + perf_counter() - start
+ 
+ 
+-def boolean_op(base, tools, *, fuse=False):
+-    """Run the same OCC Boolean with OBB pruning when enabled."""
++def add_count(timings, key, count=1):
++    if timings is not None:
++        timings[key] = timings.get(key, 0) + count
++
++
++def disjoint_tool_boxes(groups):
++    """Skip trial batching when different jobs' tools may touch one another."""
++    boxes = []
++    try:
++        for group in groups:
++            bounds = [tool.BoundingBox() for tool in group]
++            boxes.append((min(b.xmin for b in bounds), min(b.ymin for b in bounds), min(b.zmin for b in bounds),
++                          max(b.xmax for b in bounds), max(b.ymax for b in bounds), max(b.zmax for b in bounds)))
++    except Exception:
++        return False
++    for i, a in enumerate(boxes):
++        for b in boxes[:i]:
++            if all(a[axis + 3] >= b[axis] and b[axis + 3] >= a[axis] for axis in range(3)):
++                return False
++    return True
++
++
++def boolean_op(base, tools, *, fuse=False, preserve_inputs=False):
++    """Use the original flags, with optional OBB and non-destructive trial mode."""
+     legacy = base.fuse if fuse else base.cut
+-    if os.environ.get("CAD_BOOLEAN_OBB", "0") != "1":
++    obb = os.environ.get("CAD_BOOLEAN_OBB", "0") == "1"
++    if not obb and not preserve_inputs:
+         return legacy(*tools)
+ 
+     import cadquery as cq
+@@ -35,14 +58,20 @@ def boolean_op(base, tools, *, fuse=False):
+         op.SetArguments(args)
+         op.SetTools(operands)
+         op.SetRunParallel(True)
+-        op.SetUseOBB(True)
++        if obb:
++            op.SetUseOBB(True)
++        if preserve_inputs:
++            op.SetNonDestructive(True)
+         op.Build()
+         if op.IsDone():
+             result = op.Shape()
+             if not result.IsNull():
+                 return cq.Shape.cast(result)
+     except Exception:  # optional OCC path: retry with the original flags
+-        pass
++        if preserve_inputs:
++            raise
++    if preserve_inputs:
++        raise RuntimeError("пробная булева операция OCC не завершилась")
+     return legacy(*tools)
+ 
+ 
+diff --git a/claude/cad-demo/demo.py b/claude/cad-demo/demo.py
+index f7904ec..702f209 100644
+--- a/claude/cad-demo/demo.py
++++ b/claude/cad-demo/demo.py
+@@ -1205,6 +1205,10 @@ def main() -> None:
+                            ("hole_boolean", "отверстия, булевы"), ("hole_checks", "отверстия, проверки")):
+             if key in worker:
+                 parts.append(f"{stage}, {label} {duration(worker[key])}")
++        for kind, label in (("fillet", "скругления"), ("hole", "отверстия")):
++            if f"{kind}_ops" in worker:
++                ops, rolled = worker[f"{kind}_ops"], worker[f"{kind}_rolled_back_ops"]
++                parts.append(f"{stage}, {label}: булевых {ops}, отброшено {rolled}")
+     parts.extend(f"{label} {duration(stages.get(label))}" for label in ("сравнение", "перечитывание STEP"))
+     phase_names = {
+         "coarse": "сетка", "layout": "раскладка", "projection": "проекция",
+diff --git a/claude/cad-demo/fillets.py b/claude/cad-demo/fillets.py
+index 7491cc8..8a06d91 100644
+--- a/claude/cad-demo/fillets.py
++++ b/claude/cad-demo/fillets.py
+@@ -154,13 +154,17 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
+     mesh — чистая поверхность скана: по ней быстро проверяется, что под вставкой есть материал
+     (без неё — по самому телу, это около 1,5 с на точку).
+     Возвращает (тело, сколько кусков построено, сколько участков пропущено)."""
++    import os
+     import time
+ 
+-    from cad_checks import InsideMemo, VolumeMemo, boolean_op, measured
++    from cad_checks import InsideMemo, VolumeMemo, add_count, boolean_op, disjoint_tool_boxes, measured
+ 
+     if volumes is None:
+         volumes = VolumeMemo()
+     t_start = time.time()
++    grouped = os.environ.get("CAD_FILLET_GROUPS", "0") == "1"
++    add_count(timings, "fillet_ops", 0)
++    add_count(timings, "fillet_rolled_back_ops", 0)
+     if mesh is not None:
+         from scipy.spatial import cKDTree
+ 
+@@ -180,7 +184,7 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
+                 return classifier.contains(body, q)
+     jobs = []  # (вырез, вставка) по участкам
+     skipped = 0
+-    for f in fl:
++    for group, f in enumerate(fl):
+         g = f["geo"]
+         R, n1, n2, p, ax = g["R"], g["n1"], g["n2"], g["p"], g["ax"]
+         c = float(n1 @ n2)
+@@ -222,26 +226,37 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
+                 pair = make(a0, a1)
+             except Exception:  # noqa: BLE001
+                 pair = None
+-            jobs.append((pair, make, a0, a1))
++            jobs.append((pair, make, a0, a1, group))
+ 
+     def note(*a):
+         if log is not None:
+             log.append(" ".join(str(x) for x in a))
+ 
+-    def attempt(base, part, tag=""):
++    accepted_ops = 0
++
++    def attempt(base, part, tag="", *, trial=False):
+         """Вырез и вставка для набора участков; None, если тело распалось или стало невалидным.
+         Объём здесь не считаем (у тела из тысяч сплайновых граней это ~10 с): булевы операции
+         не могут изменить его больше, чем на объём инструментов, общая сверка — в конце."""
++        nonlocal accepted_ops
+         t0_ = time.time()
++        ops = 0
+         try:
+             with measured(timings, "fillet_boolean"):
+-                cut = boolean_op(base, [c for c, _ in part])
+-                new = boolean_op(cut, [a for _, a in part], fuse=True)
++                ops += 1
++                cut = boolean_op(base, [c for c, _ in part], preserve_inputs=trial)
++                ops += 1
++                new = boolean_op(cut, [a for _, a in part], fuse=True, preserve_inputs=trial)
+             with measured(timings, "fillet_checks"):
+                 sols = new.Solids()
+                 why = ("тел " + str(len(sols))) if len(sols) != 1 else ("" if sols[0].isValid() else "невалидно")
+         except Exception as e:  # noqa: BLE001  скругление — улучшение, без него тело то же
+             sols, why = [], "ошибка " + type(e).__name__
++        add_count(timings, "fillet_ops", ops)
++        if why:
++            add_count(timings, "fillet_rolled_back_ops", ops)
++        else:
++            accepted_ops += ops
+         note(tag, why or "ок", round(time.time() - t0_, 1), "с")
+         return None if why else sols[0]
+ 
+@@ -261,8 +276,25 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
+         tools = sum(tool_volume(j[0]) for j in ready)
+     else:  # по одному; неудачный участок делим пополам: вдоль него может мешать одно место
+         queue = list(ready)
++        tried_groups = set()
+         while queue and time.time() - t_start < budget:
+-            pair, make, a0, a1 = queue.pop(0)
++            pair, make, a0, a1, group = queue.pop(0)
++            if grouped and group not in tried_groups:
++                tried_groups.add(group)
++                # Original jobs of one fillet are contiguous; split pieces are appended later.
++                end = next((i for i, job in enumerate(queue) if job[4] != group), len(queue))
++                if 0 < end < len(ready) - 1:
++                    group_pairs = [pair, *[job[0] for job in queue[:end]]]
++                    if disjoint_tool_boxes(group_pairs):
++                        new = attempt(body, group_pairs, f"скругление {group + 1}", trial=True)
++                    else:
++                        new = None
++                        note(f"скругление {group + 1}", "коробки инструментов пересекаются")
++                    if new is not None:
++                        body, done = new, done + len(group_pairs)
++                        tools += sum(tool_volume(p) for p in group_pairs)
++                        del queue[:end]
++                        continue
+             new = attempt(body, [pair], f"{a0:.0f}..{a1:.0f}")
+             if new is not None:
+                 body, done = new, done + 1
+@@ -275,16 +307,18 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
+                     except Exception:  # noqa: BLE001
+                         sub = None
+                     if sub is not None:
+-                        queue.append((sub, make, b0, b1))
++                        queue.append((sub, make, b0, b1, group))
+     if done:
+         try:  # общая сверка: тело не могло измениться больше, чем на объём инструментов
+             with measured(timings, "fillet_checks"):
+                 after = body.Volume()
+                 if abs(after - volumes.get(start)) > tools + 1.0:
+                     note("объём изменился больше объёма инструментов, скругления отменены")
++                    add_count(timings, "fillet_rolled_back_ops", accepted_ops)
+                     return start, 0, skipped + len(jobs)
+                 volumes.remember(body, after)
+         except Exception:  # noqa: BLE001
++            add_count(timings, "fillet_rolled_back_ops", accepted_ops)
+             return start, 0, skipped + len(jobs)
+     return body, done, skipped + max(0, len(jobs) - done)
+ 
+diff --git a/claude/cad-demo/surface.py b/claude/cad-demo/surface.py
+index 50f094e..3ba2fa6 100644
+--- a/claude/cad-demo/surface.py
++++ b/claude/cad-demo/surface.py
+@@ -283,30 +283,58 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_find
+     """Круглые отверстия вырезаются точно по диаметру из скана. Возвращает (тело, сколько)."""
+     import cadquery as cq
+ 
+-    from cad_checks import VolumeMemo, boolean_op, measured
++    from cad_checks import VolumeMemo, add_count, boolean_op, disjoint_tool_boxes, measured
+ 
+     if volumes is None:
+         volumes = VolumeMemo()
++    add_count(timings, "hole_ops", 0)
++    add_count(timings, "hole_rolled_back_ops", 0)
+     with measured(timings, "hole_search"):
+         specs = hole_finder(scan)
+-    cut = 0
+-    for c, d, r, h in specs:
++
++    def attempt(body, tool, limit, *, trial=False):
++        add_count(timings, "hole_ops")
+         try:
+-            cyl = cq.Solid.makeCylinder(r, h, cq.Vector(*c), cq.Vector(*d))
+             with measured(timings, "hole_boolean"):
+-                res = boolean_op(s, (cyl,))
++                res = boolean_op(body, (tool,), preserve_inputs=trial)
+             with measured(timings, "hole_checks"):
+                 solids = res.Solids()
+-                if len(solids) != 1:
+-                    continue
+-                before, after = volumes.get(s), res.Volume()
+-                solid = solids[0]
+-                # Сохраняем прежние пороги объёма и валидности, в том числе для касаний.
+-                if 0 <= before - after <= 1.05 * np.pi * r * r * h + 1 and solid.isValid():
+-                    volumes.remember_cut(res, solid, after)
+-                    s, cut = solid, cut + 1
++                if len(solids) == 1:
++                    before, after = volumes.get(body), res.Volume()
++                    solid = solids[0]
++                    if 0 <= before - after <= limit and solid.isValid():
++                        volumes.remember_cut(res, solid, after)
++                        return solid
++        except Exception:  # noqa: BLE001
++            pass
++        add_count(timings, "hole_rolled_back_ops")
++        return None
++
++    def cylinder(spec):
++        c, d, r, h = spec
++        return cq.Solid.makeCylinder(r, h, cq.Vector(*c), cq.Vector(*d)), 1.05 * np.pi * r * r * h
++
++    cutters = []
++    if os.environ.get("CAD_HOLE_BATCH", "0") == "1" and len(specs) > 1:
++        try:
++            cutters = [cylinder(spec) for spec in specs]
++            if disjoint_tool_boxes((tool,) for tool, _ in cutters):
++                compound = cq.Compound.makeCompound([tool for tool, _ in cutters])
++                new = attempt(s, compound, sum(limit for _, limit in cutters) + 1, trial=True)
++                if new is not None:
++                    return new, len(cutters)
+         except Exception:  # noqa: BLE001
+             pass
++
++    cut = 0
++    for i, spec in enumerate(specs):
++        try:
++            tool, limit = cutters[i] if cutters else cylinder(spec)
++        except Exception:  # noqa: BLE001
++            continue
++        new = attempt(s, tool, limit + 1)
++        if new is not None:
++            s, cut = new, cut + 1
+     return s, cut
+ 
+ 

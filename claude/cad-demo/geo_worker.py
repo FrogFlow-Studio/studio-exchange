@@ -75,7 +75,12 @@ elif len(sys.argv) > 5 and sys.argv[5] == "smooth":
     import nurbs
     import surface
 
-    tol = max(0.3, 3 * float(sheet.get("diagnostics", {}).get("noise_mm", 0) or 0))  # как допуск сравнения в demo.py
+    # Приёмка гладкого тела меряется по очищенной поверхности, а не по сырому скану: шум там уже снят,
+    # и допуск сравнения (3×шум) здесь слишком широк — пропускает крупные грани, срезающие рёбра.
+    # Поэтому берётся сам шум, не меньше 0,3 мм (CAD_FIT_TOL=wide — прежнее правило, для сравнения).
+    noise = float(sheet.get("diagnostics", {}).get("noise_mm", 0) or 0)
+    wide = __import__("os").environ.get("CAD_FIT_TOL") == "wide"
+    tol = max(0.3, (3 if wide else 1) * noise)
     import time
 
     t_smooth = time.time()
@@ -89,7 +94,8 @@ elif len(sys.argv) > 5 and sys.argv[5] == "smooth":
         import fillets
 
         left = 1000 - (time.time() - t_smooth)   # у попытки 0к в demo.py предел 1200 с
-        fl = fillets.find_fillets(clean) if left > 120 else []
+        on = __import__("os").environ.get("CAD_FILLETS", "1") != "0"   # CAD_FILLETS=0 — без точных скруглений (для сравнения)
+        fl = fillets.find_fillets(clean) if on and left > 120 else []
         if fl:
             body, built, _ = fillets.apply(body, fl, budget=min(240.0, left - 90), mesh=clean)
             fil_note = [fillets.summary(fl) + (f"; точными цилиндрами построено кусков: {built}" if built else "")]

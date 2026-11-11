@@ -1,4 +1,4 @@
-"""Разметка поверхности на области: плоскость, цилиндр, свободная форма (этап Б плана, шаг 1).
+"""Разметка поверхности на плоскости, цилиндры, конусы, сферы и свободную форму.
 
 Каждый треугольник чистой поверхности получает номер области или -1 (свободная форма).
 Плоскости берутся ростом области от крупных треугольников (walls.planar_patches), цилиндры —
@@ -68,9 +68,456 @@ def _on_cylinder(P, N, cyl, tol: float, cos_n: float) -> np.ndarray:
     return (np.abs(d - r) < tol) & ((rn * N).sum(1) * sign > cos_n)
 
 
+
+def _components(mask, nb):
+    unseen = set(np.flatnonzero(mask))
+    while unseen:
+        seed = unseen.pop()
+        queue = deque([seed])
+        members = [seed]
+        while queue:
+            for g in nb[queue.popleft()]:
+                if g in unseen:
+                    unseen.remove(g)
+                    queue.append(g)
+                    members.append(g)
+        yield np.array(members)
+
+
+def _refine_cylinder(vertices, cyl, tol):
+    """Fit geometry at vertices. The centres of triangles sit inside a circular chord."""
+    from scipy.optimize import least_squares
+
+    axis, origin, radius, sign = cyl
+    u, v = _frame(axis)
+    center = vertices.mean(axis=0)
+    pts = vertices - center
+    offset = origin - center
+
+    def parameters(x):
+        n = axis + x[2] * u + x[3] * v
+        return n / np.linalg.norm(n), x[0] * u + x[1] * v
+
+    def residual(x):
+        n, o = parameters(x)
+        d = pts - o
+        return np.linalg.norm(d - np.outer(d @ n, n), axis=1) - x[4]
+
+    start = [offset @ u, offset @ v, 0, 0, radius]
+    fit = least_squares(residual, start, loss="soft_l1", f_scale=tol / 3, max_nfev=20)
+    if fit.x[4] <= 0:
+        return cyl
+    ax, c = parameters(fit.x)
+    return ax, center + c, float(fit.x[4]), sign
+
+
+def _frame(axis):
+    u = np.cross(axis, np.eye(3)[np.argmin(np.abs(axis))])
+    u /= np.linalg.norm(u)
+    return u, np.cross(axis, u)
+
+
+def _axial_drift(h, errors, tol, *, floor=None, trim_share=0.125):
+    """A cone or a doubly curved band can fit a cylinder locally but drifts along its axis."""
+    order = np.argsort(h)
+    trim = int(trim_share * len(order))
+    if trim:
+        order = order[trim:-trim]
+    sections = np.array_split(order, 4)
+    centers = np.array([np.median(h[s]) for s in sections])
+    if np.ptp(centers) < 3 * tol:
+        return False
+    systematic = np.array([np.median(errors[s]) for s in sections])
+    scatter = 1.4826 * np.median(np.concatenate([
+        np.abs(errors[s] - z) for s, z in zip(sections, systematic)
+    ]))
+    return np.ptp(systematic) > max(tol / 3 if floor is None else floor, 2 * scatter)
+
+
+def _cylinder_region(mesh, m, cyl, min_area, tol, *, sectional=False):
+    ax, c, r, sign = cyl
+    fc = mesh.triangles_center[m]
+    rad = fc - c
+    h = rad @ ax
+    rad -= np.outer(h, ax)
+    u, v = _frame(ax)
+    s = np.sort(np.arctan2(rad @ v, rad @ u))
+    gap = np.max(np.diff(np.r_[s, s[0] + 2 * np.pi]))
+    span = float(np.degrees(2 * np.pi - gap))
+    area = float(mesh.area_faces[m].sum())
+    if area < min_area or span < 40:
+        return None
+    points = mesh.vertices[np.unique(mesh.faces[m])] - c
+    z = points @ ax
+    residual = np.linalg.norm(points - np.outer(z, ax), axis=1) - r
+    core = np.abs(residual) < tol
+    if core.mean() < (0.5 if sectional else 0.7):
+        return None
+    rms = float(np.sqrt(np.mean(residual[core]**2)))
+    sag = r * (1 - np.cos(np.radians(min(span, 180.0)) / 2))
+    normal_axial = mesh.face_normals[m] @ ax
+    # The normals near rounded rims are unreliable. Compare the axial drift inside
+    # the wall to distinguish a cylinder from the middle band of a torus.
+    if (sag < max(3 * tol, 8 * rms) or rms > tol / 2
+            or abs(np.median(normal_axial)) > np.sin(np.radians(6))
+            or (sectional and _axial_drift(h, normal_axial, tol, floor=0.09, trim_share=0.25))
+            or np.ptp(h) < 4 * tol
+            or (not sectional and _axial_drift(z[core], residual[core], tol, floor=0.8 * tol))):
+        return None
+    return {"kind": "cylinder", "axis": ax, "origin": c + ax * float(h.mean()), "r": float(r),
+            "inner": bool(sign < 0), "span_deg": round(span, 1), "length": float(np.ptp(h)),
+            "area": area, "faces": m}
+
+
+def _circle_from_loop(q, tol):
+    """Fit the circular arc even if a chip closes part of the loop with a chord."""
+    arc = np.r_[0., np.cumsum(np.linalg.norm(np.diff(q, axis=0), axis=1))]
+    t = np.linspace(0, arc[-1], 64, endpoint=False)
+    xy = np.column_stack([np.interp(t, arc, q[:, i]) for i in range(2)])
+    for sample in (xy, *(xy[(i + np.array([0, 21, 42])) % 64] for i in range(0, 64, 4))):
+        c, r = _circle(sample)
+        if r < 3 * tol:
+            continue
+        err = np.abs(np.linalg.norm(xy - c, axis=1) - r)
+        good = err < tol
+        if good.mean() < 0.6 or np.sqrt(np.mean(err[good]**2)) > tol / 2:
+            continue
+        v = xy[good] - c
+        angle = np.sort(np.arctan2(v[:, 1], v[:, 0]))
+        if np.max(np.diff(np.r_[angle, angle[0] + 2 * np.pi])) <= np.pi:
+            return _circle(xy[good])
+    return None
+
+
+def _section_regions(mesh, patches, nb, label, tol, min_area):
+    """Cross sections seed cylindrical and conical walls through noisy normals."""
+    area, fn, fc = mesh.area_faces, mesh.face_normals, mesh.triangles_center
+    seen = []
+    seen_cones = []
+    for p in patches:
+        points = mesh.vertices[np.unique(mesh.faces[p["faces"]])]
+        origin = points.mean(axis=0)
+        _, _, axes = np.linalg.svd(points - origin, full_matrices=False)
+        n = axes[-1] * np.sign(axes[-1] @ p["normal"])
+        if np.quantile(np.abs((points - origin) @ n), 0.9) > tol / 2:
+            continue
+        depths = np.array([2, 4, 8, 12, 16, 24, 32]) * tol
+        sections = []
+        paths = mesh.section_multiplane(plane_origin=origin, plane_normal=n, heights=-depths)
+        for section in paths:
+            circles = []
+            for loop in section.discrete if section is not None else ():
+                if len(loop) < 7 or np.linalg.norm(loop[0] - loop[-1]) > tol:
+                    continue
+                circle = _circle_from_loop(loop, tol)
+                if circle is not None:
+                    c, r = circle
+                    transform = section.metadata["to_3D"]
+                    circles.append((transform[:3, :2] @ c + transform[:3, 3], r))
+            sections.append(circles)
+        for j in range(len(depths) - 1, 0, -1):
+            for c, radius in sections[j]:
+                if any(abs(n @ a) > 0.95 and abs(radius - rr) < tol
+                       and np.linalg.norm(np.cross(c - cc, a)) < 2 * tol for a, cc, rr in seen):
+                    continue
+                pairs = [(depths[j] - depths[i], cp, rp) for i in range(j)
+                         for cp, rp in sections[i] if abs(radius - rp) < tol / 3
+                         and np.linalg.norm(np.cross(cp - c, n)) < tol / 2]
+                if not pairs:
+                    continue
+                span, cp, rp = max(pairs, key=lambda pair: pair[0])
+                if span < 3 * tol:
+                    continue
+                axis = cp - c
+                axis /= np.linalg.norm(axis)
+                h = (fc - c) @ axis
+                rad = fc - c - np.outer(h, axis)
+                d = np.linalg.norm(rad, axis=1)
+                dot = np.einsum("ij,ij->i", rad, fn) / np.maximum(d, 1e-9)
+                mask = (np.abs(d - radius) < tol) & (np.abs(dot) > 0.15) & (label < 0)
+                for m in sorted(_components(mask, nb), key=lambda f: -area[f].sum()):
+                    if area[m].sum() < min_area:
+                        break
+                    if np.min(h[m]) > tol or np.max(h[m]) < span - tol:
+                        continue
+                    alignment = np.average(dot[m], weights=area[m])
+                    if abs(alignment) < 0.55:
+                        continue
+                    pts = mesh.vertices[np.unique(mesh.faces[m])]
+                    z = (pts - c) @ axis
+                    core = pts[(z > -tol) & (z < span + tol)]
+                    seed = (axis, c, (radius + rp) / 2, np.sign(alignment))
+                    cyl = _refine_cylinder(core, seed, tol) if len(core) >= 12 else seed
+                    if abs(cyl[0] @ n) < 0.995 or abs(cyl[2] - radius) > tol:
+                        cyl = seed
+                    reg = _cylinder_region(mesh, m, cyl, min_area, tol, sectional=True)
+                    if reg is not None and reg["span_deg"] >= 180:
+                        seen.append(cyl[:3])
+                        yield reg
+                        break
+
+        for j in range(len(depths) - 1, 1, -1):
+            for c, radius in sections[j]:
+                if any(np.linalg.norm(np.cross(c - apex, axis)) < 2 * tol
+                       and abs((c - apex) @ axis * slope - radius) < tol
+                       for apex, axis, slope in seen_cones):
+                    continue
+                for i in range(j - 1):
+                    dz = depths[j] - depths[i]
+                    for cp, rp in sections[i]:
+                        slope = (rp - radius) / dz
+                        if abs(rp - radius) < 2 * tol or np.linalg.norm(np.cross(cp - c, n)) > tol:
+                            continue
+                        if not any(abs(rm - radius - (depths[j] - depths[k]) * slope) < tol / 2
+                                   and np.linalg.norm(np.cross(cm - c, n)) < tol
+                                   for k in range(i + 1, j) for cm, rm in sections[k]):
+                            continue
+                        axis = (cp - c) / np.linalg.norm(cp - c) * np.sign(slope)
+                        model = (c - axis * radius / abs(slope), axis, abs(slope))
+                        err, normal = _curved_distance(fc, model, "cone")
+                        dot = np.einsum("ij,ij->i", normal, fn)
+                        mask = (np.abs(err) < tol) & (np.abs(dot) > 0.5) & (label < 0)
+                        for m in sorted(_components(mask, nb), key=lambda f: -area[f].sum()):
+                            if area[m].sum() < min_area:
+                                break
+                            reg = _curved_region(mesh, m, model, "cone", tol, min_area)
+                            if reg is not None:
+                                seen_cones.append(model)
+                                yield reg
+                                break
+
+
+def _sphere(points):
+    if len(points) < 6:
+        return None
+    mean = points.mean(axis=0)
+    p = points - mean
+    a = np.c_[2 * p, np.ones(len(p))]
+    x, _, rank, _ = np.linalg.lstsq(a, np.einsum("ij,ij->i", p, p), rcond=None)
+    if rank < 4 or x[3] + x[:3] @ x[:3] <= 0:
+        return None
+    return x[:3] + mean, float(np.sqrt(x[3] + x[:3] @ x[:3]))
+
+
+def _cone(points, normals):
+    """Normals of a cone lie on a plane offset from zero on the unit sphere."""
+    n = normals - normals.mean(axis=0)
+    _, s, vt = np.linalg.svd(n, full_matrices=False)
+    if s[1] < 0.15 * s[0] or s[2] > 0.35 * s[1]:
+        return None
+    ax = vt[2]
+    u, v = _frame(ax)
+    mean = points.mean(axis=0)
+    p = points - mean
+    q = np.c_[p @ u, p @ v]
+    h = p @ ax
+    # Expand ||q - center||^2 = (r0 + slope*h)^2 and solve for center and slope.
+    a = np.c_[2 * q, np.ones(len(q)), h, h**2]
+    x, _, rank, _ = np.linalg.lstsq(a, np.einsum("ij,ij->i", q, q), rcond=None)
+    r2 = x[2] + x[:2] @ x[:2]
+    if rank < 5 or r2 <= 0:
+        return None
+    r = np.sqrt(r2)
+    slope = x[3] / (2 * r)
+    if abs(slope) < 1e-5 or np.any(r + slope * h <= 0):
+        return None
+    apex = mean + x[0] * u + x[1] * v - ax * r / slope
+    return apex, ax * np.sign(slope), abs(float(slope))
+
+
+def _curved_distance(p, model, kind):
+    if kind == "sphere":
+        center, radius = model
+        rad = p - center
+        d = np.linalg.norm(rad, axis=1)
+        return d - radius, rad / np.maximum(d, 1e-9)[:, None]
+    apex, axis, slope = model
+    rad = p - apex
+    h = rad @ axis
+    rad -= np.outer(h, axis)
+    d = np.linalg.norm(rad, axis=1)
+    normal = rad / np.maximum(d, 1e-9)[:, None] - axis * slope
+    scale = np.hypot(1, slope)
+    return (d - h * slope) / scale, normal / scale
+
+
+def _refine_cone(points, model, tol):
+    from scipy.optimize import least_squares
+
+    apex, axis, slope = model
+    center = points.mean(axis=0)
+    h = float((center - apex) @ axis)
+    origin = apex + axis * h
+    radius = h * slope
+    u, v = _frame(axis)
+    local = points - origin
+
+    def params(x):
+        ax = axis + x[2] * u + x[3] * v
+        ax /= np.linalg.norm(ax)
+        return x[0] * u + x[1] * v, ax, x[4], x[5]
+
+    def residual(x):
+        c, ax, r, k = params(x)
+        d = local - c
+        z = d @ ax
+        return (np.linalg.norm(d - np.outer(z, ax), axis=1) - r - k * z) / np.hypot(1, k)
+
+    x = least_squares(residual, [0, 0, 0, 0, radius, slope], loss="soft_l1",
+                      f_scale=tol / 3, max_nfev=20).x
+    c, ax, r, k = params(x)
+    if abs(k) < 1e-5 or r <= 0:
+        return None
+    return origin + c - ax * r / k, ax * np.sign(k), abs(float(k))
+
+
+def _curved_region(mesh, m, model, kind, tol, min_area):
+    area = float(mesh.area_faces[m].sum())
+    if area < min_area or len(m) < 8:
+        return None
+    points = mesh.vertices[np.unique(mesh.faces[m])]
+    if len(points) < 8:
+        return None
+    model = _sphere(points) if kind == "sphere" else _refine_cone(points, model, tol)
+    if model is None:
+        return None
+    errors, _ = _curved_distance(points, model, kind)
+    rms = np.sqrt(np.mean(errors**2))
+    if rms > tol / 2 or np.quantile(np.abs(errors), 0.95) > tol:
+        return None
+    fc = mesh.triangles_center[m]
+    fn = mesh.face_normals[m]
+    _, normals = _curved_distance(fc, model, kind)
+    alignment = np.einsum("ij,ij->i", normals, fn)
+    weights = mesh.area_faces[m]
+    inner = float(np.average(alignment, weights=weights)) < 0
+    if kind == "sphere":
+        center, radius = model
+        _, s, axes = np.linalg.svd(points - points.mean(axis=0), full_matrices=False)
+        # Detect bending along two independent directions, not a narrow cylindrical strip.
+        width = np.ptp((points - center) @ axes[1])
+        sag = radius - np.sqrt(max(0., radius**2 - (width / 2)**2))
+        if sag < max(5 * tol, 10 * rms) or s[1] < 0.35 * s[0]:
+            return None
+        # A sphere has the same normal gradient along both tangent directions.
+        # A toroidal band can have low distance error yet disagree on this gradient.
+        x = (fc - np.average(fc, axis=0, weights=weights)) @ axes[:2].T
+        measured = fn @ axes[:2].T * (-1 if inner else 1)
+        y = measured - np.average(measured, axis=0, weights=weights)
+        w = np.sqrt(weights)[:, None]
+        grad = np.linalg.lstsq(x * w, y * w, rcond=None)[0]
+        if np.linalg.norm(radius * grad - np.eye(2), ord=2) > 0.3:
+            return None
+        centered = points - center
+        if any(_axial_drift(centered @ direction, errors, tol, floor=tol / 5)
+               for direction in axes):
+            return None
+        params = {"center": center, "r": radius}
+    else:
+        apex, ax, slope = model
+        p = points - apex
+        h = p @ ax
+        u, v = _frame(ax)
+        s = np.sort(np.arctan2(p @ v, p @ u))
+        span = 2 * np.pi - np.max(np.diff(np.r_[s, s[0] + 2 * np.pi]))
+        r = float(np.median(h)) * slope
+        sag = r * (1 - np.cos(min(span, np.pi) / 2))
+        if (h.min() < -tol or sag / np.hypot(1, slope) < max(3 * tol, 8 * rms)
+                or span < np.radians(100) or slope * np.ptp(h) < max(5 * tol, 10 * rms)):
+            return None
+        # Reject non-linear meridians even if a small residual fits within tolerance.
+        if _axial_drift(h, errors, tol):
+            return None
+        axial_normals = fn @ ax * (-1 if inner else 1)
+        order = np.argsort((fc - apex) @ ax)
+        bands = np.array_split(order, 5)[1:-1]
+        levels = np.array([np.median(axial_normals[b]) for b in bands])
+        expected = -slope / np.hypot(1, slope)
+        if np.max(np.abs(levels - expected)) > 0.08 or np.ptp(levels) > 0.065:
+            return None
+        _, _, axes = np.linalg.svd(points - points.mean(axis=0), full_matrices=False)
+        if np.ptp((points - points.mean(axis=0)) @ axes[-1]) < 5 * tol:
+            return None
+        params = {"apex": apex, "axis": ax, "semi_angle_deg": float(np.degrees(np.arctan(slope)))}
+    return {"kind": kind, **params, "inner": inner, "area": area, "faces": m}
+
+
+def _curved_components(mesh, label, nb, tol, min_area, cos_n):
+    area, fc, fn = mesh.area_faces, mesh.triangles_center, mesh.face_normals
+    adj = mesh.face_adjacency
+    graph = [[] for _ in nb]
+    for a, b in adj[mesh.face_adjacency_angles < np.radians(35)]:
+        graph[a].append(b)
+        graph[b].append(a)
+
+    def candidate(seed, model, kind):
+        if model is None:
+            return None
+        err, normal = _curved_distance(fc, model, kind)
+        dot = np.einsum("ij,ij->i", normal, fn)
+        direction = np.sign(np.median(dot[seed]))
+        mask = (np.abs(err) < tol) & (dot * direction > cos_n) & (label < 0)
+        if area[seed[mask[seed]]].sum() < 0.65 * area[seed].sum():
+            return None
+        for m in sorted(_components(mask, nb), key=lambda f: -area[f].sum()):
+            if area[m].sum() < min_area:
+                break
+            if np.intersect1d(m, seed).size < 0.4 * len(seed):
+                continue
+            reg = _curved_region(mesh, m, model, kind, tol, min_area)
+            if reg is not None:
+                return reg
+        return None
+
+    def models(f):
+        points = mesh.vertices[np.unique(mesh.faces[f])]
+        return ("sphere", _sphere(points)), ("cone", _cone(fc[f], fn[f]))
+
+    for m in sorted(_components(label < 0, graph), key=lambda f: -area[f].sum()):
+        if len(m) < 12 or area[m].sum() < min_area:
+            continue
+        for kind, model in models(m):
+            r = candidate(m, model, kind)
+            if r is not None:
+                yield r
+                break
+        # Components can include a blended rim, a chip or an adjacent tangent surface.
+        # Sample spaced geodesic neighborhoods so these do not bias the initial model.
+        tried = set()
+        for seed in m[np.argsort(-area[m])]:
+            if seed in tried or label[seed] >= 0:
+                continue
+            queue, seen, members = deque([seed]), {seed}, [seed]
+            for size in (96, 384, 1200):
+                while queue and len(members) < size:
+                    for g in graph[queue.popleft()]:
+                        if g not in seen and label[g] < 0:
+                            seen.add(g)
+                            members.append(g)
+                            queue.append(g)
+                if len(members) < 12:
+                    break
+                f = np.asarray(members)
+                if area[f].sum() >= min_area:
+                    for kind, model in models(f):
+                        r = candidate(f, model, kind)
+                        if r is not None:
+                            yield r
+                            break
+                    if label[seed] >= 0:
+                        break
+                if not queue:
+                    break
+            tried.update(members[:96])
+
+
 def segment(mesh: trimesh.Trimesh, tol: float = 0.3, min_area: float | None = None, max_angle: float = 12.0) -> dict:
-    """Возвращает {"label": номер области у каждого треугольника (-1 свободная форма),
-    "regions": [{"kind": "plane"|"cylinder", ...параметры..., "area", "faces"}]}."""
+    """Разметка треугольников с полями label, regions и area.
+
+    label содержит индекс области либо -1. У каждой области есть kind, faces
+    и area. Ось конуса направлена от apex к растущему радиусу, semi_angle_deg
+    задаётся в градусах. Сфера задаётся через center и r.
+    """
     import walls
 
     area = mesh.area_faces
@@ -84,6 +531,12 @@ def segment(mesh: trimesh.Trimesh, tol: float = 0.3, min_area: float | None = No
 
     cos_n = float(np.cos(np.radians(2 * max_angle)))
     cos_c = float(np.cos(np.radians(25.0)))
+    patches = walls.planar_patches(mesh, max_angle=max_angle, max_dist=2 * tol, min_area=min_area)
+    for detect in (_section_regions(mesh, patches, nb, label, tol, min_area),
+                   _curved_components(mesh, label, nb, tol, min_area, cos_n)):
+        for r in detect:
+            label[r["faces"]] = len(regions)
+            regions.append(r)
     tried = np.zeros(len(mesh.faces), bool)
     for seed in np.argsort(-area):
         if label[seed] >= 0 or tried[seed]:
@@ -101,7 +554,7 @@ def segment(mesh: trimesh.Trimesh, tol: float = 0.3, min_area: float | None = No
                         seen.add(g)
                         ring.append(g)
                         q.append(g)
-            if len(ring) < 12:
+            if len(ring) < 6:
                 break
             r_ = np.asarray(ring)
             cyl = _cylinder(fc[r_], fn[r_], area[r_])
@@ -138,32 +591,15 @@ def segment(mesh: trimesh.Trimesh, tol: float = 0.3, min_area: float | None = No
         if not members:
             continue
         m = np.asarray(members)
-        ax, c, r, sign = cyl
-        rad = fc[m] - c
-        h = rad @ ax
-        rad -= np.outer(h, ax)
-        e1 = rad[0] / np.linalg.norm(rad[0])
-        ang = np.arctan2(rad @ np.cross(ax, e1), rad @ e1)
-        # угловой охват: наибольший разрыв между соседними углами вычитается из полного круга
-        s = np.sort(ang)
-        gap = float(np.max(np.diff(np.r_[s, s[0] + 2 * np.pi])))
-        span = float(np.degrees(2 * np.pi - gap))
-        A = float(area[m].sum())
-        # узкая дуга неотличима от плоскости или свободной формы: нужен заметный охват
-        v = mesh.vertices[np.unique(mesh.faces[m])] - c
-        v -= np.outer(v @ ax, ax)
-        rms = float(np.sqrt(((np.linalg.norm(v, axis=1) - r) ** 2).mean()))
-        sag = r * (1 - np.cos(np.radians(min(span, 180.0)) / 2))  # стрела дуги: насколько область выгнута
-        # дуга должна быть выгнута заметно больше допуска и больше собственного разброса точек,
-        # иначе это участок свободной формы, случайно похожий на цилиндр
-        if A < min_area or span < 25 or sag < 3 * tol or sag < 8 * rms:
+        points = mesh.vertices[np.unique(mesh.faces[m])]
+        cyl = _refine_cylinder(points, cyl, tol)
+        r = _cylinder_region(mesh, m, cyl, min_area, tol)
+        if r is None:
             tried[m] = True
             continue
         label[m] = len(regions)
-        regions.append({"kind": "cylinder", "axis": ax, "origin": c + ax * float(h.mean()), "r": float(r),
-                        "inner": sign < 0, "span_deg": round(span, 1), "length": float(np.ptp(h)),
-                        "area": A, "faces": m})
-    for p in walls.planar_patches(mesh, max_angle=max_angle, max_dist=2 * tol, min_area=min_area):
+        regions.append(r)
+    for p in patches:
         f = np.asarray(p["faces"])
         # в плоскость идут только треугольники, действительно лежащие на ней: рост области допускает больше
         n, o = np.asarray(p["normal"]), np.asarray(p["point"])
@@ -182,13 +618,15 @@ def segment(mesh: trimesh.Trimesh, tol: float = 0.3, min_area: float | None = No
 
 
 def summary(seg: dict) -> dict:
-    out = {"plane": 0.0, "cylinder": 0.0}
+    out = dict.fromkeys(("plane", "cylinder", "cone", "sphere"), 0.0)
     for r in seg["regions"]:
         out[r["kind"]] += r["area"]
-    share = {k: round(v / seg["area"], 4) for k, v in out.items()}
+    share = {k: round(v / seg["area"], 4) if seg["area"] else 0.0 for k, v in out.items()}
     share["free"] = round(1 - sum(share.values()), 4)
     share["planes"] = sum(r["kind"] == "plane" for r in seg["regions"])
     share["cylinders"] = sum(r["kind"] == "cylinder" for r in seg["regions"])
+    share["cones"] = sum(r["kind"] == "cone" for r in seg["regions"])
+    share["spheres"] = sum(r["kind"] == "sphere" for r in seg["regions"])
     return share
 
 
@@ -203,13 +641,19 @@ if __name__ == "__main__":
     seg = segment(clean)
     print(summary(seg), "с", round(time.time() - t, 1))
     for r in sorted(seg["regions"], key=lambda r: -r["area"]):
-        if r["kind"] == "cylinder":
+        if r["kind"] == "cone":
+            print(f"  конус полуугол {r['semi_angle_deg']:.2f}° площадь {r['area']:.0f}")
+        elif r["kind"] == "sphere":
+            print(f"  сфера R={r['r']:.2f} площадь {r['area']:.0f}")
+        elif r["kind"] == "cylinder":
             print(f"  цилиндр R={r['r']:.2f} {'внутр.' if r['inner'] else 'наруж.'} охват {r['span_deg']}° длина {r['length']:.1f} площадь {r['area']:.0f}")
     if len(sys.argv) > 2:
         out = Path(sys.argv[2])
         out.mkdir(parents=True, exist_ok=True)
         col = np.full((len(clean.faces), 4), (190, 190, 190, 255), np.uint8)
         for r in seg["regions"]:
-            col[r["faces"]] = (70, 130, 220, 255) if r["kind"] == "plane" else ((230, 90, 60, 255) if r["inner"] else (60, 180, 90, 255))
+            palette = {"plane": (70, 130, 220, 255), "cone": (180, 110, 210, 255),
+                       "sphere": (220, 180, 60, 255)}
+            col[r["faces"]] = palette.get(r["kind"], (230, 90, 60, 255) if r.get("inner") else (60, 180, 90, 255))
         clean.visual.face_colors = col
         clean.export(out / "regions.ply")

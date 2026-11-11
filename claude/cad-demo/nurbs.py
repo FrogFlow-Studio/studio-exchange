@@ -131,7 +131,9 @@ def _paired_quads(coarse: trimesh.Trimesh):
         sin = turn / np.maximum(np.roll(le, 1) * le, 1e-12)
         shape = float(sin.min())  # 1 у прямоугольника, ≤ 0 у невыпуклого
         wgt = max(shape, 0.0) * max(float(fn[a] @ fn[b]), 0.0) + (1e-3 if shape > 0 else 0.0)
-        g.add_edge(int(a), int(b), weight=wgt)
+        # вес целым числом: с дробными весами поиск пар в networkx из-за округлений может не завершиться
+        # (тестовый фланец считался дольше 15 минут)
+        g.add_edge(int(a), int(b), weight=int(round(wgt * 1_000_000)))
         info[(int(a), int(b))] = (q, n, shape)
     g.add_nodes_from(range(len(F)))
     m = nx.max_weight_matching(g, maxcardinality=True)
@@ -220,6 +222,131 @@ def _plane_tags(mesh, quads, raw, proj, w):
     return tag, {k: v for k, v in fit.items() if (tag == k).any()}
 
 
+CYL0 = 100000  # номера цилиндрических областей в метках лоскутов идут с этого числа
+
+
+def _onto(p, entry):
+    """Точка на точной поверхности области: плоскость (c0, n) или цилиндр ("cyl", c, ось, r)."""
+    if len(entry) == 4:
+        _, c, ax, r = entry
+        d = p - c
+        h = d @ ax
+        rad = d - h * ax
+        ln = np.linalg.norm(rad)
+        return p if ln < 1e-9 else c + h * ax + rad * (r / ln)
+    c0, nn = entry
+    return p - ((p - c0) @ nn) * nn
+
+
+def _cyl_tags(mesh, quads, raw, proj, w, tag, fit):
+    """Лоскуты на цилиндрических областях (regions.segment): точки таких лоскутов кладутся точно
+    на цилиндр, а общие с плоскостью или другим цилиндром — на линию их пересечения. Лоскут
+    берётся, только если почти все его точки принадлежат одной области и лежат на её цилиндре."""
+    from scipy.spatial import cKDTree
+
+    import regions
+
+    seg = regions.segment(mesh)
+    cyl = {j: r for j, r in enumerate(seg["regions"]) if r["kind"] == "cylinder"}
+    if not cyl:
+        return tag, fit
+    rms = np.array([np.linalg.svd(P - P.mean(0), compute_uv=False)[-1] / np.sqrt(len(P)) for P in raw])
+    tol = max(0.1, 3 * float(np.percentile(rms, 25)))
+    tree = cKDTree(mesh.triangles_center)
+    label = seg["label"]
+    tag = tag.copy()
+    fit = dict(fit)
+    for i, P in enumerate(raw):
+        if tag[i] >= 0:
+            continue
+        lab = label[tree.query(P)[1]]
+        j = int(np.bincount(lab[lab >= 0]).argmax()) if (lab >= 0).any() else -1
+        if j not in cyl or (lab == j).mean() < 0.8:
+            continue
+        r = cyl[j]
+        d = P - r["origin"]
+        d = d - np.outer(d @ r["axis"], r["axis"])
+        dev = np.abs(np.linalg.norm(d, axis=1) - r["r"])
+        if dev.max() < 4 * tol and float(np.sqrt((dev**2).mean())) < tol:
+            tag[i] = CYL0 + j
+            fit[CYL0 + j] = ("cyl", r["origin"], r["axis"], r["r"])
+
+    def owners():
+        o = {}
+        for i in np.where(tag >= 0)[0]:
+            for key in (tuple(np.round(p, 6)) for p in (w @ quads[i][0])):
+                o.setdefault(key, {}).setdefault(int(tag[i]), []).append(i)
+        return {k: v for k, v in o.items() if any(t >= CYL0 for t in v)}
+
+    def settle(p, ks):
+        for _ in range(40 if len(ks) > 1 else 1):
+            for k in ks:
+                p = _onto(p, fit[k])
+        return p
+
+    for _ in range(3):  # точка, которую нельзя посадить сразу на все свои области, снимает цилиндр с лоскутов
+        bad = set()
+        for key, ks in owners().items():
+            p0 = proj.cache[key]
+            p = settle(p0.copy(), ks)
+            off = max(np.linalg.norm(_onto(p, fit[k]) - p) for k in ks)
+            if np.linalg.norm(p - p0) > 3 * tol or off > 1e-3:
+                for k, qs in ks.items():
+                    if k >= CYL0:
+                        bad.update(qs)
+        if not bad:
+            break
+        tag[list(bad)] = -1
+    for key, ks in owners().items():
+        proj.cache[key] = settle(proj.cache[key].copy(), ks)
+    return tag, {k: v for k, v in fit.items() if (tag == k).any()}
+
+
+def _cyl_face(entry, wires, group):
+    """Одна точная цилиндрическая грань вместо группы лоскутов: поверхность — цилиндр области,
+    границы — прежние рёбра группы (общие с соседями). Возвращает грань или None, если она не
+    получилась валидной или её площадь не совпала с площадью группы."""
+    import cadquery as cq
+    from OCP.BRep import BRep_Builder
+    from OCP.BRepCheck import BRepCheck_Analyzer
+    from OCP.Geom import Geom_CylindricalSurface
+    from OCP.gp import gp_Ax3, gp_Dir, gp_Pnt
+    from OCP.ShapeFix import ShapeFix_Face
+    from OCP.TopoDS import TopoDS, TopoDS_Face
+
+    _, c, ax, r = entry
+    pts = np.array([v.toTuple() for f in group for v in cq.Face(f).Vertices()])
+    rad = pts - c
+    rad = rad - np.outer(rad @ ax, ax)
+    e1 = rad[0] / np.linalg.norm(rad[0])
+    e2 = np.cross(ax, e1)
+    ang = np.sort(np.arctan2(rad @ e2, rad @ e1))
+    gaps = np.diff(np.r_[ang, ang[0] + 2 * np.pi])
+    k = int(gaps.argmax())
+    seam = ang[k] + gaps[k] / 2  # шов цилиндра — в середине самого большого промежутка между точками
+    xdir = np.cos(seam) * e1 + np.sin(seam) * e2
+    surf = Geom_CylindricalSurface(gp_Ax3(gp_Pnt(*map(float, c)), gp_Dir(*map(float, ax)), gp_Dir(*map(float, xdir))), float(r))
+    face = TopoDS_Face()
+    bb = BRep_Builder()
+    bb.MakeFace(face, surf, 1e-6)
+    for wr in wires:
+        bb.Add(face, wr.wrapped)
+    sff = ShapeFix_Face(face)
+    sff.SetPrecision(0.01)
+    sff.SetMaxTolerance(0.05)
+    sff.Perform()
+    try:
+        pf = TopoDS.Face_s(sff.Face())
+    except Exception:  # noqa: BLE001
+        return None
+    if not BRepCheck_Analyzer(pf).IsValid():
+        return None
+    area = sum(cq.Face(f).Area() for f in group)
+    if abs(cq.Face(pf).Area() - area) > 0.03 * area:
+        return None
+    return pf
+
+
 def _merge_planes(sewn, faces, tag, fit):
     """Связные группы лоскутов одной плоскости → одна плоская грань (контур из свободных
     границ группы). Группа, где грань выходит невалидной, остаётся как есть."""
@@ -252,7 +379,9 @@ def _merge_planes(sewn, faces, tag, fit):
     rs = BRepTools_ReShape()
     merged = 0
     for grp in (sorted(c) for c in nx.connected_components(g) if len(c) >= 2):
-        c0, nn = fit[int(tag[grp[0]])]
+        entry = fit[int(tag[grp[0]])]
+        if len(entry) != 4:
+            c0, nn = entry
         comp = TopoDS_Compound()
         bb = BRep_Builder()
         bb.MakeCompound(comp)
@@ -263,17 +392,22 @@ def _merge_planes(sewn, faces, tag, fit):
         if not wires or cq.Shape.cast(fb.GetOpenWires()).Wires():
             continue
         wires.sort(key=lambda x: -x.Length())  # внешний контур самый длинный, остальные — отверстия
-        pl = Geom_Plane(gp_Pln(gp_Pnt(*map(float, c0)), gp_Dir(*map(float, nn))))
-        mk = BRepBuilderAPI_MakeFace(pl, wires[0].wrapped, True)
-        for hole in wires[1:]:
-            mk.Add(hole.wrapped)
-        if not mk.IsDone():
-            continue
-        sff = ShapeFix_Face(mk.Face())
-        sff.Perform()
-        pf = TopoDS.Face_s(sff.Face())
-        if not BRepCheck_Analyzer(pf).IsValid():
-            continue
+        if len(entry) == 4:
+            pf = _cyl_face(entry, wires, [faces[i] for i in grp])
+            if pf is None:
+                continue
+        else:
+            pl = Geom_Plane(gp_Pln(gp_Pnt(*map(float, c0)), gp_Dir(*map(float, nn))))
+            mk = BRepBuilderAPI_MakeFace(pl, wires[0].wrapped, True)
+            for hole in wires[1:]:
+                mk.Add(hole.wrapped)
+            if not mk.IsDone():
+                continue
+            sff = ShapeFix_Face(mk.Face())
+            sff.Perform()
+            pf = TopoDS.Face_s(sff.Face())
+            if not BRepCheck_Analyzer(pf).IsValid():
+                continue
         ref = cq.Face(faces[grp[0]])
         c_ = ref.Center()
         if ref.normalAt(c_).dot(cq.Face(pf).normalAt(c_)) < 0:
@@ -591,6 +725,9 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
                 projected = [proj(w @ q, nn_) for (q, _), nn_ in zip(quads, nrm)]
             with measured(profile, "planes"):
                 tag, fit = _plane_tags(mesh, quads, projected, proj, w)
+            if os.environ.get("CAD_REGIONS", "0") == "1":  # точные цилиндры по разметке областей (этап Б)
+                with measured(profile, "cylinders"):
+                    tag, fit = _cyl_tags(mesh, quads, projected, proj, w, tag, fit)
         except Exception:  # noqa: BLE001  плоскости — улучшение, без них тело то же
             tag, fit = -np.ones(len(quads), int), {}
     faces, ftag = [], []

@@ -13,6 +13,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import os
+
 import numpy as np
 import trimesh
 
@@ -21,6 +23,9 @@ sys.path.insert(0, str(HERE))
 
 
 SMOOTH = 10  # шаги сглаживания шума
+# Очистка с сохранением рёбер (denoise.py, Э10) вместо обычного сглаживания. Выключена, пока не
+# пройдены полные прогоны сканов студии с ней.
+EDGE_KEEP = os.environ.get("CAD_EDGE_KEEP", "") == "1"
 FLAT_MAX = 0.2  # мм: дальше от подогнанной плоскости вершину не двигаем
 
 
@@ -249,7 +254,12 @@ def solid_from_mesh(mesh: trimesh.Trimesh):
 def surface_mesh(scan: trimesh.Trimesh, faces: int = 20000) -> trimesh.Trimesh:
     """Замкнутая чистая поверхность скана: без мусора и шума, упрощённая, с закрытыми дырами."""
     m = clean(scan.copy())
-    trimesh.smoothing.filter_taubin(m, iterations=SMOOTH)
+    if EDGE_KEEP:
+        import denoise
+
+        m = denoise.bilateral(m)
+    else:
+        trimesh.smoothing.filter_taubin(m, iterations=SMOOTH)
     if len(m.faces) > faces:
         m = m.simplify_quadric_decimation(percent=1 - faces / len(m.faces))
     m = trimesh.Trimesh(m.vertices, m.faces, process=True)

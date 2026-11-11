@@ -1,0 +1,425 @@
+diff --git a/claude/cad-demo/demo.py b/claude/cad-demo/demo.py
+index 936ec0c..29d503d 100644
+--- a/claude/cad-demo/demo.py
++++ b/claude/cad-demo/demo.py
+@@ -1205,6 +1205,21 @@ def main() -> None:
+             if key in worker:
+                 parts.append(f"{stage}, {label} {duration(worker[key])}")
+     parts.extend(f"{label} {duration(stages.get(label))}" for label in ("сравнение", "перечитывание STEP"))
++    phase_names = {
++        "coarse": "сетка", "layout": "раскладка", "projection": "проекция",
++        "planes": "плоскости", "fit": "подгонка", "lossy": "потери",
++        "split": "замены", "samples": "точки граней", "make_face": "MakeFace",
++        "sewing": "сшивка", "solid": "сборка тела", "solid_fix": "исправление",
++        "solid_volume": "ориентация по объёму", "solid_validity": "валидность",
++        "near": "near_share", "cover": "cover_share", "tessellation": "тесселяция",
++        "cover_distance": "расстояния покрытия",
++    }
++    stage_names = {"invalid": "тело не собралось", "rejected": "порог не пройден",
++                   "accepted": "порог пройден", "dominated_before_sewing": "отказ до сшивки"}
++    for stage in worker_times.get("0к", {}).get("nurbs_steps", []):
++        times = stage["times"]
++        detail = ", ".join(f"{label} {duration(times[key])}" for key, label in phase_names.items() if key in times)
++        parts.append(f"ступень 0к/{stage['step']} ({stage_names[stage['status']]}): {detail}")
+     timing_text = "время по этапам: " + ", ".join(parts) + " (фоновые этапы перекрываются)"
+     log(timing_text)
+     log(route_text(iterations, best))
+diff --git a/claude/cad-demo/geo_worker.py b/claude/cad-demo/geo_worker.py
+index be7b05d..9863772 100644
+--- a/claude/cad-demo/geo_worker.py
++++ b/claude/cad-demo/geo_worker.py
+@@ -178,6 +178,7 @@ def main() -> None:
+         timings["cleanup"] = t - t_smooth
+         body, info = nurbs.smooth_body(surface.flatten_planes(clean), scan, tol=tol)
+         timings["smooth"] = time.perf_counter() - t
++        timings["nurbs_steps"] = info["stages"]
+         if body is None:
+             raise SystemExit("гладкое тело не собралось")
+         planes = sum(f.geomType() == "PLANE" for f in body.Faces())
+diff --git a/claude/cad-demo/nurbs.py b/claude/cad-demo/nurbs.py
+index 50232df..f2b34b7 100644
+--- a/claude/cad-demo/nurbs.py
++++ b/claude/cad-demo/nurbs.py
+@@ -32,6 +32,8 @@ from pathlib import Path
+ import numpy as np
+ import trimesh
+ 
++from cad_checks import measured
++
+ HERE = Path(__file__).parent
+ sys.path.insert(0, str(HERE))
+ 
+@@ -59,6 +61,7 @@ class _Projector:
+     def __init__(self, mesh: trimesh.Trimesh):
+         from scipy.spatial import cKDTree
+ 
++        self.fast = os.environ.get("CAD_NURBS_FAST", "1") != "0"
+         self.m = mesh
+         self.cache: dict = {}
+         self.dp, fi = trimesh.sample.sample_surface(mesh, 400000, seed=5)
+@@ -66,7 +69,7 @@ class _Projector:
+         self.tree = cKDTree(self.dp)
+ 
+     def __call__(self, P: np.ndarray, N: np.ndarray) -> np.ndarray:
+-        keys = [tuple(np.round(p, 6)) for p in P]
++        keys = list(map(tuple, np.round(P, 6))) if self.fast else [tuple(np.round(p, 6)) for p in P]
+         need = [i for i, k in enumerate(keys) if k not in self.cache]
+         if need:
+             # ближайшая точка поверхности с той же стороны стенки (у тонкой стенки самая
+@@ -282,19 +285,25 @@ def _merge_planes(sewn, faces, tag, fit):
+     return (rs.Apply(sewn) if merged else sewn), merged
+ 
+ 
+-def _solid(shell_shape):
++def _solid(shell_shape, *, profile=None, parallel=False):
+     import cadquery as cq
++    from OCP.BRepCheck import BRepCheck_Analyzer
+     from OCP.ShapeFix import ShapeFix_Solid
+ 
+-    shells = cq.Shape.cast(shell_shape).Shells()
+-    if len(shells) != 1:
+-        return None
+-    fx = ShapeFix_Solid(cq.Solid.makeSolid(shells[0]).wrapped)
+-    fx.Perform()
+-    sol = cq.Shape.cast(fx.Solid())
+-    if sol.Volume() < 0:
+-        sol = cq.Solid(sol.wrapped.Reversed())
+-    return sol if sol.isValid() else None
++    with measured(profile, "solid_fix"):
++        shells = cq.Shape.cast(shell_shape).Shells()
++        if len(shells) != 1:
++            return None
++        fx = ShapeFix_Solid(cq.Solid.makeSolid(shells[0]).wrapped)
++        fx.Perform()
++        sol = cq.Shape.cast(fx.Solid())
++    with measured(profile, "solid_volume"):
++        if sol.Volume() < 0:
++            sol = cq.Solid(sol.wrapped.Reversed())
++    with measured(profile, "solid_validity"):
++        valid = BRepCheck_Analyzer(sol.wrapped, True, parallel).IsValid()
++    return sol if valid else None
++
+ 
+ def _basis(K: int, n: int) -> tuple[np.ndarray, np.ndarray]:
+     """Кубический B-сплайн с n полюсами и равномерными узлами: матрица значений в K равномерных точках."""
+@@ -455,12 +464,25 @@ def _fit_patches(grids, basis):
+     return [_fit_patch(task) for task in args]
+ 
+ 
++def _vertex_near(mesh, points, threshold):
++    """Certify hits using actual mesh vertices; leave borderline points to closest_point."""
++    from scipy.spatial import cKDTree
++    from trimesh.constants import tol as mesh_tol
++
++    # closest_point can prefer the second triangle on a tie within tol.merge
++    # in squared distance. Leave room for that correction and roundoff.
++    cutoff_sq = threshold ** 2 - 2 * mesh_tol.merge
++    if cutoff_sq <= 0:
++        return np.zeros(len(points), dtype=bool)
++    tree = cKDTree(mesh.vertices[mesh.referenced_vertices])
++    distance, _ = tree.query(points, distance_upper_bound=np.sqrt(cutoff_sq))
++    return np.isfinite(distance)
++
++
+ def _lossy(fitted: list, proj: _Projector, tol: float, n_pts: int = 30000) -> set:
+     """Номера граней, до которых не дотянулась часть поверхности: у точки чистой поверхности
+     ближайшая точка модели дальше tol, и эта ближайшая точка принадлежит грани. Мера двусторонняя:
+     остаток подгонки в собственных точках грани таких потерь не видит (Э9)."""
+-    from scipy.spatial import cKDTree
+-
+     per = len(fitted[0])
+     k = int(round(np.sqrt(per)))
+     # грубая сетка модели прямо по точкам граней: расстояние до неё — то же, чем меряется покрытие
+@@ -471,6 +493,11 @@ def _lossy(fitted: list, proj: _Projector, tol: float, n_pts: int = 30000) -> se
+     model = trimesh.Trimesh(np.vstack(fitted), tris, process=False)
+     sel = np.random.default_rng(3).choice(len(proj.dp), min(n_pts, len(proj.dp)), replace=False)
+     pts = proj.dp[sel]
++    total = len(pts)
++    if proj.fast:
++        pts = pts[~_vertex_near(model, pts, tol)]
++    if not len(pts):
++        return set()
+     _, d, tid = trimesh.proximity.closest_point(model, pts)
+     i = (tid // len(cell)) * per   # номер грани × per: дальше делится на per
+     cnt = np.bincount(i[d > tol] // per, minlength=len(fitted))
+@@ -478,7 +505,7 @@ def _lossy(fitted: list, proj: _Projector, tol: float, n_pts: int = 30000) -> se
+     # не больше LOSS_KEEP всех точек: порог приёмки (COVER) тогда проходится с запасом
+     order = np.argsort(-cnt)
+     left = cnt.sum() - np.cumsum(cnt[order])
+-    k = int(np.argmax(left <= LOSS_KEEP * len(pts))) + 1 if cnt.sum() > LOSS_KEEP * len(pts) else 0
++    k = int(np.argmax(left <= LOSS_KEEP * total)) + 1 if cnt.sum() > LOSS_KEEP * total else 0
+     return set(order[:k].tolist())
+ 
+ 
+@@ -519,7 +546,8 @@ def _tri_faces(q, na, nb, C, n, proj, coarse_side):
+     return out
+ 
+ 
+-def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool = True):
++def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool = True, *,
++           profile=None, stage=None, incumbent=None):
+     import fast_simplification as fs
+     from OCP.Approx import Approx_ParametrizationType
+     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_Sewing
+@@ -529,11 +557,12 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
+ 
+     import surface
+ 
+-    if len(mesh.faces) > triangles:
+-        v, f = fs.simplify(mesh.vertices, mesh.faces, 1 - triangles / len(mesh.faces))
+-        coarse = surface.repair(trimesh.Trimesh(v, f, process=True))
+-    else:
+-        coarse = mesh
++    with measured(profile, "coarse"):
++        if len(mesh.faces) > triangles:
++            v, f = fs.simplify(mesh.vertices, mesh.faces, 1 - triangles / len(mesh.faces))
++            coarse = surface.repair(trimesh.Trimesh(v, f, process=True))
++        else:
++            coarse = mesh
+     if not coarse.is_watertight:
+         return None, 0, None
+     s = np.linspace(0, 1, K)
+@@ -544,32 +573,38 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
+     mids = []  # точки поверхности в серединах ячеек: по ним меряется точность
+     cm = (np.arange(K - 1) + 0.5) / (K - 1)
+     S_, T_ = S.ravel(), T.ravel()
+-    pq = _paired_quads(coarse) if PAIR else None
+-    if PAIR and pq is None:
+-        return None, 0, None
+-    if pq is not None:
+-        quads = [(q, n) for q, n, *_ in pq]
+-        # у каждой точки нормаль своего треугольника: сторона стенки выбирается точнее
+-        nrm = [np.where((S_ + T_ <= 1)[:, None], na, nb) for _, _, na, nb, _ in pq]
+-    else:
+-        quads = list(_quads(coarse))
+-        nrm = [n for _, n in quads]
++    with measured(profile, "layout"):
++        pq = _paired_quads(coarse) if PAIR else None
++        if PAIR and pq is None:
++            return None, 0, None
++        if pq is not None:
++            quads = [(q, n) for q, n, *_ in pq]
++            # у каждой точки нормаль своего треугольника: сторона стенки выбирается точнее
++            nrm = [np.where((S_ + T_ <= 1)[:, None], na, nb) for _, _, na, nb, _ in pq]
++        else:
++            quads = list(_quads(coarse))
++            nrm = [n for _, n in quads]
+     tag, fit = -np.ones(len(quads), int), {}
+     if planes:
+         try:
+-            tag, fit = _plane_tags(mesh, quads, [proj(w @ q, nn_) for (q, _), nn_ in zip(quads, nrm)], proj, w)
++            with measured(profile, "projection"):
++                projected = [proj(w @ q, nn_) for (q, _), nn_ in zip(quads, nrm)]
++            with measured(profile, "planes"):
++                tag, fit = _plane_tags(mesh, quads, projected, proj, w)
+         except Exception:  # noqa: BLE001  плоскости — улучшение, без них тело то же
+             tag, fit = -np.ones(len(quads), int), {}
+     faces, ftag = [], []
+ 
+     def add(srf, t):
+-        u0, u1, v0, v1 = srf.Bounds()
+-        for u in u0 + (u1 - u0) * cm:
+-            for vv in v0 + (v1 - v0) * cm:
+-                p = srf.Value(u, vv)
+-                mids.append((p.X(), p.Y(), p.Z()))
+-        fc = BRepBuilderAPI_MakeFace(srf, 1e-6).Face()
+-        sew.Add(fc)
++        with measured(profile, "samples"):
++            u0, u1, v0, v1 = srf.Bounds()
++            for u in u0 + (u1 - u0) * cm:
++                for vv in v0 + (v1 - v0) * cm:
++                    p = srf.Value(u, vv)
++                    mids.append((p.X(), p.Y(), p.Z()))
++        with measured(profile, "make_face"):
++            fc = BRepBuilderAPI_MakeFace(srf, 1e-6).Face()
++            sew.Add(fc)
+         faces.append(fc)
+         ftag.append(t)
+ 
+@@ -578,11 +613,14 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
+         B, inner = _basis(K, NP)
+         A = np.kron(B, B)
+         # Project in the original order to preserve the shared boundary cache.
+-        grids = [proj(w @ q, nn_).reshape(K, K, 3) for (q, _), nn_ in zip(quads, nrm)]
+-        pre = _fit_patches(grids, B)
++        with measured(profile, "projection"):
++            grids = [proj(w @ q, nn_).reshape(K, K, 3) for (q, _), nn_ in zip(quads, nrm)]
++        with measured(profile, "fit"):
++            pre = _fit_patches(grids, B)
+         if SPLIT and pq is not None:
+-            fitted = [A @ C.reshape(-1, 3) for C in pre]
+-            split = {i for i in _lossy(fitted, proj, FACE_TOL) if tag[i] < 0}
++            with measured(profile, "lossy"):
++                fitted = [A @ C.reshape(-1, 3) for C in pre]
++                split = {i for i in _lossy(fitted, proj, FACE_TOL) if tag[i] < 0}
+             for i in split:
+                 q = quads[i][0]
+                 for i0, i1 in ((0, 1), (1, 2), (2, 3), (3, 0)):
+@@ -594,43 +632,60 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
+             if i in split:
+                 coarse_side = {key for key in (_edge_key(q[i0], q[i1]) for i0, i1 in ((0, 1), (1, 2), (2, 3), (3, 0)))
+                                if sides[key] == 1}
+-                for srf in _tri_faces(q, pq[i][2], pq[i][3], C, NP, proj, coarse_side):
++                with measured(profile, "split"):
++                    surfaces = _tri_faces(q, pq[i][2], pq[i][3], C, NP, proj, coarse_side)
++                for srf in surfaces:
+                     add(srf, -1)
+                 continue
+-            srf = _bspline(C, inner, inner)
++            with measured(profile, "fit"):
++                srf = _bspline(C, inner, inner)
+         else:
+-            P = proj(w @ q, nn_).reshape(K, K, 3)
+-            arr = TColgp_Array2OfPnt(1, K, 1, K)
+-            for a in range(K):
+-                for b in range(K):
+-                    arr.SetValue(a + 1, b + 1, gp_Pnt(*map(float, P[a, b])))
+-            api = GeomAPI_PointsToBSplineSurface()
+-            api.Interpolate(arr, Approx_ParametrizationType.Approx_IsoParametric, False)
+-            srf = api.Surface()
++            with measured(profile, "projection"):
++                P = proj(w @ q, nn_).reshape(K, K, 3)
++            with measured(profile, "fit"):
++                arr = TColgp_Array2OfPnt(1, K, 1, K)
++                for a in range(K):
++                    for b in range(K):
++                        arr.SetValue(a + 1, b + 1, gp_Pnt(*map(float, P[a, b])))
++                api = GeomAPI_PointsToBSplineSurface()
++                api.Interpolate(arr, Approx_ParametrizationType.Approx_IsoParametric, False)
++                srf = api.Surface()
+         add(srf, int(tag[i]))
+     tag = np.array(ftag, int)
+     n_faces = len(faces)
+-    sew.Perform()
++    mids = np.array(mids)
++    if proj.fast and incumbent is not None:
++        # This is the same one-sided score the original cascade would use.
++        # Below GOAL it cannot pass, and at or below the incumbent it cannot replace it.
++        with measured(profile, "near"):
++            share = near_share(mids, proj, GOAL_TOL)
++        stage["near"] = share
++        if share < GOAL and share <= incumbent:
++            stage.update(score=share, status="dominated_before_sewing")
++            return None, n_faces, None
++    with measured(profile, "sewing"):
++        sew.Perform()
+     if sew.NbFreeEdges():
+         return None, n_faces, None
+-    sewn = sew.SewedShape()
+-    sol = None
+-    if fit:
+-        # лоскуты одной плоскости сливаются в одну точную плоскую грань; если тело после этого
+-        # невалидно, берётся тело без слияния (форма та же)
+-        try:
+-            from OCP.TopoDS import TopoDS
+-
+-            merged_shape, merged = _merge_planes(sewn, [TopoDS.Face_s(sew.Modified(f)) for f in faces], tag, fit)
+-            if merged:
+-                sol = _solid(merged_shape)
+-        except Exception:  # noqa: BLE001
+-            sol = None
+-    if sol is None:
+-        sol = _solid(sewn)
++    with measured(profile, "solid"):
++        sewn = sew.SewedShape()
++        sol = None
++        if fit:
++            # лоскуты одной плоскости сливаются в одну точную плоскую грань; если тело после этого
++            # невалидно, берётся тело без слияния (форма та же)
++            try:
++                from OCP.TopoDS import TopoDS
++
++                merged_shape, merged = _merge_planes(sewn, [TopoDS.Face_s(sew.Modified(f)) for f in faces], tag, fit)
++                if merged:
++                    sol = _solid(merged_shape, profile=profile, parallel=proj.fast and n_faces >= 500)
++            except Exception:  # noqa: BLE001
++                sol = None
++        if sol is None:
++            sol = _solid(sewn, profile=profile, parallel=proj.fast and n_faces >= 500)
+     if sol is not None:
+         n_faces = len(sol.Faces())
+-    return sol, n_faces, np.array(mids)
++    return sol, n_faces, mids
+ 
+ 
+ def near_share(pts: np.ndarray, proj: _Projector, tol: float = 0.1) -> float:
+@@ -643,15 +698,24 @@ def near_share(pts: np.ndarray, proj: _Projector, tol: float = 0.1) -> float:
+     return float((d.min(1) < tol).mean())
+ 
+ 
+-def cover_share(body, proj: _Projector, tol: float = 0.3, n: int = 30000) -> float:
++def cover_share(body, proj: _Projector, tol: float = 0.3, n: int = 30000, *, profile=None) -> float:
+     """Доля точек чистой поверхности, у которых в пределах tol мм есть поверхность модели."""
+     # 0,01, а не 0,05: допуск разбиения в CadQuery относительный (доля размера грани), и у крупной
+     # грани сетка при 0,05 уходила от самой грани до 0,8 мм — «потери» были ошибкой измерения (Э11)
+-    v, f = body.tessellate(0.01, 0.5)
+-    m = trimesh.Trimesh([(q.x, q.y, q.z) for q in v], f, process=False)
++    with measured(profile, "tessellation"):
++        v, f = body.tessellate(0.01, 0.5)
++        m = trimesh.Trimesh([(q.x, q.y, q.z) for q in v], f, process=False)
+     pts = proj.dp[np.random.default_rng(3).choice(len(proj.dp), min(n, len(proj.dp)), replace=False)]
+-    _, d, _ = trimesh.proximity.closest_point(m, pts)
+-    return float((d < tol).mean())
++    with measured(profile, "cover_distance"):
++        if not proj.fast:
++            _, d, _ = trimesh.proximity.closest_point(m, pts)
++            return float((d < tol).mean())
++        near = _vertex_near(m, pts, tol)
++        misses = pts[~near]
++        if not len(misses):
++            return 1.0
++        _, d, _ = trimesh.proximity.closest_point(m, misses)
++        return float((np.count_nonzero(near) + np.count_nonzero(d < tol)) / len(pts))
+ 
+ 
+ def smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 900.0, tol: float = 0.3):
+@@ -662,16 +726,26 @@ def smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 90
+     best, info = None, {"faces": 0, "near": 0.0, "score": -1.0}
+     global K, NP, PAIR, FACE_TOL
+     FACE_TOL = min(tol, 0.5)  # потери по граням считаются тем же допуском, что и приёмка
+-    for tri, K, NP, PAIR in STEPS:
++    stages = []
++    for step, (tri, K, NP, PAIR) in enumerate(STEPS, 1):
+         if time.time() - t0 > budget / 3 and best is not None:
+             break
+         proj.cache.clear()
+-        body, n, mids = _build(mesh, tri, proj)
++        profile = {}
++        stage = {"step": step, "times": profile, "status": "invalid"}
++        stages.append(stage)
++        with measured(profile, "build"):
++            body, n, mids = _build(mesh, tri, proj, profile=profile, stage=stage,
++                                   incumbent=info["score"] if best is not None else None)
++        stage["faces"] = n
+         if body is None:
+             continue
+         # точность считается от чистой поверхности: шум скана сглажен ещё в surface.py, и
+         # мерить по сырому скану значило бы гнаться за шумом
+-        share = score = near_share(mids, proj, GOAL_TOL)
++        if "near" not in stage:
++            with measured(profile, "near"):
++                stage["near"] = near_share(mids, proj, GOAL_TOL)
++        share = score = stage["near"]
+         ok = share >= GOAL
+         if NP and ok:
+             # Мера выше односторонняя: точки модели лежат у поверхности. Подгонка же не проходит через
+@@ -679,13 +753,17 @@ def smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 90
+             # сравнении со сканом тело проигрывает (линза: 98,9% по этой мере и 96,5% в допуске). Поэтому
+             # для подгонки проверяется и обратное, тем же допуском, что и итоговое сравнение.
+             # не шире 0,5 мм: у шумного скана допуск сравнения 2 мм, а чистая поверхность уже сглажена
+-            cover = cover_share(body, proj, min(tol, 0.5))
++            with measured(profile, "cover"):
++                cover = cover_share(body, proj, min(tol, 0.5), profile=profile)
++            stage["cover"] = cover
+             score = min(share, cover)
+             ok = cover >= COVER
++        stage.update(near=share, score=score, status="accepted" if ok else "rejected")
+         if best is None or score > info["score"]:
+-            best, info = body, {"faces": n, "near": share, "score": score}
++            best, info = body, {"faces": n, "near": share, "score": score, "step": step}
+         if ok:
+             break
++    info["stages"] = stages
+     info["sec"] = round(time.time() - t0)
+     return best, info
+ 

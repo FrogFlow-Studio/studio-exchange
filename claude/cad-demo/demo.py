@@ -222,9 +222,8 @@ def check_step(step: Path) -> tuple[bool, str]:
         shape = cq.importers.importStep(str(step)).val()
     except Exception as ex:  # noqa: BLE001
         return False, f"не читается: {type(ex).__name__}"
-    with open(step, encoding="latin-1") as fh:
-        head = fh.read(200_000)
-    mm = "SI_UNIT(.MILLI.,.METRE.)" in head.replace(" ", "")
+    with open(step, encoding="latin-1") as fh:  # единицы в большом файле бывают и в конце
+        mm = any("SI_UNIT(.MILLI.,.METRE.)" in ln.replace(" ", "") for ln in fh)
     solids, valid = len(shape.Solids()), bool(shape.isValid())
     note = (f"тел {solids}, валидно: {'да' if valid else 'нет'}, единицы: {'мм' if mm else 'не мм'}, "
             f"граней {len(shape.Faces())}, файл {step.stat().st_size / 1e6:.1f} МБ, чтение {time.time() - t:.0f} с")

@@ -1,0 +1,284 @@
+diff --git a/claude/cad-demo/cad_checks.py b/claude/cad-demo/cad_checks.py
+new file mode 100644
+index 0000000..1341a63
+--- /dev/null
++++ b/claude/cad-demo/cad_checks.py
+@@ -0,0 +1,59 @@
++"""Shared checks and measurements for local Boolean operations."""
++from contextlib import contextmanager
++from time import perf_counter
++
++
++@contextmanager
++def measured(timings, key):
++    if timings is None:
++        yield
++        return
++    start = perf_counter()
++    try:
++        yield
++    finally:
++        timings[key] = timings.get(key, 0.0) + perf_counter() - start
++
++
++class VolumeMemo:
++    """Remember the last accepted shape's volume using the original integrator."""
++
++    def __init__(self):
++        self.shape = None
++        self.volume = None
++
++    def get(self, shape):
++        if shape is not self.shape:
++            self.remember(shape, shape.Volume())
++        return self.volume
++
++    def remember(self, shape, volume):
++        self.shape, self.volume = shape, volume
++
++    def remember_cut(self, result, solid, volume):
++        if result.wrapped.IsEqual(solid.wrapped):
++            self.remember(solid, volume)
++        elif result.ShapeType() == "Compound":
++            # A one-child compound integrates the same oriented faces as its child.
++            children = list(result)
++            if len(children) == 1 and children[0].wrapped.IsEqual(solid.wrapped):
++                self.remember(solid, volume)
++
++
++class InsideMemo:
++    """Reuse OCC's classifier while probing an unchanged accepted body."""
++
++    def __init__(self):
++        self.shape = None
++        self.classifier = None
++
++    def contains(self, shape, point, tol=1e-6):
++        from OCP.BRepClass3d import BRepClass3d_SolidClassifier
++        from OCP.gp import gp_Pnt
++        from OCP.TopAbs import TopAbs_IN
++
++        if shape is not self.shape:
++            self.classifier = BRepClass3d_SolidClassifier(shape.wrapped)
++            self.shape = shape
++        self.classifier.Perform(gp_Pnt(*map(float, point)), tol)
++        return self.classifier.State() == TopAbs_IN or self.classifier.IsOnAFace()
+diff --git a/claude/cad-demo/demo.py b/claude/cad-demo/demo.py
+index 6113e19..936ec0c 100644
+--- a/claude/cad-demo/demo.py
++++ b/claude/cad-demo/demo.py
+@@ -1200,6 +1200,10 @@ def main() -> None:
+         if stage == "0к" and worker:
+             parts.extend(f"{label} {duration(worker.get(key))}" for key, label in
+                          (("smooth", "гладкое тело"), ("fillets", "скругления"), ("holes", "отверстия")))
++        for key, label in (("fillet_boolean", "скругления, булевы"), ("fillet_checks", "скругления, проверки"),
++                           ("hole_boolean", "отверстия, булевы"), ("hole_checks", "отверстия, проверки")):
++            if key in worker:
++                parts.append(f"{stage}, {label} {duration(worker[key])}")
+     parts.extend(f"{label} {duration(stages.get(label))}" for label in ("сравнение", "перечитывание STEP"))
+     timing_text = "время по этапам: " + ", ".join(parts) + " (фоновые этапы перекрываются)"
+     log(timing_text)
+diff --git a/claude/cad-demo/fillets.py b/claude/cad-demo/fillets.py
+index 94ff312..30af411 100644
+--- a/claude/cad-demo/fillets.py
++++ b/claude/cad-demo/fillets.py
+@@ -143,7 +143,7 @@ def _sector(cc, e1, _unused, ax, r0, r1, phi, t0, t1):
+ 
+ 
+ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, log: list | None = None,
+-          mesh=None):
++          mesh=None, *, volumes=None, timings=None):
+     """Заменяет в теле приближённые (сплайновые) скругления точными цилиндрическими гранями.
+ 
+     У каждого участка скругления узкая полоса у дуги сначала вырезается (инструмент режет тело
+@@ -156,21 +156,28 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
+     Возвращает (тело, сколько кусков построено, сколько участков пропущено)."""
+     import time
+ 
+-    import cadquery as cq
++    from cad_checks import InsideMemo, VolumeMemo, measured
+ 
++    if volumes is None:
++        volumes = VolumeMemo()
+     t_start = time.time()
+     if mesh is not None:
+         from scipy.spatial import cKDTree
+ 
+-        cen, nrm = mesh.triangles_center, mesh.face_normals
+-        tree = cKDTree(cen)
++        with measured(timings, "fillet_checks"):
++            cen, nrm = mesh.triangles_center, mesh.face_normals
++            tree = cKDTree(cen)
+ 
+         def inside(q):  # точка под ближайшим куском поверхности
+-            k = tree.query(q)[1]
+-            return float((q - cen[k]) @ nrm[k]) < 0
++            with measured(timings, "fillet_checks"):
++                k = tree.query(q)[1]
++                return float((q - cen[k]) @ nrm[k]) < 0
+     else:
++        classifier = InsideMemo()
++
+         def inside(q):
+-            return body.isInside(cq.Vector(*map(float, q)))
++            with measured(timings, "fillet_checks"):
++                return classifier.contains(body, q)
+     jobs = []  # (вырез, вставка) по участкам
+     skipped = 0
+     for f in fl:
+@@ -227,14 +234,20 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
+         не могут изменить его больше, чем на объём инструментов, общая сверка — в конце."""
+         t0_ = time.time()
+         try:
+-            new = base.cut(*[c_ for c_, _ in part]).fuse(*[a_ for _, a_ in part])
+-            sols = new.Solids()
+-            why = ("тел " + str(len(sols))) if len(sols) != 1 else ("" if sols[0].isValid() else "невалидно")
++            with measured(timings, "fillet_boolean"):
++                new = base.cut(*[c_ for c_, _ in part]).fuse(*[a_ for _, a_ in part])
++            with measured(timings, "fillet_checks"):
++                sols = new.Solids()
++                why = ("тел " + str(len(sols))) if len(sols) != 1 else ("" if sols[0].isValid() else "невалидно")
+         except Exception as e:  # noqa: BLE001  скругление — улучшение, без него тело то же
+             sols, why = [], "ошибка " + type(e).__name__
+         note(tag, why or "ок", round(time.time() - t0_, 1), "с")
+         return None if why else sols[0]
+ 
++    def tool_volume(pair):
++        with measured(timings, "fillet_checks"):
++            return pair[0].Volume() + pair[1].Volume()
++
+     start = body
+     ready = [j for j in jobs if j[0] is not None]
+     note("участков", len(jobs), "без материала под вставкой", len(jobs) - len(ready))
+@@ -244,7 +257,7 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
+     new = attempt(body, [j[0] for j in ready], "все") if len(ready) > 1 else None
+     if new is not None:  # все участки двумя операциями
+         body, done = new, len(ready)
+-        tools = sum(j[0][0].Volume() + j[0][1].Volume() for j in ready)
++        tools = sum(tool_volume(j[0]) for j in ready)
+     else:  # по одному; неудачный участок делим пополам: вдоль него может мешать одно место
+         queue = list(ready)
+         while queue and time.time() - t_start < budget:
+@@ -252,7 +265,7 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
+             new = attempt(body, [pair], f"{a0:.0f}..{a1:.0f}")
+             if new is not None:
+                 body, done = new, done + 1
+-                tools += pair[0].Volume() + pair[1].Volume()
++                tools += tool_volume(pair)
+             elif a1 - a0 >= 2 * MIN_PIECE:
+                 am = (a0 + a1) / 2
+                 for b0, b1 in ((a0, am), (am, a1)):
+@@ -264,9 +277,12 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
+                         queue.append((sub, make, b0, b1))
+     if done:
+         try:  # общая сверка: тело не могло измениться больше, чем на объём инструментов
+-            if abs(body.Volume() - start.Volume()) > tools + 1.0:
+-                note("объём изменился больше объёма инструментов, скругления отменены")
+-                return start, 0, skipped + len(jobs)
++            with measured(timings, "fillet_checks"):
++                after = body.Volume()
++                if abs(after - volumes.get(start)) > tools + 1.0:
++                    note("объём изменился больше объёма инструментов, скругления отменены")
++                    return start, 0, skipped + len(jobs)
++                volumes.remember(body, after)
+         except Exception:  # noqa: BLE001
+             return start, 0, skipped + len(jobs)
+     return body, done, skipped + max(0, len(jobs) - done)
+diff --git a/claude/cad-demo/geo_worker.py b/claude/cad-demo/geo_worker.py
+index 990a22f..be7b05d 100644
+--- a/claude/cad-demo/geo_worker.py
++++ b/claude/cad-demo/geo_worker.py
+@@ -151,7 +151,7 @@ def main() -> None:
+         t = time.perf_counter()
+         clean = _clean_surface(scan, scan_path, answer)
+         timings["cleanup"] = time.perf_counter() - t
+-        body, info = surface.surface_body(scan, prepared=clean)
++        body, info = surface.surface_body(scan, prepared=clean, timings=timings)
+         step = Path(sys.argv[4]).with_suffix(".step")
+         cq.exporters.export(body, str(step))
+         code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
+@@ -162,6 +162,9 @@ def main() -> None:
+ 
+         import nurbs
+         import surface
++        from cad_checks import VolumeMemo
++
++        volumes = VolumeMemo()
+ 
+         # Приёмка гладкого тела меряется по очищенной поверхности, а не по сырому скану: шум там уже снят,
+         # и допуск сравнения (3×шум) здесь слишком широк — пропускает крупные грани, срезающие рёбра.
+@@ -187,13 +190,14 @@ def main() -> None:
+             on = __import__("os").environ.get("CAD_FILLETS", "1") != "0"   # CAD_FILLETS=0 — без точных скруглений (для сравнения)
+             fl = fillets.find_fillets(clean) if on and left > 120 else []
+             if fl:
+-                body, built, _ = fillets.apply(body, fl, budget=min(240.0, left - 90), mesh=clean)
++                body, built, _ = fillets.apply(
++                    body, fl, budget=min(240.0, left - 90), mesh=clean, volumes=volumes, timings=timings)
+                 fil_note = [fillets.summary(fl) + (f"; точными цилиндрами построено кусков: {built}" if built else "")]
+         except Exception:  # noqa: BLE001
+             fil_note = []
+         timings["fillets"] = time.perf_counter() - t
+         t = time.perf_counter()
+-        body, cut = surface.cut_holes(body, scan)
++        body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings)
+         timings["holes"] = time.perf_counter() - t
+         step = Path(sys.argv[4]).with_suffix(".step")
+         cq.exporters.export(body, str(step))
+diff --git a/claude/cad-demo/surface.py b/claude/cad-demo/surface.py
+index d1c47f1..97803b3 100644
+--- a/claude/cad-demo/surface.py
++++ b/claude/cad-demo/surface.py
+@@ -270,35 +270,44 @@ def surface_mesh(scan: trimesh.Trimesh, faces: int = 20000) -> trimesh.Trimesh:
+     return r if r.is_watertight and r.is_winding_consistent else meshfix(m)
+ 
+ 
+-def cut_holes(s, scan: trimesh.Trimesh):
++def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None):
+     """Круглые отверстия вырезаются точно по диаметру из скана. Возвращает (тело, сколько)."""
+     import cadquery as cq
+ 
+     import walls as W
++    from cad_checks import VolumeMemo, measured
+ 
++    if volumes is None:
++        volumes = VolumeMemo()
+     cut = 0
+     for w in W._hole_walls(scan):
+         c, d, r, h = w["origin"] + w["normal"] * 0.3, -w["normal"], w["hole"]["r"], w["hole"]["t"] + 0.3
+         try:
+             cyl = cq.Solid.makeCylinder(r, h, cq.Vector(*c), cq.Vector(*d))
+-            res = s.cut(cyl)
+-            # вырез, после которого тело невалидно, не берётся: на гладком теле линзы цилиндр задевал
+-            # сплайновые грани по касательной, и всё тело отбрасывалось на проверке (11.11)
+-            if (len(res.Solids()) == 1 and 0 <= s.Volume() - res.Volume() <= 1.05 * np.pi * r * r * h + 1
+-                    and res.Solids()[0].isValid()):
+-                s, cut = res.Solids()[0], cut + 1
++            with measured(timings, "hole_boolean"):
++                res = s.cut(cyl)
++            with measured(timings, "hole_checks"):
++                solids = res.Solids()
++                if len(solids) != 1:
++                    continue
++                before, after = volumes.get(s), res.Volume()
++                solid = solids[0]
++                # Сохраняем прежние пороги объёма и валидности, в том числе для касаний.
++                if 0 <= before - after <= 1.05 * np.pi * r * r * h + 1 and solid.isValid():
++                    volumes.remember_cut(res, solid, after)
++                    s, cut = solid, cut + 1
+         except Exception:  # noqa: BLE001
+             pass
+     return s, cut
+ 
+ 
+ def surface_body(scan: trimesh.Trimesh, faces: int = 20000, holes: bool = True, *,
+-                 prepared: trimesh.Trimesh | None = None):
++                 prepared: trimesh.Trimesh | None = None, timings=None):
+     m = flatten_planes(surface_mesh(scan, faces) if prepared is None else prepared)
+     s = solid_from_mesh(m)
+     cut = 0
+     if holes:
+-        s, cut = cut_holes(s, scan)
++        s, cut = cut_holes(s, scan, timings=timings)
+     return s, {"faces": len(m.faces), "watertight": bool(m.is_watertight), "holes_cut": cut}
+ 
+ if __name__ == "__main__":

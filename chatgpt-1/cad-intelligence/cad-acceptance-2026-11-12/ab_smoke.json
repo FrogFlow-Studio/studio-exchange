@@ -1,0 +1,1181 @@
+{
+  "mode": "smoke_A_only",
+  "variants": {
+    "A": "f582bec6644a067ea53e7442640f556151002414",
+    "B": null
+  },
+  "environment": {
+    "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "logical_cpus": 12,
+    "ram_bytes": 17010405376,
+    "packages": {
+      "cadquery": "2.8.0",
+      "cadquery-ocp": "7.9.3.1.1",
+      "numpy": "2.5.4",
+      "scipy": "1.18.1",
+      "trimesh": "5.2.0",
+      "rtree": "1.4.1",
+      "psutil": "7.2.2",
+      "fast-simplification": "0.2.0",
+      "pymeshfix": "0.18.1",
+      "networkx": "3.7",
+      "open3d": null
+    }
+  },
+  "config": {
+    "variants": {
+      "A": "f582bec6644a067ea53e7442640f556151002414",
+      "B": null
+    },
+    "repeats": 3,
+    "timeout_s": 2100,
+    "sample_interval_s": 0.2,
+    "threads": 1,
+    "pipeline_tol_mm": 0.3,
+    "measurement": {
+      "radius_mm": 0.15,
+      "axis_offset_mm": 0.25,
+      "axis_angle_deg": 2.0,
+      "plane_angle_deg": 1.0,
+      "plane_mm": 0.15,
+      "end_mm": 0.5,
+      "cone_angle_deg": 1.0,
+      "cover_mm": 0.3,
+      "chord_mm": 0.03,
+      "tess_angle_rad": 0.1,
+      "samples": 4000,
+      "seed": 19213
+    },
+    "cases": [
+      {
+        "id": "flange",
+        "scan": "claude/cad-demo/samples/flange_scan.stl",
+        "reference": "claude/cad-demo/samples/flange_truth.step",
+        "units": "mm",
+        "reference_frame": "scan"
+      },
+      {
+        "id": "bushing",
+        "scan": "claude/cad-demo/samples/bushing_scan.stl",
+        "reference": "claude/cad-demo/samples/bushing_truth.step",
+        "units": "mm",
+        "reference_frame": "scan"
+      },
+      {
+        "id": "bracket",
+        "scan": "claude/cad-demo/samples/bracket_scan.stl",
+        "reference": "claude/cad-demo/samples/bracket_truth.step",
+        "units": "mm",
+        "reference_frame": "scan"
+      },
+      {
+        "id": "studio_lens",
+        "scan": null,
+        "reference": null,
+        "units": "mm",
+        "reference_frame": "scan",
+        "unavailable_reason": "Studio input and matching CAD reference not provided"
+      },
+      {
+        "id": "studio_bracket",
+        "scan": null,
+        "reference": null,
+        "units": "mm",
+        "reference_frame": "scan",
+        "unavailable_reason": "Studio input and matching CAD reference not provided"
+      },
+      {
+        "id": "hyundai",
+        "scan": null,
+        "reference": null,
+        "units": "mm",
+        "reference_frame": "scan",
+        "unavailable_reason": "Studio input and matching CAD reference not provided"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "flange",
+      "reference_status": "available",
+      "runs": [
+        {
+          "variant": "A",
+          "repeat": 1,
+          "status": "ok",
+          "exit_code": 0,
+          "wall_s": 42.64440230000764,
+          "to_final_step_s": 34.52090900001349,
+          "sampled_peak_tree_rss_bytes": 1485139968,
+          "flags": [
+            "--mode",
+            "geometric",
+            "--smooth",
+            "auto",
+            "--stepcad",
+            "off",
+            "--cadena",
+            "off",
+            "--p2s",
+            "off",
+            "--units",
+            "mm",
+            "--tol",
+            "0.3",
+            "--no-open"
+          ],
+          "env": {
+            "CAD_REGIONS": "0",
+            "PYTHONUTF8": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "OMP_NUM_THREADS": "1"
+          },
+          "step_bytes": 43663,
+          "selected_route": "0ж",
+          "regional_stage_observed": false,
+          "stages_seconds": {
+            "load_and_analysis": 3.2,
+            "cleanup_smooth": null,
+            "segmentation_only": null,
+            "regions_and_surface_tagging": null,
+            "coarsen": null,
+            "surface_fit": null,
+            "sewing": null,
+            "solid": null,
+            "step_revalidation": 1.9,
+            "export_only": null
+          },
+          "worker_timings": {
+            "geometric": {
+              "total": 10.98501090001082
+            }
+          },
+          "demo_timing_line": "загрузка и замеры 3.2 с, 0 14.1 с, 0в нет замера, 0к нет замера, сравнение 3.8 с, перечитывание STEP 1.9 с (фоновые этапы перекрываются)",
+          "operation_counts": {
+            "geometric": {
+              "fillet": {
+                "attempted": null,
+                "rolled_back": null
+              },
+              "hole": {
+                "attempted": null,
+                "rolled_back": null
+              }
+            }
+          },
+          "nonaccepted_nurbs_steps": null,
+          "geometry": {
+            "units": "mm",
+            "tolerances": {
+              "radius_mm": 0.15,
+              "axis_offset_mm": 0.25,
+              "axis_angle_deg": 2.0,
+              "plane_angle_deg": 1.0,
+              "plane_mm": 0.15,
+              "end_mm": 0.5,
+              "cone_angle_deg": 1.0,
+              "cover_mm": 0.3,
+              "chord_mm": 0.03,
+              "tess_angle_rad": 0.1,
+              "samples": 4000,
+              "seed": 19213
+            },
+            "model_topology": {
+              "valid": true,
+              "closed": true,
+              "connected_solid": true,
+              "solids": 1,
+              "shells": 1,
+              "closed_shells": 1,
+              "faces": 12,
+              "edges": 27,
+              "faces_outside_solids": 0,
+              "edges_outside_solids": 0,
+              "vertices_outside_solids": 0,
+              "volume_mm3": 71311.61625766734,
+              "surface_types": {
+                "PLANE": 3,
+                "CYLINDER": 9
+              }
+            },
+            "reference_topology": {
+              "valid": true,
+              "closed": true,
+              "connected_solid": true,
+              "solids": 1,
+              "shells": 1,
+              "closed_shells": 1,
+              "faces": 12,
+              "edges": 27,
+              "faces_outside_solids": 0,
+              "edges_outside_solids": 0,
+              "vertices_outside_solids": 0,
+              "volume_mm3": 71137.46116924206,
+              "surface_types": {
+                "CYLINDER": 9,
+                "PLANE": 3
+              }
+            },
+            "surface": {
+              "reference_to_model": {
+                "within_share": 1.0,
+                "p95_mm": 0.1172373109013789,
+                "max_sample_mm": 0.18691638720038029
+              },
+              "model_to_reference": {
+                "within_share": 1.0,
+                "p95_mm": 0.12947656200681176,
+                "max_sample_mm": 0.18693095908360566
+              }
+            },
+            "features": [
+              {
+                "reference": {
+                  "kind": "cylinder",
+                  "origin": [
+                    0.794298,
+                    -0.023803,
+                    0.000899
+                  ],
+                  "axis": [
+                    3.322283650694915e-05,
+                    1.9006384997051872e-05,
+                    -0.9999999992675003
+                  ],
+                  "radius": 45.00000474845163,
+                  "inner": false,
+                  "id": 1,
+                  "faces": [
+                    1
+                  ],
+                  "center": [
+                    0.7941318858028409,
+                    -0.023898031934506573,
+                    5.000899523943239
+                  ],
+                  "area_mm2": 2827.433984939062,
+                  "role": "cylinder",
+                  "length_mm": 10.000001055211476,
+                  "axis_center": [
+                    0.7941318857999367,
+                    -0.02389803193501314,
+                    5.0008995239432394
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "model": {
+                  "kind": "cylinder",
+                  "origin": [
+                    0.797,
+                    -0.027,
+                    0.0
+                  ],
+                  "axis": [
+                    0.0,
+                    0.0,
+                    1.0
+                  ],
+                  "radius": 44.995,
+                  "inner": false,
+                  "id": 2,
+                  "faces": [
+                    2
+                  ],
+                  "center": [
+                    0.7969999999970269,
+                    -0.027000000000000985,
+                    5.0
+                  ],
+                  "area_mm2": 2827.1192289652686,
+                  "role": "cylinder",
+                  "length_mm": 10.0,
+                  "axis_center": [
+                    0.797,
+                    -0.027,
+                    5.0
+                  ],
+                  "wrap_deg": 359.9999999999763
+                },
+                "status": "ok",
+                "errors": {
+                  "axis_angle_deg": 0.002193013797149992,
+                  "axis_offset_mm": 0.00422472306099742,
+                  "center_mm": 0.004319424529409514,
+                  "end_mm": 0.002620847764262635,
+                  "axial_overlap": 1.0,
+                  "radius_mm": 0.005004748451632679
+                },
+                "failed": []
+              },
+              {
+                "reference": {
+                  "kind": "cylinder",
+                  "origin": [
+                    -10.880023595076723,
+                    -31.956708571995545,
+                    -9.578317578730832e-05
+                  ],
+                  "axis": [
+                    -3.322283650694915e-05,
+                    -1.9006384997051872e-05,
+                    0.9999999992675003
+                  ],
+                  "radius": 4.0000004220845895,
+                  "inner": true,
+                  "id": 4,
+                  "faces": [
+                    4
+                  ],
+                  "center": [
+                    -10.880189709276696,
+                    -31.95680360393031,
+                    4.999904740767451
+                  ],
+                  "area_mm2": 251.32746532791666,
+                  "role": "bore",
+                  "length_mm": 10.000001055211474,
+                  "axis_center": [
+                    -10.880189709276786,
+                    -31.95680360393056,
+                    4.999904740767451
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "model": {
+                  "kind": "cylinder",
+                  "origin": [
+                    -10.884,
+                    -31.958,
+                    -0.05
+                  ],
+                  "axis": [
+                    -0.0,
+                    -0.0,
+                    -1.0
+                  ],
+                  "radius": 3.999,
+                  "inner": true,
+                  "id": 4,
+                  "faces": [
+                    4
+                  ],
+                  "center": [
+                    -10.883999999999737,
+                    -31.958,
+                    5.000000000000001
+                  ],
+                  "area_mm2": 251.26458043412822,
+                  "role": "bore",
+                  "length_mm": 10.0,
+                  "axis_center": [
+                    -10.884,
+                    -31.958,
+                    5.000000000000001
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "status": "ok",
+                "errors": {
+                  "axis_angle_deg": 0.002193013797149992,
+                  "axis_offset_mm": 0.003993704918077738,
+                  "center_mm": 0.003994840831843684,
+                  "end_mm": 0.00024790658915474495,
+                  "axial_overlap": 1.0,
+                  "radius_mm": 0.0010004220845893919
+                },
+                "failed": []
+              },
+              {
+                "reference": {
+                  "kind": "cylinder",
+                  "origin": [
+                    22.611844640577207,
+                    -26.100514880498856,
+                    0.0011282167597325777
+                  ],
+                  "axis": [
+                    -3.322283650694915e-05,
+                    -1.9006384997051872e-05,
+                    0.9999999992675003
+                  ],
+                  "radius": 4.0000004220845895,
+                  "inner": true,
+                  "id": 5,
+                  "faces": [
+                    5
+                  ],
+                  "center": [
+                    22.611678526376974,
+                    -26.10060991243367,
+                    5.0011287407029705
+                  ],
+                  "area_mm2": 251.32746532791666,
+                  "role": "bore",
+                  "length_mm": 10.000001055211476,
+                  "axis_center": [
+                    22.611678526377144,
+                    -26.10060991243387,
+                    5.001128740702971
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "model": {
+                  "kind": "cylinder",
+                  "origin": [
+                    22.611,
+                    -26.097,
+                    -0.05
+                  ],
+                  "axis": [
+                    -0.0,
+                    -0.0,
+                    -1.0
+                  ],
+                  "radius": 4.004,
+                  "inner": true,
+                  "id": 3,
+                  "faces": [
+                    3
+                  ],
+                  "center": [
+                    22.611000000000264,
+                    -26.097,
+                    5.000000000000001
+                  ],
+                  "area_mm2": 251.5787396994872,
+                  "role": "bore",
+                  "length_mm": 10.0,
+                  "axis_center": [
+                    22.611,
+                    -26.097,
+                    5.000000000000001
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "status": "ok",
+                "errors": {
+                  "axis_angle_deg": 0.002193013797149992,
+                  "axis_offset_mm": 0.003673127526619407,
+                  "center_mm": 0.003842645104511901,
+                  "end_mm": 0.0012814761342578862,
+                  "axial_overlap": 0.9999023902695339,
+                  "radius_mm": 0.0039995779154100575
+                },
+                "failed": []
+              },
+              {
+                "reference": {
+                  "kind": "cylinder",
+                  "origin": [
+                    -32.69757023565393,
+                    -5.87999669149669,
+                    -0.0003249999355198859
+                  ],
+                  "axis": [
+                    -3.322283650694915e-05,
+                    -1.9006384997051872e-05,
+                    0.9999999992675003
+                  ],
+                  "radius": 4.0000004220845895,
+                  "inner": true,
+                  "id": 6,
+                  "faces": [
+                    6
+                  ],
+                  "center": [
+                    -32.697736349853734,
+                    -5.880091723431658,
+                    4.999675524007718
+                  ],
+                  "area_mm2": 251.32746532791666,
+                  "role": "bore",
+                  "length_mm": 10.000001055211476,
+                  "axis_center": [
+                    -32.69773634985399,
+                    -5.880091723431703,
+                    4.999675524007719
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "model": {
+                  "kind": "cylinder",
+                  "origin": [
+                    -32.695,
+                    -5.879,
+                    -0.05
+                  ],
+                  "axis": [
+                    -0.0,
+                    -0.0,
+                    -1.0
+                  ],
+                  "radius": 4.002,
+                  "inner": true,
+                  "id": 5,
+                  "faces": [
+                    5
+                  ],
+                  "center": [
+                    -32.69499999999974,
+                    -5.879,
+                    5.000000000000001
+                  ],
+                  "area_mm2": 251.45307599334362,
+                  "role": "bore",
+                  "length_mm": 10.0,
+                  "axis_center": [
+                    -32.695,
+                    -5.879,
+                    5.000000000000001
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "status": "ok",
+                "errors": {
+                  "axis_angle_deg": 0.002193013797149992,
+                  "axis_offset_mm": 0.0029460941239595026,
+                  "center_mm": 0.0029639087780038674,
+                  "end_mm": 0.00047697716254102573,
+                  "axial_overlap": 0.9999828248514615,
+                  "radius_mm": 0.0019995779154102777
+                },
+                "failed": []
+              },
+              {
+                "reference": {
+                  "kind": "cylinder",
+                  "origin": [
+                    -21.02324864057738,
+                    26.05290888049984,
+                    0.0006697832402674353
+                  ],
+                  "axis": [
+                    -3.322283650694915e-05,
+                    -1.9006384997051872e-05,
+                    0.9999999992675003
+                  ],
+                  "radius": 4.0000004220845895,
+                  "inner": true,
+                  "id": 7,
+                  "faces": [
+                    7
+                  ],
+                  "center": [
+                    -21.023414754777274,
+                    26.05281384856462,
+                    5.000670307183506
+                  ],
+                  "area_mm2": 251.32746532791666,
+                  "role": "bore",
+                  "length_mm": 10.000001055211474,
+                  "axis_center": [
+                    -21.02341475477744,
+                    26.052813848564824,
+                    5.000670307183506
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "model": {
+                  "kind": "cylinder",
+                  "origin": [
+                    -21.022,
+                    26.05,
+                    -0.05
+                  ],
+                  "axis": [
+                    -0.0,
+                    -0.0,
+                    -1.0
+                  ],
+                  "radius": 4.002,
+                  "inner": true,
+                  "id": 9,
+                  "faces": [
+                    9
+                  ],
+                  "center": [
+                    -21.021999999999736,
+                    26.05,
+                    5.000000000000001
+                  ],
+                  "area_mm2": 251.45307599334362,
+                  "role": "bore",
+                  "length_mm": 10.0,
+                  "axis_center": [
+                    -21.022,
+                    26.05,
+                    5.000000000000001
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "status": "ok",
+                "errors": {
+                  "axis_angle_deg": 0.002193013797149992,
+                  "axis_offset_mm": 0.003149488026028724,
+                  "center_mm": 0.0032200289666887275,
+                  "end_mm": 0.0008229135336099702,
+                  "axial_overlap": 0.9999482312180054,
+                  "radius_mm": 0.0019995779154102777
+                },
+                "failed": []
+              },
+              {
+                "reference": {
+                  "kind": "cylinder",
+                  "origin": [
+                    0.7934674289996835,
+                    -0.024278159675065688,
+                    25.00090161971619
+                  ],
+                  "axis": [
+                    3.322283650694915e-05,
+                    1.9006384997051872e-05,
+                    -0.9999999992675003
+                  ],
+                  "radius": 12.500001319014341,
+                  "inner": true,
+                  "id": 8,
+                  "faces": [
+                    8
+                  ],
+                  "center": [
+                    0.7938827144990359,
+                    -0.024040579837672382,
+                    12.500900309858093
+                  ],
+                  "area_mm2": 1963.4958228743483,
+                  "role": "bore",
+                  "length_mm": 25.000002638028686,
+                  "axis_center": [
+                    0.7938827144998417,
+                    -0.024040579837532845,
+                    12.500900309858093
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "model": {
+                  "kind": "cylinder",
+                  "origin": [
+                    0.794,
+                    -0.025,
+                    -0.05
+                  ],
+                  "axis": [
+                    -0.0,
+                    -0.0,
+                    -1.0
+                  ],
+                  "radius": 12.499,
+                  "inner": true,
+                  "id": 8,
+                  "faces": [
+                    8
+                  ],
+                  "center": [
+                    0.7940000000008212,
+                    -0.024999999999999575,
+                    12.5935
+                  ],
+                  "area_mm2": 1978.0240995609518,
+                  "role": "bore",
+                  "length_mm": 25.187,
+                  "axis_center": [
+                    0.794,
+                    -0.025,
+                    12.5935
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "status": "ok",
+                "errors": {
+                  "axis_angle_deg": 0.002193013797149992,
+                  "axis_offset_mm": 0.0009665624330075571,
+                  "center_mm": 0.09260473452968838,
+                  "end_mm": 0.18657667404407086,
+                  "axial_overlap": 1.0,
+                  "radius_mm": 0.0010013190143407513
+                },
+                "failed": []
+              },
+              {
+                "reference": {
+                  "kind": "cylinder",
+                  "origin": [
+                    34.28616623565392,
+                    5.832390691496686,
+                    0.002122999935519886
+                  ],
+                  "axis": [
+                    -3.322283650694915e-05,
+                    -1.9006384997051872e-05,
+                    0.9999999992675003
+                  ],
+                  "radius": 4.0000004220845895,
+                  "inner": true,
+                  "id": 9,
+                  "faces": [
+                    9
+                  ],
+                  "center": [
+                    34.2860001214536,
+                    5.832295659561627,
+                    5.002123523878757
+                  ],
+                  "area_mm2": 251.3274653279167,
+                  "role": "bore",
+                  "length_mm": 10.000001055211476,
+                  "axis_center": [
+                    34.28600012145386,
+                    5.832295659561673,
+                    5.002123523878759
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "model": {
+                  "kind": "cylinder",
+                  "origin": [
+                    34.29,
+                    5.83,
+                    -0.05
+                  ],
+                  "axis": [
+                    -0.0,
+                    -0.0,
+                    -1.0
+                  ],
+                  "radius": 4.002,
+                  "inner": true,
+                  "id": 6,
+                  "faces": [
+                    6
+                  ],
+                  "center": [
+                    34.29000000000026,
+                    5.83,
+                    5.000000000000001
+                  ],
+                  "area_mm2": 251.45307599334362,
+                  "role": "bore",
+                  "length_mm": 10.0,
+                  "axis_center": [
+                    34.29,
+                    5.83,
+                    5.000000000000001
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "status": "ok",
+                "errors": {
+                  "axis_angle_deg": 0.002193013797149992,
+                  "axis_offset_mm": 0.004611841412595646,
+                  "center_mm": 0.005077246780551661,
+                  "end_mm": 0.002276225961841405,
+                  "axial_overlap": 0.9998028999905174,
+                  "radius_mm": 0.0019995779154102777
+                },
+                "failed": []
+              },
+              {
+                "reference": {
+                  "kind": "cylinder",
+                  "origin": [
+                    12.46861959507655,
+                    31.909102571996527,
+                    0.0018937831757873213
+                  ],
+                  "axis": [
+                    -3.322283650694915e-05,
+                    -1.9006384997051872e-05,
+                    0.9999999992675003
+                  ],
+                  "radius": 4.0000004220845895,
+                  "inner": true,
+                  "id": 10,
+                  "faces": [
+                    10
+                  ],
+                  "center": [
+                    12.468453480876397,
+                    31.909007540061268,
+                    5.001894307119025
+                  ],
+                  "area_mm2": 251.32746532791666,
+                  "role": "bore",
+                  "length_mm": 10.000001055211476,
+                  "axis_center": [
+                    12.468453480876487,
+                    31.909007540061513,
+                    5.001894307119026
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "model": {
+                  "kind": "cylinder",
+                  "origin": [
+                    12.471,
+                    31.907,
+                    -0.05
+                  ],
+                  "axis": [
+                    -0.0,
+                    -0.0,
+                    -1.0
+                  ],
+                  "radius": 3.999,
+                  "inner": true,
+                  "id": 7,
+                  "faces": [
+                    7
+                  ],
+                  "center": [
+                    12.471000000000263,
+                    31.907,
+                    5.000000000000001
+                  ],
+                  "area_mm2": 251.26458043412822,
+                  "role": "bore",
+                  "length_mm": 10.0,
+                  "axis_center": [
+                    12.471,
+                    31.907,
+                    5.000000000000001
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "status": "ok",
+                "errors": {
+                  "axis_angle_deg": 0.002193013797149992,
+                  "axis_offset_mm": 0.0032426804879839835,
+                  "center_mm": 0.003755446206003359,
+                  "end_mm": 0.002046851592991672,
+                  "axial_overlap": 0.9998258144648499,
+                  "radius_mm": 0.0010004220845893919
+                },
+                "failed": []
+              },
+              {
+                "reference": {
+                  "kind": "cylinder",
+                  "origin": [
+                    0.7939657715998734,
+                    -0.023993063870026275,
+                    10.000900047886477
+                  ],
+                  "axis": [
+                    3.322283650694915e-05,
+                    1.9006384997051872e-05,
+                    -0.9999999992675003
+                  ],
+                  "radius": 22.000002321465242,
+                  "inner": false,
+                  "id": 11,
+                  "faces": [
+                    11
+                  ],
+                  "center": [
+                    0.7937166003012024,
+                    -0.024135611772296173,
+                    17.50090083380133
+                  ],
+                  "area_mm2": 2073.4515889553127,
+                  "role": "cylinder",
+                  "length_mm": 15.000001582817212,
+                  "axis_center": [
+                    0.7937166002997784,
+                    -0.02413561177254598,
+                    17.500900833801335
+                  ],
+                  "wrap_deg": 360.0
+                },
+                "model": {
+                  "kind": "cylinder",
+                  "origin": [
+                    0.797,
+                    -0.027,
+                    10.0
+                  ],
+                  "axis": [
+                    0.0,
+                    0.0,
+                    1.0
+                  ],
+                  "radius": 21.998,
+                  "inner": false,
+                  "id": 12,
+                  "faces": [
+                    12
+                  ],
+                  "center": [
+                    0.7969999999985475,
+                    -0.02699999999999993,
+                    17.593500000000002
+                  ],
+                  "area_mm2": 2099.1093302523423,
+                  "role": "cylinder",
+                  "length_mm": 15.187000000000001,
+                  "axis_center": [
+                    0.797,
+                    -0.027,
+                    17.5935
+                  ],
+                  "wrap_deg": 359.99999999997635
+                },
+                "status": "ok",
+                "errors": {
+                  "axis_angle_deg": 0.002193013797149992,
+                  "axis_offset_mm": 0.004357227732398021,
+                  "center_mm": 0.09270162357907609,
+                  "end_mm": 0.18694010958587448,
+                  "axial_overlap": 1.0,
+                  "radius_mm": 0.0020023214652411525
+                },
+                "failed": []
+              },
+              {
+                "reference": {
+                  "kind": "plane",
+                  "origin": [
+                    0.7942979999999981,
+                    -0.02380300000000023,
+                    0.0008989999999999998
+                  ],
+                  "axis": [
+                    -3.322283650694915e-05,
+                    -1.9006384997051872e-05,
+                    0.9999999992675003
+                  ],
+                  "id": 2,
+                  "faces": [
+                    2
+                  ],
+                  "center": [
+                    0.794298000000004,
+                    -0.02380300000002711,
+                    0.0008989999999999994
+                  ],
+                  "area_mm2": 5569.259552000434,
+                  "role": "plane"
+                },
+                "model": {
+                  "kind": "plane",
+                  "origin": [
+                    0.797,
+                    -0.027,
+                    0.0
+                  ],
+                  "axis": [
+                    0.0,
+                    0.0,
+                    1.0
+                  ],
+                  "id": 1,
+                  "faces": [
+                    1
+                  ],
+                  "center": [
+                    0.7971666781918677,
+                    -0.027076278388712717,
+                    0.0
+                  ],
+                  "area_mm2": 5567.722118994145,
+                  "role": "plane"
+                },
+                "status": "ok",
+                "errors": {
+                  "angle_deg": 0.002193013797149992,
+                  "offset_mm": 0.0008990330917787837,
+                  "sampled_p95_mm": 0.002249059254706328,
+                  "sampled_max_mm": 0.002620847764263074,
+                  "footprint_overlap": 0.9998349798073572
+                },
+                "failed": []
+              },
+              {
+                "reference": {
+                  "kind": "plane",
+                  "origin": [
+                    0.7939657715998714,
+                    -0.023993063870026504,
+                    10.000900047886477
+                  ],
+                  "axis": [
+                    -3.322283650694915e-05,
+                    -1.9006384997051872e-05,
+                    0.9999999992675003
+                  ],
+                  "id": 3,
+                  "faces": [
+                    3
+                  ],
+                  "center": [
+                    0.7939657715998809,
+                    -0.023993063870057618,
+                    10.000900047886477
+                  ],
+                  "area_mm2": 4539.602342485195,
+                  "role": "plane"
+                },
+                "model": {
+                  "kind": "plane",
+                  "origin": [
+                    0.797,
+                    -0.027,
+                    10.0
+                  ],
+                  "axis": [
+                    0.0,
+                    0.0,
+                    1.0
+                  ],
+                  "id": 10,
+                  "faces": [
+                    10
+                  ],
+                  "center": [
+                    0.7968800492421373,
+                    -0.026877289228450958,
+                    10.0
+                  ],
+                  "area_mm2": 4538.263037692487,
+                  "role": "plane"
+                },
+                "status": "ok",
+                "errors": {
+                  "angle_deg": 0.002193013797149992,
+                  "offset_mm": 0.0009000898876894643,
+                  "sampled_p95_mm": 0.0022501217911791533,
+                  "sampled_max_mm": 0.0026219103007358996,
+                  "footprint_overlap": 0.9998349798073571
+                },
+                "failed": []
+              },
+              {
+                "reference": {
+                  "kind": "plane",
+                  "origin": [
+                    0.7934674289996821,
+                    -0.02427815967506683,
+                    25.00090161971619
+                  ],
+                  "axis": [
+                    -3.322283650694915e-05,
+                    -1.9006384997051872e-05,
+                    0.9999999992675003
+                  ],
+                  "id": 12,
+                  "faces": [
+                    12
+                  ],
+                  "center": [
+                    0.7934674289996817,
+                    -0.024278159675069744,
+                    25.00090161971619
+                  ],
+                  "area_mm2": 1029.65720951524,
+                  "role": "plane"
+                },
+                "model": {
+                  "kind": "plane",
+                  "origin": [
+                    0.797,
+                    -0.027,
+                    25.187
+                  ],
+                  "axis": [
+                    0.0,
+                    0.0,
+                    1.0
+                  ],
+                  "id": 11,
+                  "faces": [
+                    11
+                  ],
+                  "center": [
+                    0.7984302520353452,
+                    -0.02795350135690748,
+                    25.187
+                  ],
+                  "area_mm2": 1029.4590813016566,
+                  "role": "plane"
+                },
+                "status": "parameter_error",
+                "errors": {
+                  "angle_deg": 0.002193013797149992,
+                  "offset_mm": 0.1860982851233964,
+                  "sampled_p95_mm": 0.18689633836869524,
+                  "sampled_max_mm": 0.18694010958587615,
+                  "footprint_overlap": 0.9998147792844854
+                },
+                "failed": [
+                  "offset_mm",
+                  "sampled_p95_mm"
+                ]
+              }
+            ],
+            "model_sha256": "43542a6313be223a6c04f516d812ea0ad453e33f7b4b8c24bca0c0f8d7a9f329",
+            "reference_sha256": "03af5f6ef4dad7224417b8f66f84d214cb228043d34973015dcb906b3606f59d",
+            "feature_counts": {
+              "reference": {
+                "cylinder": 2,
+                "plane": 3,
+                "bore": 7
+              },
+              "model": {
+                "plane": 3,
+                "cylinder": 2,
+                "bore": 7
+              }
+            },
+            "outcomes": {
+              "ok": 11,
+              "parameter_error": 1
+            },
+            "reference_status": "evaluated",
+            "reference_to_model_frame": [
+              [
+                0.985055,
+                -0.172241,
+                -3.3e-05,
+                0.794298
+              ],
+              [
+                0.172241,
+                0.985055,
+                -1.9e-05,
+                -0.023803
+              ],
+              [
+                3.6e-05,
+                1.3e-05,
+                1.0,
+                0.000899
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          "scan_surface": {
+            "reference_to_model": {
+              "within_share": 0.97675,
+              "p95_mm": 0.18314509130022727,
+              "max_sample_mm": 4.828089187362552
+            },
+            "model_to_reference": {
+              "within_share": 0.94,
+              "p95_mm": 1.6685714188911276,
+              "max_sample_mm": 15.399216353764128
+            }
+          }
+        }
+      ],
+      "scan_sha256": "c56d575bad25a7d37a94d988ddc8c4c586ab306da41a62517fd53f91a01452cb",
+      "reference_sha256": "03af5f6ef4dad7224417b8f66f84d214cb228043d34973015dcb906b3606f59d"
+    }
+  ]
+}

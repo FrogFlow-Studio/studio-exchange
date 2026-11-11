@@ -1,0 +1,72 @@
+{
+  "variants": {
+    "A": "f582bec6644a067ea53e7442640f556151002414",
+    "B": null
+  },
+  "repeats": 3,
+  "timeout_s": 2100,
+  "sample_interval_s": 0.2,
+  "threads": 1,
+  "pipeline_tol_mm": 0.3,
+  "measurement": {
+    "radius_mm": 0.15,
+    "axis_offset_mm": 0.25,
+    "axis_angle_deg": 2.0,
+    "plane_angle_deg": 1.0,
+    "plane_mm": 0.15,
+    "end_mm": 0.5,
+    "cone_angle_deg": 1.0,
+    "cover_mm": 0.3,
+    "chord_mm": 0.03,
+    "tess_angle_rad": 0.1,
+    "samples": 4000,
+    "seed": 19213
+  },
+  "cases": [
+    {
+      "id": "flange",
+      "scan": "claude/cad-demo/samples/flange_scan.stl",
+      "reference": "claude/cad-demo/samples/flange_truth.step",
+      "units": "mm",
+      "reference_frame": "scan"
+    },
+    {
+      "id": "bushing",
+      "scan": "claude/cad-demo/samples/bushing_scan.stl",
+      "reference": "claude/cad-demo/samples/bushing_truth.step",
+      "units": "mm",
+      "reference_frame": "scan"
+    },
+    {
+      "id": "bracket",
+      "scan": "claude/cad-demo/samples/bracket_scan.stl",
+      "reference": "claude/cad-demo/samples/bracket_truth.step",
+      "units": "mm",
+      "reference_frame": "scan"
+    },
+    {
+      "id": "studio_lens",
+      "scan": null,
+      "reference": null,
+      "units": "mm",
+      "reference_frame": "scan",
+      "unavailable_reason": "Studio input and matching CAD reference not provided"
+    },
+    {
+      "id": "studio_bracket",
+      "scan": null,
+      "reference": null,
+      "units": "mm",
+      "reference_frame": "scan",
+      "unavailable_reason": "Studio input and matching CAD reference not provided"
+    },
+    {
+      "id": "hyundai",
+      "scan": null,
+      "reference": null,
+      "units": "mm",
+      "reference_frame": "scan",
+      "unavailable_reason": "Studio input and matching CAD reference not provided"
+    }
+  ]
+}

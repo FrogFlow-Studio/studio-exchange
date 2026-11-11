@@ -251,6 +251,27 @@ def solid_from_mesh(mesh: trimesh.Trimesh):
     return max(solids, key=lambda s: abs(s.Volume()))
 
 
+def coarsen(mesh: trimesh.Trimesh, triangles: int) -> trimesh.Trimesh:
+    """Грубая сетка примерно из triangles треугольников. Основной способ — fast_simplification;
+    на сетке из CAD (длинные узкие треугольники) он останавливается далеко от цели и портит форму
+    (тестовый фланец: 12 тыс. вместо 1500, уход до 8 мм), тогда берётся упрощение open3d, если
+    библиотека установлена."""
+    import fast_simplification as fs
+
+    v, f = fs.simplify(mesh.vertices, mesh.faces, 1 - triangles / len(mesh.faces))
+    out = repair(trimesh.Trimesh(v, f, process=True))
+    if len(out.faces) <= 1.3 * triangles and out.is_watertight:
+        return out
+    try:
+        import open3d as o3d
+    except ImportError:
+        return out
+    om = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(mesh.vertices), o3d.utility.Vector3iVector(mesh.faces))
+    sm = om.simplify_quadric_decimation(int(triangles))
+    alt = repair(trimesh.Trimesh(np.asarray(sm.vertices), np.asarray(sm.triangles), process=True))
+    return alt if alt.is_watertight and len(alt.faces) < len(out.faces) else out
+
+
 def surface_mesh(scan: trimesh.Trimesh, faces: int = 20000) -> trimesh.Trimesh:
     """Замкнутая чистая поверхность скана: без мусора и шума, упрощённая, с закрытыми дырами."""
     m = clean(scan.copy())

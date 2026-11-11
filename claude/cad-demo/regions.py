@@ -511,7 +511,7 @@ def _curved_components(mesh, label, nb, tol, min_area, cos_n):
             tried.update(members[:96])
 
 
-def segment(mesh: trimesh.Trimesh, tol: float = 0.3, min_area: float | None = None, max_angle: float = 12.0) -> dict:
+def _propose(mesh: trimesh.Trimesh, tol: float = 0.3, min_area: float | None = None, max_angle: float = 12.0) -> dict:
     """Разметка треугольников с полями label, regions и area.
 
     label содержит индекс области либо -1. У каждой области есть kind, faces
@@ -617,6 +617,188 @@ def segment(mesh: trimesh.Trimesh, tol: float = 0.3, min_area: float | None = No
     return {"label": label, "regions": regions, "area": total}
 
 
+def _refit_scan_cylinder(r, f, evidence, tol):
+    raw = evidence.scan_points(f)
+    if raw is not None and len(raw) >= 30:
+        h = (raw - r["origin"]) @ r["axis"]
+        lower, upper = np.quantile(h, [0.15, 0.85])
+        core = raw[(h > lower) & (h < upper)]
+        seed = r["axis"], r["origin"], r["r"], -1. if r["inner"] else 1.
+        ax, o, rad, _ = (_refine_cylinder(core, seed, max(tol, evidence.noise))
+                          if len(core) >= 12 else seed)
+        axis_shift = np.linalg.norm(np.cross(o - r["origin"], r["axis"]))
+        if (abs(rad - r["r"]) < tol and axis_shift < tol
+                and abs(ax @ r["axis"]) >= np.cos(np.radians(3))):
+            points = evidence.fc[f] - o
+            z = points @ ax
+            u, v = _frame(ax)
+            azimuth = np.sort(np.arctan2(points @ v, points @ u))
+            gap = np.max(np.diff(np.r_[azimuth, azimuth[0] + 2 * np.pi]))
+            r = {**r, "axis": ax, "origin": o + ax * float(z.mean()), "r": rad,
+                 "length": float(np.ptp(z)), "span_deg": round(float(np.degrees(2 * np.pi - gap)), 1)}
+    return r
+
+
+def segment(mesh: trimesh.Trimesh, tol: float = 0.3, min_area: float | None = None,
+            max_angle: float = 12.0, *, scan: trimesh.Trimesh | None = None) -> dict:
+    """Label clean mesh faces, using optional raw scan observations for the fits.
+
+    boundary_support is the share of a proposal's shared-edge perimeter near an
+    observed change in normals. A cone can also have plane_boundary_support.
+    """
+    from region_support import Evidence
+    import walls
+
+    proposed = _propose(mesh, tol, min_area, max_angle)
+    if len(mesh.faces) == 0:
+        return proposed
+    evidence = Evidence(mesh, scan, tol)
+    area = mesh.area_faces
+    if min_area is None:
+        min_area = max(4., 0.0015 * proposed["area"])
+    label = np.full(len(area), -1, dtype=int)
+    out = []
+
+    def accept(r, support):
+        faces = r["faces"]
+        if r["area"] < min_area:
+            return
+        label[faces] = len(out)
+        out.append({**r, "boundary_support": support})
+
+    nb = _neighbours(mesh)
+    guide_centers = evidence.guide.triangles_center
+    band = max(tol, 2.5 * evidence.noise)
+    support_min = evidence.boundary_minimum
+    fit_tol = min(2 * tol, max(tol, 2 * evidence.noise))
+    for r in sorted(proposed["regions"], key=lambda p: -p["area"]):
+        f = r["faces"]
+        free = f[label[f] < 0]
+        if area[free].sum() < min_area:
+            continue
+        support = evidence.boundary_share(f)
+        kind = r["kind"]
+        if kind in ("sphere", "cone") and support < support_min:
+            if kind == "sphere":
+                model = r["center"], r["r"]
+            else:
+                model = r["apex"], r["axis"], np.tan(np.radians(r["semi_angle_deg"]))
+            distance, normals = _curved_distance(guide_centers, model, kind)
+            sign = -1 if r["inner"] else 1
+            dot = np.einsum("ij,ij->i", normals, evidence.normals) * sign
+            mask = (np.abs(distance) < 1.5 * band) & (dot > np.cos(np.radians(2.5 * max_angle)))
+            for m in _components(mask & (label < 0), nb):
+                if area[np.intersect1d(m, free)].sum() < 0.6 * area[free].sum():
+                    continue
+                witness = evidence.boundary_share(m)
+                if witness < support_min:
+                    continue
+                extended = _curved_region(mesh, m, model, kind, fit_tol, min_area)
+                if extended is not None:
+                    r, support, free = extended, witness, m
+                    break
+        if support < support_min:
+            continue
+        if r["kind"] == "plane" and not evidence.stable_plane(f, r["normal"], r["origin"]):
+            n, o = evidence.fit_plane(f, r["normal"], r["origin"])
+            if not evidence.stable_plane(f, n, o):
+                continue
+            r = {**r, "normal": n, "origin": o}
+        if r["kind"] == "cylinder":
+            r = _refit_scan_cylinder(r, free, evidence, tol)
+        accept({**r, "faces": free, "area": float(area[free].sum())}, support)
+
+    # Propose from a smoothed normal field, then re-grow from each seed using the
+    # signed distance and the normal field. A fragmented seed does not cap coverage.
+    normal_angle = max_angle + np.degrees(np.arctan2(evidence.noise, max(tol, evidence.pitch)))
+    normal_angle = float(np.clip(normal_angle, max_angle, max_angle * 2))
+    patches = walls.planar_patches(evidence.guide, max_angle=normal_angle,
+                                  max_dist=max(2 * tol, 3 * evidence.noise), min_area=min_area)
+    cos_n = np.cos(np.radians(min(3 * max_angle, 1.8 * normal_angle)))
+    confirmed = list(out)
+    plane_candidates = []
+    for p in sorted(patches, key=lambda p: -p["area"]):
+        seeds = p["faces"]
+        if area[seeds[label[seeds] < 0]].sum() < min_area:
+            continue
+        n, o = evidence.fit_plane(seeds, p["normal"], p["point"])
+        close = (np.abs((guide_centers - o) @ n) < band) & (evidence.normals @ n > cos_n)
+        for faces in _components(close, nb):
+            overlap = np.intersect1d(seeds, faces, assume_unique=True)
+            added = faces[label[faces] < 0]
+            if area[overlap].sum() < min_area or area[added].sum() < min_area:
+                continue
+            nn, oo = evidence.fit_plane(faces, n, o)
+            if not evidence.stable_plane(faces, nn, oo):
+                continue
+            support = evidence.boundary_share(faces)
+            if support >= max(0.25, support_min - 0.08):
+                plane_candidates.append({"kind": "plane", "normal": nn, "origin": oo,
+                                         "faces": faces, "area": float(area[faces].sum()),
+                                         "boundary_support": support})
+    all_planes = [r for r in confirmed if r["kind"] == "plane"] + plane_candidates
+    plane_candidates.sort(key=lambda r: -r["area"])
+    paired_ids = {i for i, p in enumerate(plane_candidates)
+                  if any(evidence.opposing_plane(p, q) for q in all_planes if q is not p)}
+    paired_planes = [p for i, p in enumerate(plane_candidates) if i in paired_ids]
+    for i, p in enumerate(plane_candidates):
+        f = p["faces"]
+        added = f[label[f] < 0]
+        if area[added].sum() < min_area:
+            continue
+        if i not in paired_ids:
+            n = p["normal"]
+            witnesses = [r["faces"] for r in (*confirmed, *paired_planes)
+                         if r["kind"] != "plane" or n @ r["normal"] < np.cos(np.radians(max_angle))]
+            if (p["boundary_support"] < support_min or not witnesses
+                    or not evidence.neighboring_support(f, np.concatenate(witnesses))):
+                continue
+        accept({**p, "faces": added, "area": float(area[added].sum())}, p["boundary_support"])
+
+    # A tapered wall can reach a verified plane even when triangulation
+    # and rounding leave a gap between its sampled patch and the sharp edge.
+    caps = [p for p in out if p["kind"] == "plane"]
+    for r in proposed["regions"]:
+        if r["kind"] != "cone":
+            continue
+        f = r["faces"]
+        added = f[label[f] < 0]
+        if area[added].sum() < min_area:
+            continue
+        if area[added].sum() < 0.7 * r["area"]:
+            continue
+        axis = r["axis"]
+        slope = np.tan(np.radians(r["semi_angle_deg"]))
+        model = r["apex"], axis, slope
+        rim_tol = max(2 * tol, 3 * evidence.noise)
+        for p in caps:
+            n, o = p["normal"], p["origin"]
+            if p["area"] < 0.15 * r["area"]:
+                continue
+            if np.min(np.abs((evidence.fc[f] - o) @ n)) > 2 * evidence.seam_band:
+                continue
+            if (evidence.neighboring_support(f, p["faces"], fraction=0.12)
+                    or evidence.conical_rim(p["faces"], model, rim_tol)):
+                accept({**r, "faces": added, "area": float(area[added].sum()),
+                        "plane_boundary_support": True}, evidence.boundary_share(f))
+                break
+
+    if evidence.noise >= tol / 2:
+        # Reuse the verified planes as section anchors on the normal guide. The
+        # original mesh still owns the labels and the independent fit points.
+        anchors = [{"normal": p["normal"], "point": p["origin"], "faces": p["faces"]}
+                   for p in out if p["kind"] == "plane" and p["area"] >= 3 * min_area]
+        for r in _section_regions(evidence.guide, anchors, nb, label, fit_tol, min_area):
+            if r["kind"] != "cylinder":
+                continue
+            f = r["faces"]
+            support = evidence.boundary_share(f)
+            if support >= support_min:
+                r = _refit_scan_cylinder(r, f, evidence, fit_tol)
+                accept({**r, "area": float(area[f].sum())}, support)
+    return {"label": label, "regions": out, "area": proposed["area"]}
+
+
 def summary(seg: dict) -> dict:
     out = dict.fromkeys(("plane", "cylinder", "cone", "sphere"), 0.0)
     for r in seg["regions"]:
@@ -637,8 +819,10 @@ if __name__ == "__main__":
 
     scan = trimesh.load(sys.argv[1], force="mesh")
     t = time.time()
+    print("regions: cleaning scan", file=sys.stderr, flush=True)
     clean = surface.surface_mesh(scan)
-    seg = segment(clean)
+    print(f"regions: labeling {len(clean.faces)} triangles", file=sys.stderr, flush=True)
+    seg = segment(clean, scan=scan)
     print(summary(seg), "с", round(time.time() - t, 1))
     for r in sorted(seg["regions"], key=lambda r: -r["area"]):
         if r["kind"] == "cone":

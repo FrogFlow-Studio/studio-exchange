@@ -222,7 +222,8 @@ def _plane_tags(mesh, quads, raw, proj, w):
     return tag, {k: v for k, v in fit.items() if (tag == k).any()}
 
 
-CYL0 = 100000  # номера цилиндрических областей в метках лоскутов идут с этого числа
+_SCAN = None  # исходный скан текущей детали (ставит smooth_body): по нему разметка уточняет области
+PLN0, CYL0 = 50000, 100000  # номера плоских и цилиндрических областей разметки в метках лоскутов
 
 
 def _onto(p, entry):
@@ -246,9 +247,9 @@ def _cyl_tags(mesh, quads, raw, proj, w, tag, fit):
 
     import regions
 
-    seg = regions.segment(mesh)
-    cyl = {j: r for j, r in enumerate(seg["regions"]) if r["kind"] == "cylinder"}
-    if not cyl:
+    seg = regions.segment(mesh, scan=_SCAN)  # параметры областей уточняются по точкам исходного скана
+    prim = {j: r for j, r in enumerate(seg["regions"]) if r["kind"] in ("plane", "cylinder")}
+    if not prim:
         return tag, fit
     rms = np.array([np.linalg.svd(P - P.mean(0), compute_uv=False)[-1] / np.sqrt(len(P)) for P in raw])
     tol = max(0.1, 3 * float(np.percentile(rms, 25)))
@@ -261,22 +262,31 @@ def _cyl_tags(mesh, quads, raw, proj, w, tag, fit):
             continue
         lab = label[tree.query(P)[1]]
         j = int(np.bincount(lab[lab >= 0]).argmax()) if (lab >= 0).any() else -1
-        if j not in cyl or (lab == j).mean() < 0.8:
+        if j not in prim or (lab == j).mean() < 0.8:
             continue
-        r = cyl[j]
-        d = P - r["origin"]
-        d = d - np.outer(d @ r["axis"], r["axis"])
-        dev = np.abs(np.linalg.norm(d, axis=1) - r["r"])
+        r = prim[j]
+        if r["kind"] == "plane":
+            key, entry = PLN0 + j, (r["origin"], r["normal"])
+            for k, e in fit.items():  # та же плоскость уже найдена прежним способом: берётся её запись
+                if len(e) == 2 and abs(float(e[1] @ r["normal"])) > 0.999 and abs(float((r["origin"] - e[0]) @ e[1])) < tol:
+                    key, entry = k, e
+                    break
+            dev = np.abs((P - entry[0]) @ entry[1])
+        else:
+            key, entry = CYL0 + j, ("cyl", r["origin"], r["axis"], r["r"])
+            d = P - r["origin"]
+            d = d - np.outer(d @ r["axis"], r["axis"])
+            dev = np.abs(np.linalg.norm(d, axis=1) - r["r"])
         if dev.max() < 4 * tol and float(np.sqrt((dev**2).mean())) < tol:
-            tag[i] = CYL0 + j
-            fit[CYL0 + j] = ("cyl", r["origin"], r["axis"], r["r"])
+            tag[i] = key
+            fit[key] = entry
 
     def owners():
         o = {}
         for i in np.where(tag >= 0)[0]:
             for key in (tuple(np.round(p, 6)) for p in (w @ quads[i][0])):
                 o.setdefault(key, {}).setdefault(int(tag[i]), []).append(i)
-        return {k: v for k, v in o.items() if any(t >= CYL0 for t in v)}
+        return {k: v for k, v in o.items() if any(t >= PLN0 for t in v)}
 
     def settle(p, ks):
         for _ in range(40 if len(ks) > 1 else 1):
@@ -292,7 +302,7 @@ def _cyl_tags(mesh, quads, raw, proj, w, tag, fit):
             off = max(np.linalg.norm(_onto(p, fit[k]) - p) for k in ks)
             if np.linalg.norm(p - p0) > 3 * tol or off > 1e-3:
                 for k, qs in ks.items():
-                    if k >= CYL0:
+                    if k >= PLN0:
                         bad.update(qs)
         if not bad:
             break
@@ -693,8 +703,7 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
 
     with measured(profile, "coarse"):
         if len(mesh.faces) > triangles:
-            v, f = fs.simplify(mesh.vertices, mesh.faces, 1 - triangles / len(mesh.faces))
-            coarse = surface.repair(trimesh.Trimesh(v, f, process=True))
+            coarse = surface.coarsen(mesh, triangles)
         else:
             coarse = mesh
     if not coarse.is_watertight:
@@ -861,7 +870,8 @@ def smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 90
     t0 = time.time()
     proj = _Projector(mesh)
     best, info = None, {"faces": 0, "near": 0.0, "score": -1.0}
-    global K, NP, PAIR, FACE_TOL
+    global K, NP, PAIR, FACE_TOL, _SCAN
+    _SCAN = scan
     FACE_TOL = min(tol, 0.5)  # потери по граням считаются тем же допуском, что и приёмка
     stages = []
     for step, (tri, K, NP, PAIR) in enumerate(STEPS, 1):

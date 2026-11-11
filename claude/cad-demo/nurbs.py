@@ -118,9 +118,9 @@ def _paired_quads(coarse: trimesh.Trimesh):
         q = V[[oa, x, ob, y]]
         n = fn[a] + fn[b]
         ln = np.linalg.norm(n)
-        if ln < 1e-9:
-            continue
-        n = n / ln
+        # сложенные треугольники (нормали навстречу) тоже остаются в графе, с нулевым весом: без
+        # этих рёбер разбиение на пары без остатка может не существовать (линза: 3 ребра из 2247)
+        n = n / ln if ln > 1e-9 else fn[a]
         e = np.roll(q, -1, 0) - q
         turn = np.array([np.cross(e[k - 1], e[k]) @ n for k in range(4)])
         le = np.linalg.norm(e, axis=1)

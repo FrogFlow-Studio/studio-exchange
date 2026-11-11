@@ -282,7 +282,10 @@ def cut_holes(s, scan: trimesh.Trimesh):
         try:
             cyl = cq.Solid.makeCylinder(r, h, cq.Vector(*c), cq.Vector(*d))
             res = s.cut(cyl)
-            if len(res.Solids()) == 1 and 0 <= s.Volume() - res.Volume() <= 1.05 * np.pi * r * r * h + 1:
+            # вырез, после которого тело невалидно, не берётся: на гладком теле линзы цилиндр задевал
+            # сплайновые грани по касательной, и всё тело отбрасывалось на проверке (11.11)
+            if (len(res.Solids()) == 1 and 0 <= s.Volume() - res.Volume() <= 1.05 * np.pi * r * r * h + 1
+                    and res.Solids()[0].isValid()):
                 s, cut = res.Solids()[0], cut + 1
         except Exception:  # noqa: BLE001
             pass

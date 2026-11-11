@@ -1,0 +1,320 @@
+diff --git a/claude/cad-demo/geo_worker.py b/claude/cad-demo/geo_worker.py
+index 03c5ce9..1c809c5 100644
+--- a/claude/cad-demo/geo_worker.py
++++ b/claude/cad-demo/geo_worker.py
+@@ -2,10 +2,14 @@
+ 
+ python geo_worker.py скан_выровненный.stl sheet.json 1|0 ответ.json [walls|surface|smooth]
+ """
++import hashlib
+ import json
++import os
++import tempfile
+ import sys
+ from pathlib import Path
+ 
++import numpy as np
+ import trimesh
+ 
+ import geometric
+@@ -37,77 +41,122 @@ def _memory_guard(share: float = 0.45) -> None:
+     threading.Thread(target=watch, daemon=True).start()
+ 
+ 
+-_memory_guard()
+-scan = trimesh.load(sys.argv[1], force="mesh")
+-KIND = sys.argv[5] if len(sys.argv) > 5 else "geometric"
+-if KIND in ("walls", "geometric") and len(scan.faces) > 300_000:
+-    # стенкам и сечениям хватает 300 тыс. треугольников (сдвиг поверхности сотые доли мм), а на
+-    # миллионе они не успевают за отведённое время
+-    from holes import _coarse
+ 
+-    scan = _coarse(scan)
+-sheet = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+-if len(sys.argv) > 5 and sys.argv[5] == "walls":
+-    import walls
++def _clean_surface(scan: trimesh.Trimesh, scan_path: Path, answer: Path) -> trimesh.Trimesh:
++    """Share the unflattened mesh between workers of the same run."""
++    from zipfile import BadZipFile
+ 
+-    import pickle
+-
+-    ws = walls.walls(scan)
+-    code = walls.draft_code(ws)
+-    # те же стенки отдаст инструмент walls для ИИ, чтобы не считать их второй раз
+-    Path(sys.argv[4]).with_suffix(".pkl").write_bytes(pickle.dumps(ws))
+-    meta = {"plan": f"черновик из стенок: найдено {len(ws)} стенок, каждая выдавлена по контуру",
+-            "restored": [], "assumptions": ["деталь тонкостенная: собрана из пластин"]}
+-elif len(sys.argv) > 5 and sys.argv[5] == "surface":
+-    import cadquery as cq
+-
+-    import surface
+-
+-    body, info = surface.surface_body(scan)
+-    step = Path(sys.argv[4]).with_suffix(".step")
+-    cq.exporters.export(body, str(step))
+-    code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
+-    meta = {"plan": f"тело по поверхности скана: {info['faces']} треугольников, отверстий вырезано точно {info['holes_cut']}",
+-            "restored": [], "assumptions": ["форма любая: тело повторяет поверхность скана, плоские участки выпрямлены"]}
+-elif len(sys.argv) > 5 and sys.argv[5] == "smooth":
+-    import cadquery as cq
+-
+-    import nurbs
+     import surface
+ 
+-    # Приёмка гладкого тела меряется по очищенной поверхности, а не по сырому скану: шум там уже снят,
+-    # и допуск сравнения (3×шум) здесь слишком широк — пропускает крупные грани, срезающие рёбра.
+-    # Поэтому берётся сам шум, не меньше 0,3 мм (CAD_FIT_TOL=wide — прежнее правило, для сравнения).
+-    noise = float(sheet.get("diagnostics", {}).get("noise_mm", 0) or 0)
+-    wide = __import__("os").environ.get("CAD_FIT_TOL") == "wide"
+-    tol = max(0.3, (3 if wide else 1) * noise)
+-    import time
+-
+-    t_smooth = time.time()
+-    clean = surface.surface_mesh(scan)
+-    body, info = nurbs.smooth_body(surface.flatten_planes(clean), scan, tol=tol)
+-    if body is None:
+-        raise SystemExit("гладкое тело не собралось")
+-    planes = sum(f.geomType() == "PLANE" for f in body.Faces())
+-    fil_note = []
+-    try:  # скругления между плоскими гранями: точные цилиндры вместо сплайнов; не вышло — тело прежнее
+-        import fillets
+-
+-        left = 1000 - (time.time() - t_smooth)   # у попытки 0к в demo.py предел 1200 с
+-        on = __import__("os").environ.get("CAD_FILLETS", "1") != "0"   # CAD_FILLETS=0 — без точных скруглений (для сравнения)
+-        fl = fillets.find_fillets(clean) if on and left > 120 else []
+-        if fl:
+-            body, built, _ = fillets.apply(body, fl, budget=min(240.0, left - 90), mesh=clean)
+-            fil_note = [fillets.summary(fl) + (f"; точными цилиндрами построено кусков: {built}" if built else "")]
+-    except Exception:  # noqa: BLE001
++    if os.environ.get("CAD_SURFACE_CACHE", "1") == "0":
++        return surface.surface_mesh(scan)
++    with scan_path.open("rb") as src:
++        digest = hashlib.file_digest(src, "sha256").hexdigest()
++    cache = answer.parent / f"surface-clean-{digest}-{int(surface.EDGE_KEEP)}-{surface.SMOOTH}.npz"
++    try:
++        with np.load(cache, allow_pickle=False) as data:
++            mesh = trimesh.Trimesh(data["vertices"], data["faces"], process=False)
++        print("очистка поверхности: из кэша", flush=True)
++        return mesh
++    except (OSError, ValueError, KeyError, EOFError, BadZipFile):
++        pass
++
++    mesh = surface.surface_mesh(scan)
++    temp = None
++    try:
++        with tempfile.NamedTemporaryFile(dir=cache.parent, suffix=".tmp", delete=False) as f:
++            temp = Path(f.name)
++            np.savez(f, vertices=np.asarray(mesh.vertices), faces=np.asarray(mesh.faces))
++        temp.replace(cache)
++    except OSError:
++        # A read-only folder or a concurrent Windows reader must not block reconstruction.
++        pass
++    finally:
++        if temp is not None:
++            try:
++                temp.unlink(missing_ok=True)
++            except OSError:
++                pass
++    return mesh
++
++
++def main() -> None:
++    _memory_guard()
++    scan_path, answer = Path(sys.argv[1]), Path(sys.argv[4])
++    scan = trimesh.load(scan_path, force="mesh")
++    KIND = sys.argv[5] if len(sys.argv) > 5 else "geometric"
++    if KIND in ("walls", "geometric") and len(scan.faces) > 300_000:
++        # стенкам и сечениям хватает 300 тыс. треугольников (сдвиг поверхности сотые доли мм), а на
++        # миллионе они не успевают за отведённое время
++        from holes import _coarse
++
++        scan = _coarse(scan)
++    sheet = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
++    if len(sys.argv) > 5 and sys.argv[5] == "walls":
++        import walls
++
++        import pickle
++
++        ws = walls.walls(scan)
++        code = walls.draft_code(ws)
++        # те же стенки отдаст инструмент walls для ИИ, чтобы не считать их второй раз
++        Path(sys.argv[4]).with_suffix(".pkl").write_bytes(pickle.dumps(ws))
++        meta = {"plan": f"черновик из стенок: найдено {len(ws)} стенок, каждая выдавлена по контуру",
++                "restored": [], "assumptions": ["деталь тонкостенная: собрана из пластин"]}
++    elif len(sys.argv) > 5 and sys.argv[5] == "surface":
++        import cadquery as cq
++
++        import surface
++
++        body, info = surface.surface_body(scan, prepared=_clean_surface(scan, scan_path, answer))
++        step = Path(sys.argv[4]).with_suffix(".step")
++        cq.exporters.export(body, str(step))
++        code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
++        meta = {"plan": f"тело по поверхности скана: {info['faces']} треугольников, отверстий вырезано точно {info['holes_cut']}",
++                "restored": [], "assumptions": ["форма любая: тело повторяет поверхность скана, плоские участки выпрямлены"]}
++    elif len(sys.argv) > 5 and sys.argv[5] == "smooth":
++        import cadquery as cq
++
++        import nurbs
++        import surface
++
++        # Приёмка гладкого тела меряется по очищенной поверхности, а не по сырому скану: шум там уже снят,
++        # и допуск сравнения (3×шум) здесь слишком широк — пропускает крупные грани, срезающие рёбра.
++        # Поэтому берётся сам шум, не меньше 0,3 мм (CAD_FIT_TOL=wide — прежнее правило, для сравнения).
++        noise = float(sheet.get("diagnostics", {}).get("noise_mm", 0) or 0)
++        wide = __import__("os").environ.get("CAD_FIT_TOL") == "wide"
++        tol = max(0.3, (3 if wide else 1) * noise)
++        import time
++
++        t_smooth = time.time()
++        clean = _clean_surface(scan, scan_path, answer)
++        body, info = nurbs.smooth_body(surface.flatten_planes(clean), scan, tol=tol)
++        if body is None:
++            raise SystemExit("гладкое тело не собралось")
++        planes = sum(f.geomType() == "PLANE" for f in body.Faces())
+         fil_note = []
+-    body, cut = surface.cut_holes(body, scan)
+-    step = Path(sys.argv[4]).with_suffix(".step")
+-    cq.exporters.export(body, str(step))
+-    code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
+-    meta = {"plan": f"гладкое тело: {info['faces']} граней по скану (из них {planes} точных плоскостей, остальные B-сплайн), {round(info['near'] * 100, 1)}% поверхности "
+-                    f"в пределах 0,2 мм, отверстий вырезано точно {cut}",
+-            "restored": [], "assumptions": ["форма любая: гладкие грани повторяют поверхность скана"] + fil_note}
+-else:
+-    code, meta = geometric.build(scan, sheet, restore=sys.argv[3] == "1")
+-Path(sys.argv[4]).write_text(json.dumps({"code": code, "meta": meta}, ensure_ascii=False), encoding="utf-8")
++        try:  # скругления между плоскими гранями: точные цилиндры вместо сплайнов; не вышло — тело прежнее
++            import fillets
++
++            left = 1000 - (time.time() - t_smooth)   # у попытки 0к в demo.py предел 1200 с
++            on = __import__("os").environ.get("CAD_FILLETS", "1") != "0"   # CAD_FILLETS=0 — без точных скруглений (для сравнения)
++            fl = fillets.find_fillets(clean) if on and left > 120 else []
++            if fl:
++                body, built, _ = fillets.apply(body, fl, budget=min(240.0, left - 90), mesh=clean)
++                fil_note = [fillets.summary(fl) + (f"; точными цилиндрами построено кусков: {built}" if built else "")]
++        except Exception:  # noqa: BLE001
++            fil_note = []
++        body, cut = surface.cut_holes(body, scan)
++        step = Path(sys.argv[4]).with_suffix(".step")
++        cq.exporters.export(body, str(step))
++        code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
++        meta = {"plan": f"гладкое тело: {info['faces']} граней по скану (из них {planes} точных плоскостей, остальные B-сплайн), {round(info['near'] * 100, 1)}% поверхности "
++                        f"в пределах 0,2 мм, отверстий вырезано точно {cut}",
++                "restored": [], "assumptions": ["форма любая: гладкие грани повторяют поверхность скана"] + fil_note}
++    else:
++        code, meta = geometric.build(scan, sheet, restore=sys.argv[3] == "1")
++    Path(sys.argv[4]).write_text(json.dumps({"code": code, "meta": meta}, ensure_ascii=False), encoding="utf-8")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/claude/cad-demo/nurbs.py b/claude/cad-demo/nurbs.py
+index 3d5d9ac..50232df 100644
+--- a/claude/cad-demo/nurbs.py
++++ b/claude/cad-demo/nurbs.py
+@@ -24,6 +24,7 @@ python nurbs.py скан.stl папка
+ """
+ from __future__ import annotations
+ 
++import os
+ import sys
+ import time
+ from pathlib import Path
+@@ -402,6 +403,58 @@ def _lsq_surface(P: np.ndarray, n: int):
+     return _bspline(C, inner, inner)
+ 
+ 
++def _fit_patch(args):
++    points, basis = args
++    return _lsq_fit(_evened(points), basis, basis)[0]
++
++
++def _watch_parent():
++    """Exit if the demo kills its smooth-body worker on timeout."""
++    import multiprocessing
++    import threading
++
++    parent = multiprocessing.parent_process()
++    if parent is not None:
++        def watch():
++            parent.join()
++            os._exit(1)
++
++        threading.Thread(target=watch, daemon=True).start()
++
++
++def _fit_patches(grids, basis):
++    from concurrent.futures import ProcessPoolExecutor
++    from concurrent.futures.process import BrokenProcessPool
++    import multiprocessing
++
++    cpus = os.cpu_count() or 1
++    try:
++        jobs = max(1, min(int(os.environ.get("CAD_JOBS", "1")), cpus, 61))
++    except ValueError:
++        jobs = 1
++    args = [(p, basis) for p in grids]
++    if jobs > 1 and len(args) >= 64:
++        # Each patch is a small least-squares solve. Prevent nested BLAS teams
++        # from oversubscribing the same CPU cores in each child.
++        limits = ("OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "OMP_NUM_THREADS", "BLIS_NUM_THREADS")
++        saved = {key: os.environ.get(key) for key in limits}
++        try:
++            for key in limits:
++                os.environ[key] = "1"
++            with ProcessPoolExecutor(max_workers=jobs, mp_context=multiprocessing.get_context("spawn"),
++                                     initializer=_watch_parent) as pool:
++                return list(pool.map(_fit_patch, args, chunksize=16))
++        except (BrokenProcessPool, OSError):
++            print("подгонка граней: пул недоступен, считаю последовательно", flush=True)
++        finally:
++            for key, value in saved.items():
++                if value is None:
++                    os.environ.pop(key, None)
++                else:
++                    os.environ[key] = value
++    return [_fit_patch(task) for task in args]
++
++
+ def _lossy(fitted: list, proj: _Projector, tol: float, n_pts: int = 30000) -> set:
+     """Номера граней, до которых не дотянулась часть поверхности: у точки чистой поверхности
+     ближайшая точка модели дальше tol, и эта ближайшая точка принадлежит грани. Мера двусторонняя:
+@@ -520,16 +573,15 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
+         faces.append(fc)
+         ftag.append(t)
+ 
+-    pre, split, sides = {}, set(), {}
++    split, sides = set(), {}
+     if NP:
+         B, inner = _basis(K, NP)
+         A = np.kron(B, B)
+-        fitted = []
+-        for i, ((q, _), nn_) in enumerate(zip(quads, nrm)):
+-            C, _r = _lsq_fit(_evened(proj(w @ q, nn_).reshape(K, K, 3)), B, B)
+-            pre[i] = C
+-            fitted.append(A @ C.reshape(-1, 3))
++        # Project in the original order to preserve the shared boundary cache.
++        grids = [proj(w @ q, nn_).reshape(K, K, 3) for (q, _), nn_ in zip(quads, nrm)]
++        pre = _fit_patches(grids, B)
+         if SPLIT and pq is not None:
++            fitted = [A @ C.reshape(-1, 3) for C in pre]
+             split = {i for i in _lossy(fitted, proj, FACE_TOL) if tag[i] < 0}
+             for i in split:
+                 q = quads[i][0]
+diff --git a/claude/cad-demo/surface.py b/claude/cad-demo/surface.py
+index be8617a..d1c47f1 100644
+--- a/claude/cad-demo/surface.py
++++ b/claude/cad-demo/surface.py
+@@ -292,8 +292,9 @@ def cut_holes(s, scan: trimesh.Trimesh):
+     return s, cut
+ 
+ 
+-def surface_body(scan: trimesh.Trimesh, faces: int = 20000, holes: bool = True):
+-    m = flatten_planes(surface_mesh(scan, faces))
++def surface_body(scan: trimesh.Trimesh, faces: int = 20000, holes: bool = True, *,
++                 prepared: trimesh.Trimesh | None = None):
++    m = flatten_planes(surface_mesh(scan, faces) if prepared is None else prepared)
+     s = solid_from_mesh(m)
+     cut = 0
+     if holes:

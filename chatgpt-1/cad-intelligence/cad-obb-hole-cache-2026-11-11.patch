@@ -1,0 +1,324 @@
+diff --git a/claude/cad-demo/cad_checks.py b/claude/cad-demo/cad_checks.py
+index 1341a63..43ac177 100644
+--- a/claude/cad-demo/cad_checks.py
++++ b/claude/cad-demo/cad_checks.py
+@@ -1,4 +1,5 @@
+ """Shared checks and measurements for local Boolean operations."""
++import os
+ from contextlib import contextmanager
+ from time import perf_counter
+ 
+@@ -15,6 +16,36 @@ def measured(timings, key):
+         timings[key] = timings.get(key, 0.0) + perf_counter() - start
+ 
+ 
++def boolean_op(base, tools, *, fuse=False):
++    """Run the same OCC Boolean with OBB pruning when enabled."""
++    legacy = base.fuse if fuse else base.cut
++    if os.environ.get("CAD_BOOLEAN_OBB", "0") != "1":
++        return legacy(*tools)
++
++    import cadquery as cq
++    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
++    from OCP.TopTools import TopTools_ListOfShape
++
++    try:
++        args, operands = TopTools_ListOfShape(), TopTools_ListOfShape()
++        args.Append(base.wrapped)
++        for tool in tools:
++            operands.Append(tool.wrapped)
++        op = BRepAlgoAPI_Fuse() if fuse else BRepAlgoAPI_Cut()
++        op.SetArguments(args)
++        op.SetTools(operands)
++        op.SetRunParallel(True)
++        op.SetUseOBB(True)
++        op.Build()
++        if op.IsDone():
++            result = op.Shape()
++            if not result.IsNull():
++                return cq.Shape.cast(result)
++    except Exception:  # optional OCC path: retry with the original flags
++        pass
++    return legacy(*tools)
++
++
+ class VolumeMemo:
+     """Remember the last accepted shape's volume using the original integrator."""
+ 
+diff --git a/claude/cad-demo/demo.py b/claude/cad-demo/demo.py
+index 29d503d..f7904ec 100644
+--- a/claude/cad-demo/demo.py
++++ b/claude/cad-demo/demo.py
+@@ -1201,6 +1201,7 @@ def main() -> None:
+             parts.extend(f"{label} {duration(worker.get(key))}" for key, label in
+                          (("smooth", "гладкое тело"), ("fillets", "скругления"), ("holes", "отверстия")))
+         for key, label in (("fillet_boolean", "скругления, булевы"), ("fillet_checks", "скругления, проверки"),
++                           ("hole_search", "поиск отверстий/кэш"),
+                            ("hole_boolean", "отверстия, булевы"), ("hole_checks", "отверстия, проверки")):
+             if key in worker:
+                 parts.append(f"{stage}, {label} {duration(worker[key])}")
+diff --git a/claude/cad-demo/fillets.py b/claude/cad-demo/fillets.py
+index 30af411..7491cc8 100644
+--- a/claude/cad-demo/fillets.py
++++ b/claude/cad-demo/fillets.py
+@@ -156,7 +156,7 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
+     Возвращает (тело, сколько кусков построено, сколько участков пропущено)."""
+     import time
+ 
+-    from cad_checks import InsideMemo, VolumeMemo, measured
++    from cad_checks import InsideMemo, VolumeMemo, boolean_op, measured
+ 
+     if volumes is None:
+         volumes = VolumeMemo()
+@@ -235,7 +235,8 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
+         t0_ = time.time()
+         try:
+             with measured(timings, "fillet_boolean"):
+-                new = base.cut(*[c_ for c_, _ in part]).fuse(*[a_ for _, a_ in part])
++                cut = boolean_op(base, [c for c, _ in part])
++                new = boolean_op(cut, [a for _, a in part], fuse=True)
+             with measured(timings, "fillet_checks"):
+                 sols = new.Solids()
+                 why = ("тел " + str(len(sols))) if len(sols) != 1 else ("" if sols[0].isValid() else "невалидно")
+diff --git a/claude/cad-demo/geo_worker.py b/claude/cad-demo/geo_worker.py
+index 9863772..48b3103 100644
+--- a/claude/cad-demo/geo_worker.py
++++ b/claude/cad-demo/geo_worker.py
+@@ -10,6 +10,7 @@ import time
+ from contextlib import contextmanager
+ import sys
+ from pathlib import Path
++from zipfile import BadZipFile
+ 
+ import numpy as np
+ import trimesh
+@@ -46,7 +47,7 @@ def _memory_guard(share: float = 0.45) -> None:
+ 
+ @contextmanager
+ def _cache_lock(path: Path, timeout: float = 1200):
+-    """One cleaner per cache entry; the OS releases the lock if a worker is killed."""
++    """One writer per cache entry; the OS releases the lock if a worker is killed."""
+     if os.name == "nt":
+         import msvcrt
+ 
+@@ -68,44 +69,39 @@ def _cache_lock(path: Path, timeout: float = 1200):
+             except OSError as ex:
+                 remaining = deadline - time.monotonic()
+                 if remaining <= 0:
+-                    raise TimeoutError("ожидание очистки превысило предел") from ex
++                    raise TimeoutError("ожидание кэша превысило предел") from ex
+                 time.sleep(min(0.1, remaining))
+         yield
+ 
+ 
+-def _clean_surface(scan: trimesh.Trimesh, scan_path: Path, answer: Path) -> trimesh.Trimesh:
+-    """Share the unflattened mesh between workers of the same run."""
+-    from zipfile import BadZipFile
++def _scan_digest(scan_path: Path) -> str:
++    with scan_path.open("rb") as src:
++        return hashlib.file_digest(src, "sha256").hexdigest()
+ 
+-    import surface
+ 
+-    if os.environ.get("CAD_SURFACE_CACHE", "1") == "0":
+-        return surface.surface_mesh(scan)
+-    with scan_path.open("rb") as src:
+-        digest = hashlib.file_digest(src, "sha256").hexdigest()
+-    cache = answer.parent / f"surface-clean-{digest}-{int(surface.EDGE_KEEP)}-{surface.SMOOTH}.npz"
+-    def read_cache():
++def _run_cache(cache: Path, label: str, read, compute, write):
++    def load():
+         try:
+-            with np.load(cache, allow_pickle=False) as data:
+-                return trimesh.Trimesh(data["vertices"], data["faces"], process=False)
+-        except (OSError, ValueError, KeyError, EOFError, BadZipFile):
++            with cache.open("rb") as stream:
++                return read(stream)
++        except (OSError, ValueError, TypeError, KeyError, EOFError, BadZipFile):
+             return None
+ 
+-    mesh = read_cache()
+-    if mesh is not None:
+-        print("очистка поверхности: из кэша", flush=True)
+-        return mesh
++    value = load()
++    if value is not None:
++        print(f"{label}: из кэша", flush=True)
++        return value
+     with _cache_lock(cache.with_suffix(".lock")):
+-        mesh = read_cache()
+-        if mesh is not None:
+-            print("очистка поверхности: из кэша после ожидания", flush=True)
+-            return mesh
+-        mesh = surface.surface_mesh(scan)
++        value = load()
++        if value is not None:
++            print(f"{label}: из кэша после ожидания", flush=True)
++            return value
++        value = compute()
+         temp = None
+         try:
+-            with tempfile.NamedTemporaryFile(dir=cache.parent, suffix=".tmp", delete=False) as f:
+-                temp = Path(f.name)
+-                np.savez(f, vertices=np.asarray(mesh.vertices), faces=np.asarray(mesh.faces))
++            with tempfile.NamedTemporaryFile(dir=cache.parent, suffix=".tmp", delete=False) as stream:
++                temp = Path(stream.name)
++                write(stream, value)
+             temp.replace(cache)
+         except OSError:
+             pass
+@@ -115,7 +111,51 @@ def _clean_surface(scan: trimesh.Trimesh, scan_path: Path, answer: Path) -> trim
+                     temp.unlink(missing_ok=True)
+                 except OSError:
+                     pass
+-        return mesh
++        return value
++
++
++def _clean_surface(scan: trimesh.Trimesh, scan_path: Path, answer: Path, *, digest=None) -> trimesh.Trimesh:
++    """Share the unflattened mesh between workers of the same run."""
++    import surface
++
++    if os.environ.get("CAD_SURFACE_CACHE", "1") == "0":
++        return surface.surface_mesh(scan)
++    digest = digest or _scan_digest(scan_path)
++    cache = answer.parent / f"surface-clean-{digest}-{int(surface.EDGE_KEEP)}-{surface.SMOOTH}.npz"
++
++    def read(stream):
++        with np.load(stream, allow_pickle=False) as data:
++            return trimesh.Trimesh(data["vertices"], data["faces"], process=False)
++
++    def write(stream, mesh):
++        np.savez(stream, vertices=np.asarray(mesh.vertices), faces=np.asarray(mesh.faces))
++
++    return _run_cache(cache, "очистка поверхности", read, lambda: surface.surface_mesh(scan), write)
++
++
++def _hole_specs(scan, scan_path: Path, answer: Path, *, digest=None):
++    import surface
++
++    if os.environ.get("CAD_HOLE_CACHE", "1") == "0":
++        return surface.hole_parameters(scan)
++    digest = digest or _scan_digest(scan_path)
++    cache = answer.parent / f"hole-specs-v1-{digest}.json"
++
++    def read(stream):
++        rows = json.load(stream)
++        if not isinstance(rows, list):
++            raise ValueError("invalid hole cache")
++        specs = []
++        for c, d, r, h in rows:
++            if len(c) != 3 or len(d) != 3:
++                raise ValueError("invalid cylinder vectors")
++            specs.append((tuple(map(float, c)), tuple(map(float, d)), float(r), float(h)))
++        return specs
++
++    def write(stream, rows):
++        stream.write(json.dumps(rows).encode("utf-8"))
++
++    return _run_cache(cache, "поиск отверстий", read, lambda: surface.hole_parameters(scan), write)
+ 
+ 
+ def main() -> None:
+@@ -132,6 +172,14 @@ def main() -> None:
+ 
+         scan = _coarse(scan)
+     sheet = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
++    digest = None
++    if KIND in ("surface", "smooth") and any(
++            os.environ.get(key, "1") != "0" for key in ("CAD_SURFACE_CACHE", "CAD_HOLE_CACHE")):
++        digest = _scan_digest(scan_path)
++
++    def hole_finder(mesh):
++        return _hole_specs(mesh, scan_path, answer, digest=digest)
++
+     if len(sys.argv) > 5 and sys.argv[5] == "walls":
+         import walls
+ 
+@@ -149,9 +197,9 @@ def main() -> None:
+         import surface
+ 
+         t = time.perf_counter()
+-        clean = _clean_surface(scan, scan_path, answer)
++        clean = _clean_surface(scan, scan_path, answer, digest=digest)
+         timings["cleanup"] = time.perf_counter() - t
+-        body, info = surface.surface_body(scan, prepared=clean, timings=timings)
++        body, info = surface.surface_body(scan, prepared=clean, timings=timings, hole_finder=hole_finder)
+         step = Path(sys.argv[4]).with_suffix(".step")
+         cq.exporters.export(body, str(step))
+         code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
+@@ -173,7 +221,7 @@ def main() -> None:
+         wide = __import__("os").environ.get("CAD_FIT_TOL") == "wide"
+         tol = max(0.3, (3 if wide else 1) * noise)
+         t_smooth = time.perf_counter()
+-        clean = _clean_surface(scan, scan_path, answer)
++        clean = _clean_surface(scan, scan_path, answer, digest=digest)
+         t = time.perf_counter()
+         timings["cleanup"] = t - t_smooth
+         body, info = nurbs.smooth_body(surface.flatten_planes(clean), scan, tol=tol)
+@@ -198,7 +246,7 @@ def main() -> None:
+             fil_note = []
+         timings["fillets"] = time.perf_counter() - t
+         t = time.perf_counter()
+-        body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings)
++        body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings, hole_finder=hole_finder)
+         timings["holes"] = time.perf_counter() - t
+         step = Path(sys.argv[4]).with_suffix(".step")
+         cq.exporters.export(body, str(step))
+diff --git a/claude/cad-demo/surface.py b/claude/cad-demo/surface.py
+index 97803b3..50f094e 100644
+--- a/claude/cad-demo/surface.py
++++ b/claude/cad-demo/surface.py
+@@ -270,22 +270,31 @@ def surface_mesh(scan: trimesh.Trimesh, faces: int = 20000) -> trimesh.Trimesh:
+     return r if r.is_watertight and r.is_winding_consistent else meshfix(m)
+ 
+ 
+-def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None):
++def hole_parameters(scan: trimesh.Trimesh):
++    """Cylinder parameters in scan coordinates, independent of the candidate body."""
++    import walls
++
++    return [(tuple(w["origin"] + w["normal"] * 0.3), tuple(-w["normal"]),
++             float(w["hole"]["r"]), float(w["hole"]["t"] + 0.3))
++            for w in walls._hole_walls(scan)]
++
++
++def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_finder=hole_parameters):
+     """Круглые отверстия вырезаются точно по диаметру из скана. Возвращает (тело, сколько)."""
+     import cadquery as cq
+ 
+-    import walls as W
+-    from cad_checks import VolumeMemo, measured
++    from cad_checks import VolumeMemo, boolean_op, measured
+ 
+     if volumes is None:
+         volumes = VolumeMemo()
++    with measured(timings, "hole_search"):
++        specs = hole_finder(scan)
+     cut = 0
+-    for w in W._hole_walls(scan):
+-        c, d, r, h = w["origin"] + w["normal"] * 0.3, -w["normal"], w["hole"]["r"], w["hole"]["t"] + 0.3
++    for c, d, r, h in specs:
+         try:
+             cyl = cq.Solid.makeCylinder(r, h, cq.Vector(*c), cq.Vector(*d))
+             with measured(timings, "hole_boolean"):
+-                res = s.cut(cyl)
++                res = boolean_op(s, (cyl,))
+             with measured(timings, "hole_checks"):
+                 solids = res.Solids()
+                 if len(solids) != 1:
+@@ -302,12 +311,12 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None):
+ 
+ 
+ def surface_body(scan: trimesh.Trimesh, faces: int = 20000, holes: bool = True, *,
+-                 prepared: trimesh.Trimesh | None = None, timings=None):
++                 prepared: trimesh.Trimesh | None = None, timings=None, hole_finder=hole_parameters):
+     m = flatten_planes(surface_mesh(scan, faces) if prepared is None else prepared)
+     s = solid_from_mesh(m)
+     cut = 0
+     if holes:
+-        s, cut = cut_holes(s, scan, timings=timings)
++        s, cut = cut_holes(s, scan, timings=timings, hole_finder=hole_finder)
+     return s, {"faces": len(m.faces), "watertight": bool(m.is_watertight), "holes_cut": cut}
+ 
+ if __name__ == "__main__":

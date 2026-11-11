@@ -270,34 +270,44 @@ def surface_mesh(scan: trimesh.Trimesh, faces: int = 20000) -> trimesh.Trimesh:
     return r if r.is_watertight and r.is_winding_consistent else meshfix(m)
 
 
-def cut_holes(s, scan: trimesh.Trimesh):
+def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None):
     """Круглые отверстия вырезаются точно по диаметру из скана. Возвращает (тело, сколько)."""
     import cadquery as cq
 
     import walls as W
+    from cad_checks import VolumeMemo, measured
 
+    if volumes is None:
+        volumes = VolumeMemo()
     cut = 0
     for w in W._hole_walls(scan):
         c, d, r, h = w["origin"] + w["normal"] * 0.3, -w["normal"], w["hole"]["r"], w["hole"]["t"] + 0.3
         try:
             cyl = cq.Solid.makeCylinder(r, h, cq.Vector(*c), cq.Vector(*d))
-            res = s.cut(cyl)
-            # вырез, после которого тело невалидно, не берётся: на гладком теле линзы цилиндр задевал
-            # сплайновые грани по касательной, и всё тело отбрасывалось на проверке (11.11)
-            if (len(res.Solids()) == 1 and 0 <= s.Volume() - res.Volume() <= 1.05 * np.pi * r * r * h + 1
-                    and res.Solids()[0].isValid()):
-                s, cut = res.Solids()[0], cut + 1
+            with measured(timings, "hole_boolean"):
+                res = s.cut(cyl)
+            with measured(timings, "hole_checks"):
+                solids = res.Solids()
+                if len(solids) != 1:
+                    continue
+                before, after = volumes.get(s), res.Volume()
+                solid = solids[0]
+                # Сохраняем прежние пороги объёма и валидности, в том числе для касаний.
+                if 0 <= before - after <= 1.05 * np.pi * r * r * h + 1 and solid.isValid():
+                    volumes.remember_cut(res, solid, after)
+                    s, cut = solid, cut + 1
         except Exception:  # noqa: BLE001
             pass
     return s, cut
 
 
-def surface_body(scan: trimesh.Trimesh, faces: int = 20000, holes: bool = True):
-    m = flatten_planes(surface_mesh(scan, faces))
+def surface_body(scan: trimesh.Trimesh, faces: int = 20000, holes: bool = True, *,
+                 prepared: trimesh.Trimesh | None = None, timings=None):
+    m = flatten_planes(surface_mesh(scan, faces) if prepared is None else prepared)
     s = solid_from_mesh(m)
     cut = 0
     if holes:
-        s, cut = cut_holes(s, scan)
+        s, cut = cut_holes(s, scan, timings=timings)
     return s, {"faces": len(m.faces), "watertight": bool(m.is_watertight), "holes_cut": cut}
 
 if __name__ == "__main__":

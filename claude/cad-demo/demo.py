@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import base64
 import datetime as dt
 import html
@@ -69,6 +70,65 @@ def _ticker() -> None:
 import threading  # noqa: E402
 
 threading.Thread(target=_ticker, daemon=True).start()
+
+
+def smooth_memory_budget() -> int:
+    """Minimum free memory to keep while the speculative worker runs, or zero to defer."""
+    if os.environ.get("CAD_SMOOTH_BACKGROUND", "1") == "0":
+        return 0
+    try:
+        import psutil
+    except ImportError:
+        return 0
+    mem = psutil.virtual_memory()
+    if mem.available < max(4 * 2**30, int(0.35 * mem.total)):
+        return 0
+    return max(2**30, int(0.10 * mem.total))
+
+
+class SmoothJob:
+    """Bound the lifetime of a smooth worker even before the cascade reaches it."""
+
+    def __init__(self, proc, reserve: int, limit: float = 1200):
+        self.proc = proc
+        self.reserve = reserve
+        self.limit = limit
+        self.deadline = time.monotonic() + limit
+        self.reason = None
+        self.done = threading.Event()
+        self.monitor = threading.Thread(target=self._monitor, daemon=True)
+        self.monitor.start()
+
+    def _monitor(self):
+        if self.reserve:
+            import psutil
+        while not self.done.is_set() and self.proc.poll() is None:
+            left = self.deadline - time.monotonic()
+            if left <= 0:
+                self.reason = "timeout"
+            elif self.reserve and psutil.virtual_memory().available < self.reserve:
+                self.reason = "memory"
+            if self.reason:
+                self.proc.kill()
+                return
+            self.done.wait(min(left, 1))
+
+    def finish(self):
+        code = self.proc.wait(timeout=max(0, self.deadline - time.monotonic()))
+        if self.reason == "timeout":
+            raise subprocess.TimeoutExpired(self.proc.args, self.limit)
+        if code != 0:
+            raise RuntimeError(f"гладкое тело: процесс завершился с кодом {code}")
+
+    def close(self):
+        self.done.set()
+        self.monitor.join()
+        if self.proc.poll() is None:
+            self.proc.kill()
+        self.proc.wait()
+
+    def memory_limited(self):
+        return self.reserve and (self.reason == "memory" or self.proc.returncode == 3)
 
 
 DRAFT: dict = {}  # путь к STEP черновика, который ИИ может взять за основу (переменная draft)
@@ -534,7 +594,7 @@ a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:
 <p class=small>Модель — черновик для инженера. Производственное решение принимает человек, проверив размеры по детали (при желании в КОМПАС-3D или SolidWorks).</p></section>
 {viewer}
 {dims}
-<section><h2>Журнал попыток</h2><p>{e(route_text(its, best))}</p><table><tr><th>#</th><th>Результат</th><th>В допуске</th><th>Не хватает</th><th>Отклонение, мм: медиана / среднее</th><th>95% точек ближе, мм</th><th>Граней всего (точных)</th><th>Программа построения</th><th>Время</th></tr>{''.join(rows)}</table>
+<section><h2>Журнал попыток</h2><p>{e(route_text(its, best))}</p><p>{e(ctx.get("timing_text", ""))}</p><table><tr><th>#</th><th>Результат</th><th>В допуске</th><th>Не хватает</th><th>Отклонение, мм: медиана / среднее</th><th>95% точек ближе, мм</th><th>Граней всего (точных)</th><th>Программа построения</th><th>Время</th></tr>{''.join(rows)}</table>
 {''.join(blocks)}</section>
 <section><h2>Скан</h2><p>Граней {d['faces']}, замкнут: {'да' if d['watertight'] else 'нет'}, кусков: {d['components']}, габарит {d['extents_mm']} мм.
 {' '.join(e(w) for w in d['warnings'])}</p>
@@ -614,6 +674,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     log(f"режим: {mode_label}")
     log(f"1/4 читаю скан {a.scan}")
+    load_started = time.perf_counter()
     sheet, scan = scan_analysis.measurement_sheet(a.scan, units=a.units)
     log(f"    единицы файла: {a.units} (STL их не хранит; если габарит неверный, укажите --units)")
     scan.export(out / "scan_aligned.stl")
@@ -627,6 +688,16 @@ def main() -> None:
         log(f"    допуск сравнения поднят до {a.tol} мм: меньше шума скана мерить нельзя")
     (out / "sheet.json").write_text(json.dumps(sheet, ensure_ascii=False, indent=1), encoding="utf-8")
 
+    stages = {"загрузка и замеры": time.perf_counter() - load_started}
+    worker_times = {}
+
+    def compare_models(a_mesh, b_mesh):
+        t = time.perf_counter()
+        try:
+            return cmpmod.compare(a_mesh, b_mesh, tol=a.tol)
+        finally:
+            stages["сравнение"] = stages.get("сравнение", 0.0) + time.perf_counter() - t
+
     iterations, llm_log, best, converged = [], [], None, False
 
     def evaluate(n: int, code: str, meta: dict, t0: float, by: str) -> dict:
@@ -635,14 +706,17 @@ def main() -> None:
         log("3/4 строю модель…")
         # черновик из стенок собирается из сотен пластин: на крупной детали это минуты
         limit = 420 if n in ("0б", "0в", "0к") else 180
+        build_started = time.perf_counter()
         run = run_code(code, it_dir, timeout=limit) if code else {"ok": False, "error": "в ответе нет блока python"}
+        if n in (0, "0в", "0к"):
+            stages[f"{n}, построение/экспорт"] = time.perf_counter() - build_started
         cmp = None
         model = None
         if run.get("ok"):
             model = trimesh.load(it_dir / "model.stl", force="mesh")
             log(f"    тело валидно: {run.get('valid')}, объём {run.get('volume_mm3')} мм³")
             log("4/4 сравниваю со сканом…")
-            cmp = cmpmod.compare(scan, model, tol=a.tol)
+            cmp = compare_models(scan, model)
             log(f"    в допуске {cmp['within_tol_share']*100:.1f}%, не хватает материала {cmp['outside_share']*100:.2f}%, "
                 f"скол/лишнее {cmp['inside_share']*100:.2f}%, 95% ближе {cmp['p95_abs_dev_mm']} мм")
             render(cmp, it_dir / "deviation.png", f"Попытка {n} ({by})")
@@ -684,6 +758,30 @@ def main() -> None:
         # тело по поверхности на огромном скане (миллионы треугольников) считается дольше: даём больше
         surf_limit = bg_limit + (480 if sheet["diagnostics"]["faces"] > 1_000_000 else 0)
         surf_proc, walls_proc = launch("surface", sj), launch("walls", wj)
+        kj = out / "smooth.json"
+        smooth_job = None
+
+        def start_smooth(reserve=0):
+            proc = launch("smooth", kj)
+            if proc is None:
+                return None
+            job = SmoothJob(proc, reserve)
+            atexit.register(job.close)
+            return job
+
+        def close_smooth(job):
+            job.close()
+            atexit.unregister(job.close)
+
+        if a.smooth != "off":
+            reserve = smooth_memory_budget()
+            if reserve:
+                smooth_job = start_smooth(reserve)
+                if smooth_job is not None:
+                    log("    гладкое тело: расчёт запущен в фоне")
+            else:
+                log("    гладкое тело: старт отложен до проверки тела по поверхности")
+
         models = {}  # ИИ-модели-кандидаты: имя -> (процесс, файл ответа)
         for name, mode in (("stepcad", a.stepcad), ("cadena", a.cadena)):
             if want_model(mode, name):
@@ -719,6 +817,7 @@ def main() -> None:
                            timeout=a.geo_timeout, check=True, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
             g = json.loads(gj.read_text(encoding="utf-8"))
             g_code, g_meta = g["code"], g["meta"]
+            worker_times["0"] = g.get("timings", {})
         except subprocess.TimeoutExpired:
             g_code = None
             log(f"    деталь слишком сложная для алгоритма без ИИ: не уложился в {a.geo_timeout} с, дальше работает ИИ")
@@ -764,6 +863,7 @@ def main() -> None:
             try:
                 finish(surf_proc, surf_limit)
                 g = json.loads(sj.read_text(encoding="utf-8"))
+                worker_times["0в"] = g.get("timings", {})
                 log("    " + g["meta"]["plan"])
                 its = evaluate("0в", g["code"], g["meta"], t0, "поверхность, без ИИ")
                 iterations.append(its)
@@ -778,12 +878,23 @@ def main() -> None:
             if a.smooth != "off" and (best is None or best["n"] == "0в"):
                 t0 = time.time()
                 log("2/4 попытка 0к: гладкое тело из B-сплайн граней по скану, без ИИ…", 1200)
-                kj = out / "smooth.json"
                 try:
-                    subprocess.run([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
-                                    str(out / "sheet.json"), "1", str(kj), "smooth"],
-                                   timeout=1200, check=True, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                    if smooth_job is not None:
+                        try:
+                            smooth_job.finish()
+                        except RuntimeError:
+                            if not smooth_job.memory_limited():
+                                raise
+                            log("    гладкое тело: мало памяти для фона, повторяю последовательно")
+                            close_smooth(smooth_job)
+                            smooth_job = None
+                    if smooth_job is None:
+                        smooth_job = start_smooth()
+                        if smooth_job is None:
+                            raise RuntimeError("процесс не запустился")
+                        smooth_job.finish()
                     g = json.loads(kj.read_text(encoding="utf-8"))
+                    worker_times["0к"] = g.get("timings", {})
                     log("    " + g["meta"]["plan"])
                     itk = evaluate("0к", g["code"], g["meta"], t0, "гладкие грани, без ИИ")
                     iterations.append(itk)
@@ -795,6 +906,8 @@ def main() -> None:
                     log("    гладкое тело не уложилось во время")
                 except Exception as ex:  # noqa: BLE001
                     log(f"    гладкое тело не получилось ({type(ex).__name__})")
+        if smooth_job is not None:
+            close_smooth(smooth_job)
         # ИИ-модели-кандидаты пишут программу построения; берутся, только если по сравнению лучше
         titles = {"stepcad": ("0г", "StepCAD"), "cadena": ("0д", "CADENA")}
         for name, (proc, ans) in models.items():
@@ -1028,7 +1141,7 @@ def main() -> None:
                 tm = trimesh.load(tp, force="mesh")
             # эталон в координатах исходного скана → переводим в выровненные
             tm.apply_transform(np.array(sheet["transform_from_scan_4x4"]))
-            truth = cmpmod.compare(tm, trimesh.load(out / "model.stl", force="mesh"), tol=a.tol)
+            truth = compare_models(tm, trimesh.load(out / "model.stl", force="mesh"))
             log(f"эталон: в допуске {truth['within_tol_share']*100:.1f}% (тестовая деталь)")
             # каждая попытка против эталона: совпадение и точность диаметров отверстий
             try:
@@ -1048,7 +1161,7 @@ def main() -> None:
                         miss += 1
                     else:
                         errs.append(abs(r["d"] - m["d"]))
-                row = {"n": it["n"], "by": it["by"], "fit": cmpmod.compare(tm, mm, tol=a.tol)["within_tol_share"],
+                row = {"n": it["n"], "by": it["by"], "fit": compare_models(tm, mm)["within_tol_share"],
                        "holes": len(th), "missing": miss,
                        "d_err": round(float(np.mean(errs)), 3) if errs else None,
                        "d_max": round(float(np.max(errs)), 3) if errs else None, "best": it is best}
@@ -1065,17 +1178,41 @@ def main() -> None:
             log(f"проверка отверстий не удалась: {ex}")
     step_check = None
     if best and (out / "model.step").exists():
+        t = time.perf_counter()
         step_check = check_step(out / "model.step")
+        stages["перечитывание STEP"] = time.perf_counter() - t
         log("файл STEP перечитан: " + step_check[1])
     test_label = ""
     if "samples" in Path(a.scan).resolve().parts:
         test_label = "Тестовая деталь, сломанная нами специально. Это не деталь студии."
+    def duration(value):
+        return f"{value:.1f} с" if value is not None else "нет замера"
+
+    parts = [f"загрузка и замеры {duration(stages['загрузка и замеры'])}"]
+    for stage in ("0", "0в", "0к"):
+        worker = worker_times.get(stage, {})
+        elapsed = worker.get("total")
+        if elapsed is not None:
+            elapsed += stages.get(f"{stage}, построение/экспорт", 0)
+        parts.append(f"{stage} {duration(elapsed)}")
+        if "cleanup" in worker:
+            parts.append(f"{stage}, очистка/ожидание кэша {duration(worker['cleanup'])}")
+        if stage == "0к" and worker:
+            parts.extend(f"{label} {duration(worker.get(key))}" for key, label in
+                         (("smooth", "гладкое тело"), ("fillets", "скругления"), ("holes", "отверстия")))
+        for key, label in (("fillet_boolean", "скругления, булевы"), ("fillet_checks", "скругления, проверки"),
+                           ("hole_boolean", "отверстия, булевы"), ("hole_checks", "отверстия, проверки")):
+            if key in worker:
+                parts.append(f"{stage}, {label} {duration(worker[key])}")
+    parts.extend(f"{label} {duration(stages.get(label))}" for label in ("сравнение", "перечитывание STEP"))
+    timing_text = "время по этапам: " + ", ".join(parts) + " (фоновые этапы перекрываются)"
+    log(timing_text)
     log(route_text(iterations, best))
     rep = write_report(out, {
         "iterations": iterations, "best": best, "sheet": sheet, "mode": mode, "mode_label": mode_label,
         "started": started.strftime("%d.%m.%Y %H:%M"), "scan_name": Path(a.scan).name, "tol": a.tol,
         "target": a.target, "converged": converged, "total_s": (dt.datetime.now() - started).total_seconds(),  # весь запуск, с замерами
-        "truth": truth, "holes": holes_rows, "step_check": step_check,
+        "truth": truth, "holes": holes_rows, "step_check": step_check, "timing_text": timing_text,
         "test_label": test_label, "scan_mesh": scan})
     log(f"готово: {rep}")
     if not a.no_open:

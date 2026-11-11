@@ -143,7 +143,7 @@ def _sector(cc, e1, _unused, ax, r0, r1, phi, t0, t1):
 
 
 def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, log: list | None = None,
-          mesh=None):
+          mesh=None, *, volumes=None, timings=None):
     """Заменяет в теле приближённые (сплайновые) скругления точными цилиндрическими гранями.
 
     У каждого участка скругления узкая полоса у дуги сначала вырезается (инструмент режет тело
@@ -156,21 +156,28 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
     Возвращает (тело, сколько кусков построено, сколько участков пропущено)."""
     import time
 
-    import cadquery as cq
+    from cad_checks import InsideMemo, VolumeMemo, measured
 
+    if volumes is None:
+        volumes = VolumeMemo()
     t_start = time.time()
     if mesh is not None:
         from scipy.spatial import cKDTree
 
-        cen, nrm = mesh.triangles_center, mesh.face_normals
-        tree = cKDTree(cen)
+        with measured(timings, "fillet_checks"):
+            cen, nrm = mesh.triangles_center, mesh.face_normals
+            tree = cKDTree(cen)
 
         def inside(q):  # точка под ближайшим куском поверхности
-            k = tree.query(q)[1]
-            return float((q - cen[k]) @ nrm[k]) < 0
+            with measured(timings, "fillet_checks"):
+                k = tree.query(q)[1]
+                return float((q - cen[k]) @ nrm[k]) < 0
     else:
+        classifier = InsideMemo()
+
         def inside(q):
-            return body.isInside(cq.Vector(*map(float, q)))
+            with measured(timings, "fillet_checks"):
+                return classifier.contains(body, q)
     jobs = []  # (вырез, вставка) по участкам
     skipped = 0
     for f in fl:
@@ -227,13 +234,19 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
         не могут изменить его больше, чем на объём инструментов, общая сверка — в конце."""
         t0_ = time.time()
         try:
-            new = base.cut(*[c_ for c_, _ in part]).fuse(*[a_ for _, a_ in part])
-            sols = new.Solids()
-            why = ("тел " + str(len(sols))) if len(sols) != 1 else ("" if sols[0].isValid() else "невалидно")
+            with measured(timings, "fillet_boolean"):
+                new = base.cut(*[c_ for c_, _ in part]).fuse(*[a_ for _, a_ in part])
+            with measured(timings, "fillet_checks"):
+                sols = new.Solids()
+                why = ("тел " + str(len(sols))) if len(sols) != 1 else ("" if sols[0].isValid() else "невалидно")
         except Exception as e:  # noqa: BLE001  скругление — улучшение, без него тело то же
             sols, why = [], "ошибка " + type(e).__name__
         note(tag, why or "ок", round(time.time() - t0_, 1), "с")
         return None if why else sols[0]
+
+    def tool_volume(pair):
+        with measured(timings, "fillet_checks"):
+            return pair[0].Volume() + pair[1].Volume()
 
     start = body
     ready = [j for j in jobs if j[0] is not None]
@@ -244,7 +257,7 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
     new = attempt(body, [j[0] for j in ready], "все") if len(ready) > 1 else None
     if new is not None:  # все участки двумя операциями
         body, done = new, len(ready)
-        tools = sum(j[0][0].Volume() + j[0][1].Volume() for j in ready)
+        tools = sum(tool_volume(j[0]) for j in ready)
     else:  # по одному; неудачный участок делим пополам: вдоль него может мешать одно место
         queue = list(ready)
         while queue and time.time() - t_start < budget:
@@ -252,7 +265,7 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
             new = attempt(body, [pair], f"{a0:.0f}..{a1:.0f}")
             if new is not None:
                 body, done = new, done + 1
-                tools += pair[0].Volume() + pair[1].Volume()
+                tools += tool_volume(pair)
             elif a1 - a0 >= 2 * MIN_PIECE:
                 am = (a0 + a1) / 2
                 for b0, b1 in ((a0, am), (am, a1)):
@@ -264,9 +277,12 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
                         queue.append((sub, make, b0, b1))
     if done:
         try:  # общая сверка: тело не могло измениться больше, чем на объём инструментов
-            if abs(body.Volume() - start.Volume()) > tools + 1.0:
-                note("объём изменился больше объёма инструментов, скругления отменены")
-                return start, 0, skipped + len(jobs)
+            with measured(timings, "fillet_checks"):
+                after = body.Volume()
+                if abs(after - volumes.get(start)) > tools + 1.0:
+                    note("объём изменился больше объёма инструментов, скругления отменены")
+                    return start, 0, skipped + len(jobs)
+                volumes.remember(body, after)
         except Exception:  # noqa: BLE001
             return start, 0, skipped + len(jobs)
     return body, done, skipped + max(0, len(jobs) - done)

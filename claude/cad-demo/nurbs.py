@@ -24,6 +24,7 @@ python nurbs.py скан.stl папка
 """
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -402,6 +403,58 @@ def _lsq_surface(P: np.ndarray, n: int):
     return _bspline(C, inner, inner)
 
 
+def _fit_patch(args):
+    points, basis = args
+    return _lsq_fit(_evened(points), basis, basis)[0]
+
+
+def _watch_parent():
+    """Exit if the demo kills its smooth-body worker on timeout."""
+    import multiprocessing
+    import threading
+
+    parent = multiprocessing.parent_process()
+    if parent is not None:
+        def watch():
+            parent.join()
+            os._exit(1)
+
+        threading.Thread(target=watch, daemon=True).start()
+
+
+def _fit_patches(grids, basis):
+    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures.process import BrokenProcessPool
+    import multiprocessing
+
+    cpus = os.cpu_count() or 1
+    try:
+        jobs = max(1, min(int(os.environ.get("CAD_JOBS", "1")), cpus, 61))
+    except ValueError:
+        jobs = 1
+    args = [(p, basis) for p in grids]
+    if jobs > 1 and len(args) >= 64:
+        # Each patch is a small least-squares solve. Prevent nested BLAS teams
+        # from oversubscribing the same CPU cores in each child.
+        limits = ("OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "OMP_NUM_THREADS", "BLIS_NUM_THREADS")
+        saved = {key: os.environ.get(key) for key in limits}
+        try:
+            for key in limits:
+                os.environ[key] = "1"
+            with ProcessPoolExecutor(max_workers=jobs, mp_context=multiprocessing.get_context("spawn"),
+                                     initializer=_watch_parent) as pool:
+                return list(pool.map(_fit_patch, args, chunksize=16))
+        except (BrokenProcessPool, OSError):
+            print("подгонка граней: пул недоступен, считаю последовательно", flush=True)
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+    return [_fit_patch(task) for task in args]
+
+
 def _lossy(fitted: list, proj: _Projector, tol: float, n_pts: int = 30000) -> set:
     """Номера граней, до которых не дотянулась часть поверхности: у точки чистой поверхности
     ближайшая точка модели дальше tol, и эта ближайшая точка принадлежит грани. Мера двусторонняя:
@@ -520,16 +573,15 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
         faces.append(fc)
         ftag.append(t)
 
-    pre, split, sides = {}, set(), {}
+    split, sides = set(), {}
     if NP:
         B, inner = _basis(K, NP)
         A = np.kron(B, B)
-        fitted = []
-        for i, ((q, _), nn_) in enumerate(zip(quads, nrm)):
-            C, _r = _lsq_fit(_evened(proj(w @ q, nn_).reshape(K, K, 3)), B, B)
-            pre[i] = C
-            fitted.append(A @ C.reshape(-1, 3))
+        # Project in the original order to preserve the shared boundary cache.
+        grids = [proj(w @ q, nn_).reshape(K, K, 3) for (q, _), nn_ in zip(quads, nrm)]
+        pre = _fit_patches(grids, B)
         if SPLIT and pq is not None:
+            fitted = [A @ C.reshape(-1, 3) for C in pre]
             split = {i for i in _lossy(fitted, proj, FACE_TOL) if tag[i] < 0}
             for i in split:
                 q = quads[i][0]

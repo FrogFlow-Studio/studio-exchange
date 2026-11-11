@@ -35,11 +35,13 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 K = 7  # точек на сторону лоскута (меняется по шагам)
-# (треугольников грубой сетки, точек на сторону): сначала крупные грани, при нехватке точности мельче.
-# Густая сетка точек на крупной грани (13–21 точка) даёт вдвое меньше граней при той же точности, но
-# OpenCascade режет такую грань на треугольники по каждой её точке: STL Hyundai вырос до 1,5 млн
-# треугольников, и сравнению со сканом не хватило памяти (11.11, EXPERIMENTS.md, Э3). Пока так.
-STEPS = ((800, 9), (1500, 7), (4000, 5))
+# (треугольников грубой сетки, точек на сторону, полюсов на сторону; 0 — интерполяция): сначала крупные
+# грани, при нехватке точности мельче. Густые точки (13) со сглаживающей подгонкой на 7×7 полюсов дают
+# ту же точность при вдвое-втрое меньшем числе граней, и OpenCascade режет такую грань на треугольники
+# по полюсам, а не по точкам: STL не раздувается (11.11, EXPERIMENTS.md, Э3 и Э5). Интерполяция —
+# запасной путь, если подгонка не сшилась.
+STEPS = ((800, 13, 7), (1500, 13, 7), (1500, 7, 0), (4000, 5, 0))
+NP = None  # полюсов на сторону грани: None — интерполяция через все точки, иначе сглаживающая подгонка
 GOAL, GOAL_TOL = 0.98, 0.2  # доля чистой поверхности в пределах GOAL_TOL мм
 
 
@@ -243,6 +245,60 @@ def _solid(shell_shape):
         sol = cq.Solid(sol.wrapped.Reversed())
     return sol if sol.isValid() else None
 
+def _basis(K: int, n: int) -> tuple[np.ndarray, np.ndarray]:
+    """Кубический B-сплайн с n полюсами и равномерными узлами: матрица значений в K равномерных точках."""
+    from scipy.interpolate import BSpline
+
+    inner = np.linspace(0, 1, n - 2)
+    t = np.r_[[0.0] * 3, inner, [1.0] * 3]
+    B = BSpline.design_matrix(np.linspace(0, 1, K), t, 3).toarray()
+    return B, inner
+
+
+def _lsq_surface(P: np.ndarray, n: int):
+    """Сглаживающая грань: n×n полюсов по K×K точкам методом наименьших квадратов.
+
+    Граничные кривые подгоняются только по точкам своей границы (концы — точно в углах), поэтому
+    у соседних лоскутов с общей границей они совпадают и грани сшиваются без щелей, как при
+    интерполяции. Внутренние полюса — по всем точкам лоскута при закреплённой границе."""
+    from OCP.Geom import Geom_BSplineSurface
+    from OCP.gp import gp_Pnt
+    from OCP.TColgp import TColgp_Array2OfPnt
+    from OCP.TColStd import TColStd_Array1OfInteger, TColStd_Array1OfReal
+
+    K = P.shape[0]
+    B, inner = _basis(K, n)
+    C = np.zeros((n, n, 3))
+
+    def edge(pts):
+        c = np.zeros((n, 3))
+        c[0], c[-1] = pts[0], pts[-1]
+        rhs = pts - B[:, :1] @ c[:1] - B[:, -1:] @ c[-1:]
+        c[1:-1] = np.linalg.lstsq(B[:, 1:-1], rhs, rcond=None)[0]
+        return c
+
+    C[0, :], C[-1, :] = edge(P[0, :]), edge(P[-1, :])
+    C[:, 0], C[:, -1] = edge(P[:, 0]), edge(P[:, -1])
+    A = np.kron(B, B)  # (K*K, n*n): точка (i, j) ↔ полюс (a, b)
+    free = np.zeros((n, n), bool)
+    free[1:-1, 1:-1] = True
+    free = free.ravel()
+    rhs = P.reshape(-1, 3) - A[:, ~free] @ C.reshape(-1, 3)[~free]
+    Cf = C.reshape(-1, 3)
+    Cf[free] = np.linalg.lstsq(A[:, free], rhs, rcond=None)[0]
+    C = Cf.reshape(n, n, 3)
+    poles = TColgp_Array2OfPnt(1, n, 1, n)
+    for a in range(n):
+        for b in range(n):
+            poles.SetValue(a + 1, b + 1, gp_Pnt(*map(float, C[a, b])))
+    kn = TColStd_Array1OfReal(1, len(inner))
+    mu = TColStd_Array1OfInteger(1, len(inner))
+    for i, x in enumerate(inner):
+        kn.SetValue(i + 1, float(x))
+        mu.SetValue(i + 1, 4 if i in (0, len(inner) - 1) else 1)
+    return Geom_BSplineSurface(poles, kn, kn, mu, mu, 3, 3)
+
+
 def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool = True):
     import fast_simplification as fs
     from OCP.Approx import Approx_ParametrizationType
@@ -281,9 +337,12 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
         for i in range(K):
             for j in range(K):
                 arr.SetValue(i + 1, j + 1, gp_Pnt(*map(float, P[i, j])))
-        api = GeomAPI_PointsToBSplineSurface()
-        api.Interpolate(arr, Approx_ParametrizationType.Approx_IsoParametric, False)
-        srf = api.Surface()
+        if NP:
+            srf = _lsq_surface(P, NP)
+        else:
+            api = GeomAPI_PointsToBSplineSurface()
+            api.Interpolate(arr, Approx_ParametrizationType.Approx_IsoParametric, False)
+            srf = api.Surface()
         u0, u1, v0, v1 = srf.Bounds()
         for u in u0 + (u1 - u0) * cm:
             for vv in v0 + (v1 - v0) * cm:
@@ -326,14 +385,23 @@ def near_share(pts: np.ndarray, proj: _Projector, tol: float = 0.1) -> float:
     return float((d.min(1) < tol).mean())
 
 
+def cover_share(body, proj: _Projector, tol: float = 0.5, n: int = 30000) -> float:
+    """Доля точек чистой поверхности, у которых в пределах tol мм есть поверхность модели."""
+    v, f = body.tessellate(0.1, 0.5)
+    m = trimesh.Trimesh([(q.x, q.y, q.z) for q in v], f, process=False)
+    pts = proj.dp[np.random.default_rng(3).choice(len(proj.dp), min(n, len(proj.dp)), replace=False)]
+    _, d, _ = trimesh.proximity.closest_point(m, pts)
+    return float((d < tol).mean())
+
+
 def smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 900.0):
     """mesh — замкнутая чистая поверхность (из surface.py), scan — исходный скан для проверки.
     Возвращает (тело или None, сведения)."""
     t0 = time.time()
     proj = _Projector(mesh)
     best, info = None, {"faces": 0, "near": 0.0}
-    global K
-    for tri, K in STEPS:
+    global K, NP
+    for tri, K, NP in STEPS:
         if time.time() - t0 > budget / 3 and best is not None:
             break
         proj.cache.clear()
@@ -343,6 +411,11 @@ def smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 90
         # точность считается от чистой поверхности: шум скана сглажен ещё в surface.py, и
         # мерить по сырому скану значило бы гнаться за шумом
         share = near_share(mids, proj, GOAL_TOL)
+        if NP:
+            # подгонка не проходит через точки и на тонких местах может срезать целый участок
+            # (ребро, бортик): тогда точки модели лежат на поверхности, а куска поверхности в модели
+            # нет. Поэтому проверяется и обратное: чистая поверхность должна быть покрыта моделью.
+            share = min(share, cover_share(body, proj))
         if best is None or share > info["near"]:
             best, info = body, {"faces": n, "near": share}
         if share >= GOAL:

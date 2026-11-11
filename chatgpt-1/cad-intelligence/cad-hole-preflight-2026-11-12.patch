@@ -1,0 +1,244 @@
+diff --git a/claude/cad-demo/demo.py b/claude/cad-demo/demo.py
+index 702f209..9a47734 100644
+--- a/claude/cad-demo/demo.py
++++ b/claude/cad-demo/demo.py
+@@ -1202,13 +1202,16 @@ def main() -> None:
+                          (("smooth", "гладкое тело"), ("fillets", "скругления"), ("holes", "отверстия")))
+         for key, label in (("fillet_boolean", "скругления, булевы"), ("fillet_checks", "скругления, проверки"),
+                            ("hole_search", "поиск отверстий/кэш"),
++                           ("hole_preflight", "предварительная проверка отверстий"),
+                            ("hole_boolean", "отверстия, булевы"), ("hole_checks", "отверстия, проверки")):
+             if key in worker:
+                 parts.append(f"{stage}, {label} {duration(worker[key])}")
+         for kind, label in (("fillet", "скругления"), ("hole", "отверстия")):
+             if f"{kind}_ops" in worker:
+                 ops, rolled = worker[f"{kind}_ops"], worker[f"{kind}_rolled_back_ops"]
+-                parts.append(f"{stage}, {label}: булевых {ops}, отброшено {rolled}")
++                skipped = worker.get("hole_preflight_rejected", 0) if kind == "hole" else 0
++                suffix = f", пропущено до булевой {skipped}" if skipped else ""
++                parts.append(f"{stage}, {label}: булевых {ops}, отброшено {rolled}{suffix}")
+     parts.extend(f"{label} {duration(stages.get(label))}" for label in ("сравнение", "перечитывание STEP"))
+     phase_names = {
+         "coarse": "сетка", "layout": "раскладка", "projection": "проекция",
+diff --git a/claude/cad-demo/hole_preflight.py b/claude/cad-demo/hole_preflight.py
+new file mode 100644
+index 0000000..814a5ef
+--- /dev/null
++++ b/claude/cad-demo/hole_preflight.py
+@@ -0,0 +1,104 @@
++"""Conservative rejection tests for a cylinder cut on a valid, single CAD solid."""
++from itertools import product
++
++import numpy as np
++
++
++class HolePreflight:
++    def __init__(self):
++        self.body = None
++        self.bounds = None
++        self.valid = None
++        self.vertices = None
++
++    def _load(self, body):
++        from OCP.Bnd import Bnd_Box
++        from OCP.BRepBndLib import BRepBndLib
++
++        self.body = body
++        self.bounds = self.valid = self.vertices = None
++        if body.ShapeType() != "Solid":
++            return
++        box = Bnd_Box()
++        # Conservative B-rep bounds with shape tolerances; no STL or tessellation.
++        BRepBndLib.Add_s(body.wrapped, box, False)
++        if not box.IsVoid() and not box.IsOpen():
++            bounds = np.array(box.Get(), dtype=float).reshape(2, 3)
++            if np.isfinite(bounds).all():
++                self.bounds = bounds
++
++    def _valid_body(self):
++        if self.valid is None:
++            from OCP.BRepClass3d import BRepClass3d_SolidClassifier
++            from OCP.Precision import Precision
++            from OCP.TopAbs import TopAbs_OUT
++
++            self.valid = False
++            if self.body.isValid():
++                classifier = BRepClass3d_SolidClassifier(self.body.wrapped)
++                classifier.PerformInfinitePoint(Precision.Confusion_s())
++                self.valid = classifier.State() == TopAbs_OUT
++        return self.valid
++
++    def reject(self, body, spec):
++        """Return a proved rejection reason, otherwise let OCC decide as before."""
++        from OCP.Precision import Precision
++
++        if body is not self.body:
++            self._load(body)
++        if self.bounds is None:
++            return None
++        c, d, r, h = spec
++        origin, axis = np.asarray(c, float), np.asarray(d, float)
++        norm = np.linalg.norm(axis)
++        if not np.isfinite(norm) or norm <= 0 or not (r > 0 and h > 0):
++            return None
++        axis = axis / norm
++        low, high = self.bounds
++        scale = max(1.0, np.abs(self.bounds).max(), np.abs(origin).max(), r, h)
++        margin = max(10 * Precision.Confusion_s(), 128 * np.finfo(float).eps * scale)
++
++        def distances(points):
++            q = points - origin
++            axial = q @ axis
++            radial = np.linalg.norm(q - axial[:, None] * axis, axis=1)
++            return axial, radial
++
++        def all_inside(points):
++            axial, radial = distances(points)
++            return np.all((axial > margin) & (axial < h - margin) & (radial < r - margin))
++
++        # The cylinder is convex. Containing all bounding-box corners means
++        # containing the entire body, so the result cannot have one solid.
++        if all_inside(np.array(list(product(*self.bounds.T)))):
++            return "цилиндр охватывает всё тело" if self._valid_body() else None
++
++        # An entire plane section inside the tool cannot connect surviving
++        # material on its opposite sides. Exact B-rep vertices witness that
++        # both sides survive; the enclosing box itself is not a witness.
++        middle = origin + axis * (h / 2)
++        for i, at in enumerate(middle):
++            if not low[i] + margin < at < high[i] - margin:
++                continue
++            axes = list(self.bounds.T)
++            axes[i] = (at,)
++            if not all_inside(np.array(list(product(*axes)))):
++                continue
++            if not self._valid_body():
++                return None
++            if self.vertices is None:
++                from OCP.BRep import BRep_Tool
++
++                vertices = body.Vertices()
++                self.vertices = (
++                    np.array([v.toTuple() for v in vertices], dtype=float).reshape(-1, 3),
++                    np.array([BRep_Tool.Tolerance_s(v.wrapped) for v in vertices], dtype=float),
++                )
++            xyz, vertex_tol = self.vertices
++            clearance = margin + vertex_tol
++            axial, radial = distances(xyz)
++            survives = (axial < -clearance) | (axial > h + clearance) | (radial > r + clearance)
++            side = xyz[:, i] - at
++            if np.any(survives & (side < -clearance)) and np.any(survives & (side > clearance)):
++                return "цилиндр перекрывает сечение, материал остаётся с обеих сторон"
++        return None
+diff --git a/claude/cad-demo/surface.py b/claude/cad-demo/surface.py
+index 3ba2fa6..88563ac 100644
+--- a/claude/cad-demo/surface.py
++++ b/claude/cad-demo/surface.py
+@@ -282,32 +282,58 @@ def hole_parameters(scan: trimesh.Trimesh):
+ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_finder=hole_parameters):
+     """Круглые отверстия вырезаются точно по диаметру из скана. Возвращает (тело, сколько)."""
+     import cadquery as cq
++    from time import perf_counter
+ 
+     from cad_checks import VolumeMemo, add_count, boolean_op, disjoint_tool_boxes, measured
++    from hole_preflight import HolePreflight
+ 
+     if volumes is None:
+         volumes = VolumeMemo()
+     add_count(timings, "hole_ops", 0)
+     add_count(timings, "hole_rolled_back_ops", 0)
++    add_count(timings, "hole_preflight_rejected", 0)
++    preflight = HolePreflight() if os.environ.get("CAD_HOLE_PREFLIGHT", "1") != "0" else None
+     with measured(timings, "hole_search"):
+         specs = hole_finder(scan)
+ 
+-    def attempt(body, tool, limit, *, trial=False):
++    def note(label, outcome, started, boolean_s=0.0):
++        print(f"    {label}: {outcome}; булева {boolean_s:.3f} с, всего {perf_counter() - started:.3f} с",
++              flush=True)
++
++    def attempt(body, tool, limit, label, *, trial=False):
+         add_count(timings, "hole_ops")
++        started = perf_counter()
++        boolean_s = 0.0
++        phase = "булева"
+         try:
+-            with measured(timings, "hole_boolean"):
+-                res = boolean_op(body, (tool,), preserve_inputs=trial)
++            t = perf_counter()
++            try:
++                with measured(timings, "hole_boolean"):
++                    res = boolean_op(body, (tool,), preserve_inputs=trial)
++            finally:
++                boolean_s = perf_counter() - t
++            phase = "проверка"
+             with measured(timings, "hole_checks"):
+                 solids = res.Solids()
+-                if len(solids) == 1:
++                if len(solids) != 1:
++                    reason = f"тел {len(solids)}, требуется одно"
++                else:
+                     before, after = volumes.get(body), res.Volume()
++                    delta = before - after
+                     solid = solids[0]
+-                    if 0 <= before - after <= limit and solid.isValid():
++                    if not 0 <= delta <= limit:
++                        reason = f"изменение объёма {delta:.9g} мм³ вне [0, {limit:.9g}]"
++                    elif not solid.isValid():
++                        reason = "тело невалидно"
++                    else:
+                         volumes.remember_cut(res, solid, after)
++                        note(label, f"принято, удалено {delta:.9g} мм³", started, boolean_s)
+                         return solid
+-        except Exception:  # noqa: BLE001
+-            pass
++        except Exception as ex:  # noqa: BLE001
++            detail = " ".join(str(ex).split())[:160]
++            reason = f"{phase}: исключение {type(ex).__name__}" + (f" ({detail})" if detail else "")
+         add_count(timings, "hole_rolled_back_ops")
++        note(label, f"откат, {reason}", started, boolean_s)
+         return None
+ 
+     def cylinder(spec):
+@@ -320,7 +346,8 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_find
+             cutters = [cylinder(spec) for spec in specs]
+             if disjoint_tool_boxes((tool,) for tool, _ in cutters):
+                 compound = cq.Compound.makeCompound([tool for tool, _ in cutters])
+-                new = attempt(s, compound, sum(limit for _, limit in cutters) + 1, trial=True)
++                new = attempt(s, compound, sum(limit for _, limit in cutters) + 1,
++                              f"пакет отверстий ({len(cutters)})", trial=True)
+                 if new is not None:
+                     return new, len(cutters)
+         except Exception:  # noqa: BLE001
+@@ -328,11 +355,29 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_find
+ 
+     cut = 0
+     for i, spec in enumerate(specs):
++        label = f"отверстие {i + 1}"
++        started = perf_counter()
++        try:
++            c, d, r, h = spec
++            label += f", Ø{2 * r:.6g}, L={h:.17g}, R={r:.17g}, начало {list(map(float, c))}, ось {list(map(float, d))}"
++        except (ValueError, TypeError):
++            pass
++        if preflight is not None:
++            try:
++                with measured(timings, "hole_preflight"):
++                    reason = preflight.reject(s, spec)
++            except Exception:  # an inconclusive precheck keeps the original path
++                reason = None
++            if reason:
++                add_count(timings, "hole_preflight_rejected")
++                note(label, f"пропуск до булевой, {reason}", started)
++                continue
+         try:
+             tool, limit = cutters[i] if cutters else cylinder(spec)
+-        except Exception:  # noqa: BLE001
++        except Exception as ex:  # noqa: BLE001
++            note(label, f"инструмент: исключение {type(ex).__name__}", started)
+             continue
+-        new = attempt(s, tool, limit + 1)
++        new = attempt(s, tool, limit + 1, label)
+         if new is not None:
+             s, cut = new, cut + 1
+     return s, cut

@@ -154,13 +154,17 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
     mesh — чистая поверхность скана: по ней быстро проверяется, что под вставкой есть материал
     (без неё — по самому телу, это около 1,5 с на точку).
     Возвращает (тело, сколько кусков построено, сколько участков пропущено)."""
+    import os
     import time
 
-    from cad_checks import InsideMemo, VolumeMemo, measured
+    from cad_checks import InsideMemo, VolumeMemo, add_count, boolean_op, disjoint_tool_boxes, measured
 
     if volumes is None:
         volumes = VolumeMemo()
     t_start = time.time()
+    grouped = os.environ.get("CAD_FILLET_GROUPS", "0") == "1"
+    add_count(timings, "fillet_ops", 0)
+    add_count(timings, "fillet_rolled_back_ops", 0)
     if mesh is not None:
         from scipy.spatial import cKDTree
 
@@ -180,7 +184,7 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
                 return classifier.contains(body, q)
     jobs = []  # (вырез, вставка) по участкам
     skipped = 0
-    for f in fl:
+    for group, f in enumerate(fl):
         g = f["geo"]
         R, n1, n2, p, ax = g["R"], g["n1"], g["n2"], g["p"], g["ax"]
         c = float(n1 @ n2)
@@ -222,25 +226,37 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
                 pair = make(a0, a1)
             except Exception:  # noqa: BLE001
                 pair = None
-            jobs.append((pair, make, a0, a1))
+            jobs.append((pair, make, a0, a1, group))
 
     def note(*a):
         if log is not None:
             log.append(" ".join(str(x) for x in a))
 
-    def attempt(base, part, tag=""):
+    accepted_ops = 0
+
+    def attempt(base, part, tag="", *, trial=False):
         """Вырез и вставка для набора участков; None, если тело распалось или стало невалидным.
         Объём здесь не считаем (у тела из тысяч сплайновых граней это ~10 с): булевы операции
         не могут изменить его больше, чем на объём инструментов, общая сверка — в конце."""
+        nonlocal accepted_ops
         t0_ = time.time()
+        ops = 0
         try:
             with measured(timings, "fillet_boolean"):
-                new = base.cut(*[c_ for c_, _ in part]).fuse(*[a_ for _, a_ in part])
+                ops += 1
+                cut = boolean_op(base, [c for c, _ in part], preserve_inputs=trial)
+                ops += 1
+                new = boolean_op(cut, [a for _, a in part], fuse=True, preserve_inputs=trial)
             with measured(timings, "fillet_checks"):
                 sols = new.Solids()
                 why = ("тел " + str(len(sols))) if len(sols) != 1 else ("" if sols[0].isValid() else "невалидно")
         except Exception as e:  # noqa: BLE001  скругление — улучшение, без него тело то же
             sols, why = [], "ошибка " + type(e).__name__
+        add_count(timings, "fillet_ops", ops)
+        if why:
+            add_count(timings, "fillet_rolled_back_ops", ops)
+        else:
+            accepted_ops += ops
         note(tag, why or "ок", round(time.time() - t0_, 1), "с")
         return None if why else sols[0]
 
@@ -260,8 +276,25 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
         tools = sum(tool_volume(j[0]) for j in ready)
     else:  # по одному; неудачный участок делим пополам: вдоль него может мешать одно место
         queue = list(ready)
+        tried_groups = set()
         while queue and time.time() - t_start < budget:
-            pair, make, a0, a1 = queue.pop(0)
+            pair, make, a0, a1, group = queue.pop(0)
+            if grouped and group not in tried_groups:
+                tried_groups.add(group)
+                # Original jobs of one fillet are contiguous; split pieces are appended later.
+                end = next((i for i, job in enumerate(queue) if job[4] != group), len(queue))
+                if 0 < end < len(ready) - 1:
+                    group_pairs = [pair, *[job[0] for job in queue[:end]]]
+                    if disjoint_tool_boxes(group_pairs):
+                        new = attempt(body, group_pairs, f"скругление {group + 1}", trial=True)
+                    else:
+                        new = None
+                        note(f"скругление {group + 1}", "коробки инструментов пересекаются")
+                    if new is not None:
+                        body, done = new, done + len(group_pairs)
+                        tools += sum(tool_volume(p) for p in group_pairs)
+                        del queue[:end]
+                        continue
             new = attempt(body, [pair], f"{a0:.0f}..{a1:.0f}")
             if new is not None:
                 body, done = new, done + 1
@@ -274,16 +307,18 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
                     except Exception:  # noqa: BLE001
                         sub = None
                     if sub is not None:
-                        queue.append((sub, make, b0, b1))
+                        queue.append((sub, make, b0, b1, group))
     if done:
         try:  # общая сверка: тело не могло измениться больше, чем на объём инструментов
             with measured(timings, "fillet_checks"):
                 after = body.Volume()
                 if abs(after - volumes.get(start)) > tools + 1.0:
                     note("объём изменился больше объёма инструментов, скругления отменены")
+                    add_count(timings, "fillet_rolled_back_ops", accepted_ops)
                     return start, 0, skipped + len(jobs)
                 volumes.remember(body, after)
         except Exception:  # noqa: BLE001
+            add_count(timings, "fillet_rolled_back_ops", accepted_ops)
             return start, 0, skipped + len(jobs)
     return body, done, skipped + max(0, len(jobs) - done)
 

@@ -1201,10 +1201,30 @@ def main() -> None:
             parts.extend(f"{label} {duration(worker.get(key))}" for key, label in
                          (("smooth", "гладкое тело"), ("fillets", "скругления"), ("holes", "отверстия")))
         for key, label in (("fillet_boolean", "скругления, булевы"), ("fillet_checks", "скругления, проверки"),
+                           ("hole_search", "поиск отверстий/кэш"),
                            ("hole_boolean", "отверстия, булевы"), ("hole_checks", "отверстия, проверки")):
             if key in worker:
                 parts.append(f"{stage}, {label} {duration(worker[key])}")
+        for kind, label in (("fillet", "скругления"), ("hole", "отверстия")):
+            if f"{kind}_ops" in worker:
+                ops, rolled = worker[f"{kind}_ops"], worker[f"{kind}_rolled_back_ops"]
+                parts.append(f"{stage}, {label}: булевых {ops}, отброшено {rolled}")
     parts.extend(f"{label} {duration(stages.get(label))}" for label in ("сравнение", "перечитывание STEP"))
+    phase_names = {
+        "coarse": "сетка", "layout": "раскладка", "projection": "проекция",
+        "planes": "плоскости", "fit": "подгонка", "lossy": "потери",
+        "split": "замены", "samples": "точки граней", "make_face": "MakeFace",
+        "sewing": "сшивка", "solid": "сборка тела", "solid_fix": "исправление",
+        "solid_volume": "ориентация по объёму", "solid_validity": "валидность",
+        "near": "near_share", "cover": "cover_share", "tessellation": "тесселяция",
+        "cover_distance": "расстояния покрытия",
+    }
+    stage_names = {"invalid": "тело не собралось", "rejected": "порог не пройден",
+                   "accepted": "порог пройден", "dominated_before_sewing": "отказ до сшивки"}
+    for stage in worker_times.get("0к", {}).get("nurbs_steps", []):
+        times = stage["times"]
+        detail = ", ".join(f"{label} {duration(times[key])}" for key, label in phase_names.items() if key in times)
+        parts.append(f"ступень 0к/{stage['step']} ({stage_names[stage['status']]}): {detail}")
     timing_text = "время по этапам: " + ", ".join(parts) + " (фоновые этапы перекрываются)"
     log(timing_text)
     log(route_text(iterations, best))

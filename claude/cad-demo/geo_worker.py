@@ -10,6 +10,7 @@ import time
 from contextlib import contextmanager
 import sys
 from pathlib import Path
+from zipfile import BadZipFile
 
 import numpy as np
 import trimesh
@@ -46,7 +47,7 @@ def _memory_guard(share: float = 0.45) -> None:
 
 @contextmanager
 def _cache_lock(path: Path, timeout: float = 1200):
-    """One cleaner per cache entry; the OS releases the lock if a worker is killed."""
+    """One writer per cache entry; the OS releases the lock if a worker is killed."""
     if os.name == "nt":
         import msvcrt
 
@@ -68,44 +69,39 @@ def _cache_lock(path: Path, timeout: float = 1200):
             except OSError as ex:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise TimeoutError("ожидание очистки превысило предел") from ex
+                    raise TimeoutError("ожидание кэша превысило предел") from ex
                 time.sleep(min(0.1, remaining))
         yield
 
 
-def _clean_surface(scan: trimesh.Trimesh, scan_path: Path, answer: Path) -> trimesh.Trimesh:
-    """Share the unflattened mesh between workers of the same run."""
-    from zipfile import BadZipFile
-
-    import surface
-
-    if os.environ.get("CAD_SURFACE_CACHE", "1") == "0":
-        return surface.surface_mesh(scan)
+def _scan_digest(scan_path: Path) -> str:
     with scan_path.open("rb") as src:
-        digest = hashlib.file_digest(src, "sha256").hexdigest()
-    cache = answer.parent / f"surface-clean-{digest}-{int(surface.EDGE_KEEP)}-{surface.SMOOTH}.npz"
-    def read_cache():
+        return hashlib.file_digest(src, "sha256").hexdigest()
+
+
+def _run_cache(cache: Path, label: str, read, compute, write):
+    def load():
         try:
-            with np.load(cache, allow_pickle=False) as data:
-                return trimesh.Trimesh(data["vertices"], data["faces"], process=False)
-        except (OSError, ValueError, KeyError, EOFError, BadZipFile):
+            with cache.open("rb") as stream:
+                return read(stream)
+        except (OSError, ValueError, TypeError, KeyError, EOFError, BadZipFile):
             return None
 
-    mesh = read_cache()
-    if mesh is not None:
-        print("очистка поверхности: из кэша", flush=True)
-        return mesh
+    value = load()
+    if value is not None:
+        print(f"{label}: из кэша", flush=True)
+        return value
     with _cache_lock(cache.with_suffix(".lock")):
-        mesh = read_cache()
-        if mesh is not None:
-            print("очистка поверхности: из кэша после ожидания", flush=True)
-            return mesh
-        mesh = surface.surface_mesh(scan)
+        value = load()
+        if value is not None:
+            print(f"{label}: из кэша после ожидания", flush=True)
+            return value
+        value = compute()
         temp = None
         try:
-            with tempfile.NamedTemporaryFile(dir=cache.parent, suffix=".tmp", delete=False) as f:
-                temp = Path(f.name)
-                np.savez(f, vertices=np.asarray(mesh.vertices), faces=np.asarray(mesh.faces))
+            with tempfile.NamedTemporaryFile(dir=cache.parent, suffix=".tmp", delete=False) as stream:
+                temp = Path(stream.name)
+                write(stream, value)
             temp.replace(cache)
         except OSError:
             pass
@@ -115,7 +111,51 @@ def _clean_surface(scan: trimesh.Trimesh, scan_path: Path, answer: Path) -> trim
                     temp.unlink(missing_ok=True)
                 except OSError:
                     pass
-        return mesh
+        return value
+
+
+def _clean_surface(scan: trimesh.Trimesh, scan_path: Path, answer: Path, *, digest=None) -> trimesh.Trimesh:
+    """Share the unflattened mesh between workers of the same run."""
+    import surface
+
+    if os.environ.get("CAD_SURFACE_CACHE", "1") == "0":
+        return surface.surface_mesh(scan)
+    digest = digest or _scan_digest(scan_path)
+    cache = answer.parent / f"surface-clean-{digest}-{int(surface.EDGE_KEEP)}-{surface.SMOOTH}.npz"
+
+    def read(stream):
+        with np.load(stream, allow_pickle=False) as data:
+            return trimesh.Trimesh(data["vertices"], data["faces"], process=False)
+
+    def write(stream, mesh):
+        np.savez(stream, vertices=np.asarray(mesh.vertices), faces=np.asarray(mesh.faces))
+
+    return _run_cache(cache, "очистка поверхности", read, lambda: surface.surface_mesh(scan), write)
+
+
+def _hole_specs(scan, scan_path: Path, answer: Path, *, digest=None):
+    import surface
+
+    if os.environ.get("CAD_HOLE_CACHE", "1") == "0":
+        return surface.hole_parameters(scan)
+    digest = digest or _scan_digest(scan_path)
+    cache = answer.parent / f"hole-specs-v1-{digest}.json"
+
+    def read(stream):
+        rows = json.load(stream)
+        if not isinstance(rows, list):
+            raise ValueError("invalid hole cache")
+        specs = []
+        for c, d, r, h in rows:
+            if len(c) != 3 or len(d) != 3:
+                raise ValueError("invalid cylinder vectors")
+            specs.append((tuple(map(float, c)), tuple(map(float, d)), float(r), float(h)))
+        return specs
+
+    def write(stream, rows):
+        stream.write(json.dumps(rows).encode("utf-8"))
+
+    return _run_cache(cache, "поиск отверстий", read, lambda: surface.hole_parameters(scan), write)
 
 
 def main() -> None:
@@ -132,6 +172,14 @@ def main() -> None:
 
         scan = _coarse(scan)
     sheet = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+    digest = None
+    if KIND in ("surface", "smooth") and any(
+            os.environ.get(key, "1") != "0" for key in ("CAD_SURFACE_CACHE", "CAD_HOLE_CACHE")):
+        digest = _scan_digest(scan_path)
+
+    def hole_finder(mesh):
+        return _hole_specs(mesh, scan_path, answer, digest=digest)
+
     if len(sys.argv) > 5 and sys.argv[5] == "walls":
         import walls
 
@@ -149,9 +197,9 @@ def main() -> None:
         import surface
 
         t = time.perf_counter()
-        clean = _clean_surface(scan, scan_path, answer)
+        clean = _clean_surface(scan, scan_path, answer, digest=digest)
         timings["cleanup"] = time.perf_counter() - t
-        body, info = surface.surface_body(scan, prepared=clean, timings=timings)
+        body, info = surface.surface_body(scan, prepared=clean, timings=timings, hole_finder=hole_finder)
         step = Path(sys.argv[4]).with_suffix(".step")
         cq.exporters.export(body, str(step))
         code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
@@ -173,11 +221,12 @@ def main() -> None:
         wide = __import__("os").environ.get("CAD_FIT_TOL") == "wide"
         tol = max(0.3, (3 if wide else 1) * noise)
         t_smooth = time.perf_counter()
-        clean = _clean_surface(scan, scan_path, answer)
+        clean = _clean_surface(scan, scan_path, answer, digest=digest)
         t = time.perf_counter()
         timings["cleanup"] = t - t_smooth
         body, info = nurbs.smooth_body(surface.flatten_planes(clean), scan, tol=tol)
         timings["smooth"] = time.perf_counter() - t
+        timings["nurbs_steps"] = info["stages"]
         if body is None:
             raise SystemExit("гладкое тело не собралось")
         planes = sum(f.geomType() == "PLANE" for f in body.Faces())
@@ -197,7 +246,7 @@ def main() -> None:
             fil_note = []
         timings["fillets"] = time.perf_counter() - t
         t = time.perf_counter()
-        body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings)
+        body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings, hole_finder=hole_finder)
         timings["holes"] = time.perf_counter() - t
         step = Path(sys.argv[4]).with_suffix(".step")
         cq.exporters.export(body, str(step))

@@ -76,17 +76,32 @@ elif len(sys.argv) > 5 and sys.argv[5] == "smooth":
     import surface
 
     tol = max(0.3, 3 * float(sheet.get("diagnostics", {}).get("noise_mm", 0) or 0))  # как допуск сравнения в demo.py
-    body, info = nurbs.smooth_body(surface.flatten_planes(surface.surface_mesh(scan)), scan, tol=tol)
+    import time
+
+    t_smooth = time.time()
+    clean = surface.surface_mesh(scan)
+    body, info = nurbs.smooth_body(surface.flatten_planes(clean), scan, tol=tol)
     if body is None:
         raise SystemExit("гладкое тело не собралось")
+    planes = sum(f.geomType() == "PLANE" for f in body.Faces())
+    fil_note = []
+    try:  # скругления между плоскими гранями: точные цилиндры вместо сплайнов; не вышло — тело прежнее
+        import fillets
+
+        left = 1000 - (time.time() - t_smooth)   # у попытки 0к в demo.py предел 1200 с
+        fl = fillets.find_fillets(clean) if left > 120 else []
+        if fl:
+            body, built, _ = fillets.apply(body, fl, budget=min(240.0, left - 90), mesh=clean)
+            fil_note = [fillets.summary(fl) + (f"; точными цилиндрами построено кусков: {built}" if built else "")]
+    except Exception:  # noqa: BLE001
+        fil_note = []
     body, cut = surface.cut_holes(body, scan)
     step = Path(sys.argv[4]).with_suffix(".step")
     cq.exporters.export(body, str(step))
     code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
-    planes = sum(f.geomType() == "PLANE" for f in body.Faces())
     meta = {"plan": f"гладкое тело: {info['faces']} граней по скану (из них {planes} точных плоскостей, остальные B-сплайн), {round(info['near'] * 100, 1)}% поверхности "
                     f"в пределах 0,2 мм, отверстий вырезано точно {cut}",
-            "restored": [], "assumptions": ["форма любая: гладкие грани повторяют поверхность скана"]}
+            "restored": [], "assumptions": ["форма любая: гладкие грани повторяют поверхность скана"] + fil_note}
 else:
     code, meta = geometric.build(scan, sheet, restore=sys.argv[3] == "1")
 Path(sys.argv[4]).write_text(json.dumps({"code": code, "meta": meta}, ensure_ascii=False), encoding="utf-8")

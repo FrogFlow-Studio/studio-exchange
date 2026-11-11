@@ -47,6 +47,11 @@ def find_fillets(mesh: trimesh.Trimesh, reach: float = 12.0, min_len: float = 3.
         res = float(np.median(np.abs((X - c0) @ n)))
         planes.append((n, float(c0 @ n), res))
     cos20 = np.cos(np.radians(20))
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(pts)
+    box = {k: (pts[lab == k].min(0) - reach, pts[lab == k].max(0) + reach) for k in range(len(pats)) if planes[k]}
+    all_pts, all_nrm, all_lab = pts, nrm, lab
     out = []
     for i in range(len(pats)):
         for j in range(i + 1, len(pats)):
@@ -58,6 +63,14 @@ def find_fillets(mesh: trimesh.Trimesh, reach: float = 12.0, min_len: float = 3.
                 continue
             ax = np.cross(n1, n2)
             ax /= np.linalg.norm(ax)
+            # только точки там, где участки рядом: общая часть их габаритов с запасом
+            b_lo, b_hi = np.maximum(box[i][0], box[j][0]), np.minimum(box[i][1], box[j][1])
+            if (b_hi <= b_lo).any():
+                continue
+            sel = np.array(tree.query_ball_point((b_lo + b_hi) / 2, float(np.linalg.norm(b_hi - b_lo)) / 2), int)
+            if len(sel) < 100:
+                continue
+            pts, nrm, lab = all_pts[sel], all_nrm[sel], all_lab[sel]
             p = np.linalg.solve(np.array([n1, n2, ax]), np.array([d1, d2, 0.0]))
             rel = pts - p
             t = rel @ ax
@@ -95,10 +108,168 @@ def find_fillets(mesh: trimesh.Trimesh, reach: float = 12.0, min_len: float = 3.
             if not (0.4 < Rm < reach / 2) or spread > 0.15 or fit > max(0.1, 0.1 * Rm):
                 continue
             tt = t[cand][ok]
+            # участки вдоль оси, где скругление подтверждено точками (перерыв — вырез, ребро, отверстие)
+            bins = np.bincount(np.floor(tt - lo).astype(int), minlength=int(hi - lo) + 1)
+            good = bins >= max(3, 0.25 * np.median(bins[bins > 0]))
+            runs, k0 = [], None
+            for k, g in enumerate(np.r_[good, False]):
+                if g and k0 is None:
+                    k0 = k
+                elif not g and k0 is not None:
+                    if k - k0 >= min_len:
+                        runs.append((float(lo + k0), float(lo + k)))
+                    k0 = None
+            if not runs:
+                continue
             out.append({"radius_mm": round(Rm, 1), "kind": "вогнутое" if side > 0 else "выпуклое",
-                        "length_mm": round(float(np.percentile(tt, 98) - np.percentile(tt, 2)), 1),
-                        "spread": round(spread, 3), "points": int(ok.sum()), "planes": (i, j)})
+                        "length_mm": round(sum(b_ - a_ for a_, b_ in runs), 1),
+                        "spread": round(spread, 3), "points": int(ok.sum()), "planes": (i, j),
+                        "geo": {"R": Rm, "n1": n1, "n2": n2, "p": p, "ax": ax, "concave": bool(side > 0), "runs": runs}})
     return sorted(out, key=lambda f: -f["length_mm"])
+
+
+MIN_PIECE = 6.0   # мм: короче этого участок скругления пополам не делим
+
+
+def _sector(cc, e1, _unused, ax, r0, r1, phi, t0, t1):
+    """Призма вдоль оси: кольцевой сектор r0..r1, углы 0..phi от e1 к e2, от t0 до t1 по оси."""
+    import cadquery as cq
+
+    pl = cq.Plane(origin=tuple(cc + t0 * ax), xDir=tuple(e1), normal=tuple(ax))
+    P = lambda r, a: (r * np.cos(a), r * np.sin(a))  # noqa: E731
+    wp = (cq.Workplane(pl).moveTo(*P(r1, 0)).threePointArc(P(r1, phi / 2), P(r1, phi))
+          .lineTo(*P(r0, phi)).threePointArc(P(r0, phi / 2), P(r0, 0)).close().extrude(t1 - t0))
+    return wp.val()
+
+
+def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, log: list | None = None,
+          mesh=None):
+    """Заменяет в теле приближённые (сплайновые) скругления точными цилиндрическими гранями.
+
+    У каждого участка скругления узкая полоса у дуги сначала вырезается (инструмент режет тело
+    поперёк, без касаний), потом на её место ставится точный кольцевой сектор радиуса R. Сектор
+    чуть короче дуги (на trim_deg с каждого конца): у самой линии касания цилиндр и плоскость
+    расходятся на микроны, и булева операция там ненадёжна. Участок, после которого тело распалось
+    или стало невалидным, делится пополам и пробуется по частям; что не вышло — пропускается.
+    mesh — чистая поверхность скана: по ней быстро проверяется, что под вставкой есть материал
+    (без неё — по самому телу, это около 1,5 с на точку).
+    Возвращает (тело, сколько кусков построено, сколько участков пропущено)."""
+    import time
+
+    import cadquery as cq
+
+    t_start = time.time()
+    if mesh is not None:
+        from scipy.spatial import cKDTree
+
+        cen, nrm = mesh.triangles_center, mesh.face_normals
+        tree = cKDTree(cen)
+
+        def inside(q):  # точка под ближайшим куском поверхности
+            k = tree.query(q)[1]
+            return float((q - cen[k]) @ nrm[k]) < 0
+    else:
+        def inside(q):
+            return body.isInside(cq.Vector(*map(float, q)))
+    jobs = []  # (вырез, вставка) по участкам
+    skipped = 0
+    for f in fl:
+        g = f["geo"]
+        R, n1, n2, p, ax = g["R"], g["n1"], g["n2"], g["p"], g["ax"]
+        c = float(n1 @ n2)
+        m = (n1 + n2) / (1 + c)
+        sgn = -1.0 if g["concave"] else 1.0
+        cc = p - sgn * R * m            # ось: внутри материала у выпуклого, в воздухе у вогнутого
+        r1v, r2v = sgn * n1, sgn * n2   # от оси к линиям касания
+        phi_full = float(np.arccos(np.clip(c, -1, 1)))
+        a = np.radians(trim_deg)
+        phi = phi_full - 2 * a
+        if phi < np.radians(20):
+            skipped += len(g["runs"])
+            continue
+        w = np.cross(ax, r1v)
+        ax_, flip = ax, 1.0
+        if w @ r2v < 0:
+            ax_, w, flip = -ax, -w, -1.0
+        e1 = r1v * np.cos(a) + w * np.sin(a)
+        mid = r1v * np.cos(phi_full / 2) + w * np.sin(phi_full / 2)
+        h = min(0.5, R / 3)             # глубина точной вставки в материал
+        hc = h / 2                      # глубина выреза (мельче вставки)
+        far = R * float(np.linalg.norm(m)) + 0.5   # дальше острого угла
+        def make(a0, a1, g=g, cc=cc, e1=e1, ax_=ax_, phi=phi, R=R, h=h, hc=hc, far=far, mid=mid):
+            """(вырез, вставка) для куска участка a0..a1 вдоль оси; None — под вставкой нет материала."""
+            depth = (R + h) if g["concave"] else (R - h)
+            probes = [cc + ax_ * s_ + mid * depth for s_ in np.linspace(a0, a1, 5)]
+            # материал под вставкой должен быть: иначе у тонкой стенки вставка вылезет внутрь
+            if not all(inside(q) for q in probes):
+                return None
+            if g["concave"]:
+                return (_sector(cc, e1, None, ax_, max(R - 1.0, 0.3 * R), R + hc, phi, a0, a1),
+                        _sector(cc, e1, None, ax_, R, R + h, phi, a0, a1))
+            return (_sector(cc, e1, None, ax_, R - hc, far, phi, a0, a1),
+                    _sector(cc, e1, None, ax_, R - h, R, phi, a0, a1))
+
+        for t0, t1 in g["runs"]:
+            a0, a1 = (t0 + 0.3, t1 - 0.3) if flip > 0 else (-(t1 - 0.3), -(t0 + 0.3))
+            try:
+                pair = make(a0, a1)
+            except Exception:  # noqa: BLE001
+                pair = None
+            jobs.append((pair, make, a0, a1))
+
+    def note(*a):
+        if log is not None:
+            log.append(" ".join(str(x) for x in a))
+
+    def attempt(base, part, tag=""):
+        """Вырез и вставка для набора участков; None, если тело распалось или стало невалидным.
+        Объём здесь не считаем (у тела из тысяч сплайновых граней это ~10 с): булевы операции
+        не могут изменить его больше, чем на объём инструментов, общая сверка — в конце."""
+        t0_ = time.time()
+        try:
+            new = base.cut(*[c_ for c_, _ in part]).fuse(*[a_ for _, a_ in part])
+            sols = new.Solids()
+            why = ("тел " + str(len(sols))) if len(sols) != 1 else ("" if sols[0].isValid() else "невалидно")
+        except Exception as e:  # noqa: BLE001  скругление — улучшение, без него тело то же
+            sols, why = [], "ошибка " + type(e).__name__
+        note(tag, why or "ок", round(time.time() - t0_, 1), "с")
+        return None if why else sols[0]
+
+    start = body
+    ready = [j for j in jobs if j[0] is not None]
+    note("участков", len(jobs), "без материала под вставкой", len(jobs) - len(ready))
+    if not ready:
+        return body, 0, skipped + len(jobs)
+    done, tools = 0, 0.0
+    new = attempt(body, [j[0] for j in ready], "все") if len(ready) > 1 else None
+    if new is not None:  # все участки двумя операциями
+        body, done = new, len(ready)
+        tools = sum(j[0][0].Volume() + j[0][1].Volume() for j in ready)
+    else:  # по одному; неудачный участок делим пополам: вдоль него может мешать одно место
+        queue = list(ready)
+        while queue and time.time() - t_start < budget:
+            pair, make, a0, a1 = queue.pop(0)
+            new = attempt(body, [pair], f"{a0:.0f}..{a1:.0f}")
+            if new is not None:
+                body, done = new, done + 1
+                tools += pair[0].Volume() + pair[1].Volume()
+            elif a1 - a0 >= 2 * MIN_PIECE:
+                am = (a0 + a1) / 2
+                for b0, b1 in ((a0, am), (am, a1)):
+                    try:
+                        sub = make(b0, b1)
+                    except Exception:  # noqa: BLE001
+                        sub = None
+                    if sub is not None:
+                        queue.append((sub, make, b0, b1))
+    if done:
+        try:  # общая сверка: тело не могло измениться больше, чем на объём инструментов
+            if abs(body.Volume() - start.Volume()) > tools + 1.0:
+                note("объём изменился больше объёма инструментов, скругления отменены")
+                return start, 0, skipped + len(jobs)
+        except Exception:  # noqa: BLE001
+            return start, 0, skipped + len(jobs)
+    return body, done, skipped + max(0, len(jobs) - done)
 
 
 def summary(fl: list[dict]) -> str:
@@ -109,7 +280,7 @@ def summary(fl: list[dict]) -> str:
     for f in fl:
         groups.setdefault(round(f["radius_mm"] * 2) / 2, []).append(f)
     parts = [f"R ≈ {str(r).replace('.', ',')} мм × {len(g)}" for r, g in sorted(groups.items())]
-    return "скругления между плоскими гранями (по скану, грани пока сплайнами): " + ", ".join(parts)
+    return "скругления между плоскими гранями (по скану, радиус по точкам скана): " + ", ".join(parts)
 
 
 if __name__ == "__main__":

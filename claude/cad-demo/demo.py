@@ -385,6 +385,30 @@ def _viewer_mesh(m, n):
     v /= np.bincount(inv)[:, None]
     return trimesh.Trimesh(v, f[np.sort(u)], process=False)
 
+ROUTES = {
+    "0": "по сечениям: плоскости, отверстия и пазы с настоящими размерами",
+    "0б": "из стенок: для тонкостенных деталей",
+    "0в": "по поверхности скана: любая форма мелкими плоскими гранями",
+    "0к": "гладкое тело: любая форма гладкими гранями с точными плоскостями, отверстиями и скруглениями",
+    "0ж": "по сечениям, размеры граней уточнены по точкам скана",
+}
+
+
+def route_text(iterations: list, best: dict | None) -> str:
+    """Одна строка для отчёта и журнала: какие пути построения пробовались и почему выбран этот.
+    Пути идут от простого к сложному, следующий запускается, только если прежний не справился."""
+    if best is None:
+        return "Ни один путь построения не дал рабочей модели."
+    def share(it):
+        return f"{it['cmp']['within_tol_share'] * 100:.1f}%" if it.get("cmp") else "не построено"
+    tried = [f"{it['n']} ({share(it)})" for it in iterations if str(it["n"]) in ROUTES]
+    name = ROUTES.get(str(best["n"]), "вариант ИИ или дополнительного метода")
+    why = ("он лучше остальных совпал со сканом" if str(best["n"]) != "0к" else
+           "по точности он не уступает телу из мелких граней, а править его в CAD удобнее")
+    return (f"Выбран путь {best['n']} — {name}; {why}. "
+            f"Пробовались по очереди: {', '.join(tried) if tried else best['n']}.")
+
+
 def write_report(out: Path, ctx: dict) -> Path:
     e = html.escape
     its = ctx["iterations"]
@@ -510,7 +534,7 @@ a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:
 <p class=small>Модель — черновик для инженера. Производственное решение принимает человек, проверив размеры по детали (при желании в КОМПАС-3D или SolidWorks).</p></section>
 {viewer}
 {dims}
-<section><h2>Журнал попыток</h2><table><tr><th>#</th><th>Результат</th><th>В допуске</th><th>Не хватает</th><th>Отклонение, мм: медиана / среднее</th><th>95% точек ближе, мм</th><th>Граней всего (точных)</th><th>Программа построения</th><th>Время</th></tr>{''.join(rows)}</table>
+<section><h2>Журнал попыток</h2><p>{e(route_text(its, best))}</p><table><tr><th>#</th><th>Результат</th><th>В допуске</th><th>Не хватает</th><th>Отклонение, мм: медиана / среднее</th><th>95% точек ближе, мм</th><th>Граней всего (точных)</th><th>Программа построения</th><th>Время</th></tr>{''.join(rows)}</table>
 {''.join(blocks)}</section>
 <section><h2>Скан</h2><p>Граней {d['faces']}, замкнут: {'да' if d['watertight'] else 'нет'}, кусков: {d['components']}, габарит {d['extents_mm']} мм.
 {' '.join(e(w) for w in d['warnings'])}</p>
@@ -548,9 +572,10 @@ def main() -> None:
                          "on — и на процессоре (~2–10 мин)")
     ap.add_argument("--smooth", choices=["auto", "off"], default="auto",
                     help="гладкое тело из B-сплайн граней для кривых деталей (попытка 0к)")
-    ap.add_argument("--p2s", choices=["auto", "on", "off"], default="auto",
-                    help="уточнить грани лучшей модели по скану через Point2STEP; auto — если он установлен "
-                         "(POINT2STEP_DIR или папка point2step рядом / в домашней)")
+    ap.add_argument("--p2s", choices=["auto", "on", "off"], default="off",
+                    help="уточнить грани лучшей модели по скану через Point2STEP (экспериментально: опыты Э1 и Э2 "
+                         "показали, что к собственной подгонке он ничего не добавляет): по умолчанию выключен; "
+                         "auto — если он установлен (POINT2STEP_DIR или папка point2step рядом / в домашней)")
     ap.add_argument("--model", help="модель ИИ (по умолчанию: claude-sonnet-5-5 / gpt-4.1)")
     ap.add_argument("--replay", help="llm_log.json для режимов replay/scripted")
     ap.add_argument("--ai-input", choices=["tools", "sheet"], default="tools",
@@ -1045,6 +1070,7 @@ def main() -> None:
     test_label = ""
     if "samples" in Path(a.scan).resolve().parts:
         test_label = "Тестовая деталь, сломанная нами специально. Это не деталь студии."
+    log(route_text(iterations, best))
     rep = write_report(out, {
         "iterations": iterations, "best": best, "sheet": sheet, "mode": mode, "mode_label": mode_label,
         "started": started.strftime("%d.%m.%Y %H:%M"), "scan_name": Path(a.scan).name, "tol": a.tol,

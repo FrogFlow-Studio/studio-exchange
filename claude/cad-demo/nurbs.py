@@ -42,6 +42,9 @@ K = 7  # точек на сторону лоскута (меняется по ш
 # 2) треугольник делится на три лоскута, сглаживающая подгонка 7×7 полюсов по 13×13 точкам;
 # 3) интерполяция через все точки — запасной путь (EXPERIMENTS.md, Э3, Э5, Э6).
 STEPS = ((1500, 17, 10, True), (800, 13, 7, False), (1500, 13, 7, False), (1500, 7, 0, False), (4000, 5, 0, False))
+SPLIT = True  # крупная грань (пара), до которой не дотянулась часть поверхности, заменяется шестью мелкими
+FACE_TOL = 0.3  # мм: точка поверхности дальше этого от модели считается потерянной (меняется по допуску сравнения)
+LOSS_KEEP = 0.004  # доля точек поверхности, которую разрешено терять в оставшихся крупных гранях
 PAIR = False  # склейка треугольников парами (меняется по шагам)
 COVER = 0.99  # для сглаживающей подгонки: доля чистой поверхности, покрытая моделью в допуске сравнения
 NP = None  # полюсов на сторону грани: None — интерполяция через все точки, иначе сглаживающая подгонка
@@ -320,49 +323,147 @@ def _even(P: np.ndarray, ratio: float = 4.0) -> np.ndarray:
     return P
 
 
-def _lsq_surface(P: np.ndarray, n: int):
-    """Сглаживающая грань: n×n полюсов по K×K точкам методом наименьших квадратов.
+def _half_basis(K: int, n: int, upper: int) -> tuple[np.ndarray, np.ndarray]:
+    """Тот же сплайн, что в `_basis`, но только на половине отрезка (нижней или верхней) и с её
+    собственным параметром 0..1. Узлы половины — узлы целого, попавшие в неё, поэтому половина
+    граничной кривой целой грани представляется в этом базисе точно, без подгонки."""
+    from scipy.interpolate import BSpline
 
-    Граничные кривые подгоняются только по точкам своей границы (концы — точно в углах), поэтому
-    у соседних лоскутов с общей границей они совпадают и грани сшиваются без щелей, как при
-    интерполяции. Внутренние полюса — по всем точкам лоскута при закреплённой границе."""
-    from OCP.Geom import Geom_BSplineSurface
-    from OCP.gp import gp_Pnt
-    from OCP.TColgp import TColgp_Array2OfPnt
-    from OCP.TColStd import TColStd_Array1OfInteger, TColStd_Array1OfReal
+    full = np.linspace(0, 1, n - 2)
+    lo = 0.5 * upper
+    kn = full[(full > lo + 1e-9) & (full < lo + 0.5 - 1e-9)]
+    inner = (np.r_[lo, kn, lo + 0.5] - lo) * 2
+    t = np.r_[[0.0] * 3, inner, [1.0] * 3]
+    return BSpline.design_matrix(np.linspace(0, 1, K), t, 3).toarray(), inner
 
-    K = P.shape[0]
-    P = _even(_even(P).transpose(1, 0, 2)).transpose(1, 0, 2)
-    B, inner = _basis(K, n)
-    C = np.zeros((n, n, 3))
 
-    def edge(pts):
-        c = np.zeros((n, 3))
+def _lsq_fit(P: np.ndarray, Bu: np.ndarray, Bv: np.ndarray):
+    """Полюса грани по точкам P (K×K) и остатки в этих точках. Граничные кривые — только по точкам
+    своей границы (концы точно в углах), внутренние полюса — по всем точкам при закреплённой границе."""
+    nu, nv = Bu.shape[1], Bv.shape[1]
+    C = np.zeros((nu, nv, 3))
+
+    def edge(pts, B):
+        c = np.zeros((B.shape[1], 3))
         c[0], c[-1] = pts[0], pts[-1]
         rhs = pts - B[:, :1] @ c[:1] - B[:, -1:] @ c[-1:]
         c[1:-1] = np.linalg.lstsq(B[:, 1:-1], rhs, rcond=None)[0]
         return c
 
-    C[0, :], C[-1, :] = edge(P[0, :]), edge(P[-1, :])
-    C[:, 0], C[:, -1] = edge(P[:, 0]), edge(P[:, -1])
-    A = np.kron(B, B)  # (K*K, n*n): точка (i, j) ↔ полюс (a, b)
-    free = np.zeros((n, n), bool)
+    C[0, :], C[-1, :] = edge(P[0, :], Bv), edge(P[-1, :], Bv)
+    C[:, 0], C[:, -1] = edge(P[:, 0], Bu), edge(P[:, -1], Bu)
+    A = np.kron(Bu, Bv)  # (K*K, nu*nv): точка (i, j) ↔ полюс (a, b)
+    free = np.zeros((nu, nv), bool)
     free[1:-1, 1:-1] = True
     free = free.ravel()
-    rhs = P.reshape(-1, 3) - A[:, ~free] @ C.reshape(-1, 3)[~free]
     Cf = C.reshape(-1, 3)
+    rhs = P.reshape(-1, 3) - A[:, ~free] @ Cf[~free]
     Cf[free] = np.linalg.lstsq(A[:, free], rhs, rcond=None)[0]
-    C = Cf.reshape(n, n, 3)
-    poles = TColgp_Array2OfPnt(1, n, 1, n)
-    for a in range(n):
-        for b in range(n):
+    resid = np.linalg.norm(A @ Cf - P.reshape(-1, 3), axis=1)
+    return Cf.reshape(nu, nv, 3), resid
+
+
+def _bspline(C: np.ndarray, inner_u: np.ndarray, inner_v: np.ndarray):
+    from OCP.Geom import Geom_BSplineSurface
+    from OCP.gp import gp_Pnt
+    from OCP.TColgp import TColgp_Array2OfPnt
+    from OCP.TColStd import TColStd_Array1OfInteger, TColStd_Array1OfReal
+
+    nu, nv = C.shape[:2]
+    poles = TColgp_Array2OfPnt(1, nu, 1, nv)
+    for a in range(nu):
+        for b in range(nv):
             poles.SetValue(a + 1, b + 1, gp_Pnt(*map(float, C[a, b])))
-    kn = TColStd_Array1OfReal(1, len(inner))
-    mu = TColStd_Array1OfInteger(1, len(inner))
-    for i, x in enumerate(inner):
-        kn.SetValue(i + 1, float(x))
-        mu.SetValue(i + 1, 4 if i in (0, len(inner) - 1) else 1)
-    return Geom_BSplineSurface(poles, kn, kn, mu, mu, 3, 3)
+
+    def knots(inner):
+        kn = TColStd_Array1OfReal(1, len(inner))
+        mu = TColStd_Array1OfInteger(1, len(inner))
+        for i, x in enumerate(inner):
+            kn.SetValue(i + 1, float(x))
+            mu.SetValue(i + 1, 4 if i in (0, len(inner) - 1) else 1)
+        return kn, mu
+
+    ku, mu_ = knots(inner_u)
+    kv, mv_ = knots(inner_v)
+    return Geom_BSplineSurface(poles, ku, kv, mu_, mv_, 3, 3)
+
+
+def _evened(P: np.ndarray) -> np.ndarray:
+    return _even(_even(P).transpose(1, 0, 2)).transpose(1, 0, 2)
+
+
+def _lsq_surface(P: np.ndarray, n: int):
+    """Сглаживающая грань: n×n полюсов по K×K точкам методом наименьших квадратов.
+
+    Граничные кривые подгоняются только по точкам своей границы, поэтому у соседних лоскутов с
+    общей границей они совпадают и грани сшиваются без щелей, как при интерполяции."""
+    B, inner = _basis(P.shape[0], n)
+    C, _ = _lsq_fit(_evened(P), B, B)
+    return _bspline(C, inner, inner)
+
+
+def _lossy(fitted: list, proj: _Projector, tol: float, n_pts: int = 30000) -> set:
+    """Номера граней, до которых не дотянулась часть поверхности: у точки чистой поверхности
+    ближайшая точка модели дальше tol, и эта ближайшая точка принадлежит грани. Мера двусторонняя:
+    остаток подгонки в собственных точках грани таких потерь не видит (Э9)."""
+    from scipy.spatial import cKDTree
+
+    per = len(fitted[0])
+    k = int(round(np.sqrt(per)))
+    # грубая сетка модели прямо по точкам граней: расстояние до неё — то же, чем меряется покрытие
+    idx = np.arange(k * k).reshape(k, k)
+    cell = np.concatenate([np.stack([idx[:-1, :-1], idx[1:, :-1], idx[1:, 1:]], -1).reshape(-1, 3),
+                           np.stack([idx[:-1, :-1], idx[1:, 1:], idx[:-1, 1:]], -1).reshape(-1, 3)])
+    tris = np.concatenate([cell + j * per for j in range(len(fitted))])
+    model = trimesh.Trimesh(np.vstack(fitted), tris, process=False)
+    sel = np.random.default_rng(3).choice(len(proj.dp), min(n_pts, len(proj.dp)), replace=False)
+    pts = proj.dp[sel]
+    _, d, tid = trimesh.proximity.closest_point(model, pts)
+    i = (tid // len(cell)) * per   # номер грани × per: дальше делится на per
+    cnt = np.bincount(i[d > tol] // per, minlength=len(fitted))
+    # заменяются грани с наибольшими потерями, пока в оставшихся крупных гранях не останется
+    # не больше LOSS_KEEP всех точек: порог приёмки (COVER) тогда проходится с запасом
+    order = np.argsort(-cnt)
+    left = cnt.sum() - np.cumsum(cnt[order])
+    k = int(np.argmax(left <= LOSS_KEEP * len(pts))) + 1 if cnt.sum() > LOSS_KEEP * len(pts) else 0
+    return set(order[:k].tolist())
+
+
+def _edge_key(p0, p1):
+    return frozenset((tuple(np.round(p0, 6)), tuple(np.round(p1, 6))))
+
+
+def _tri_faces(q, na, nb, C, n, proj, coarse_side):
+    """Пара с потерями заменяется шестью лоскутами: каждый из двух её треугольников делится на три
+    через центр, как в схеме без склейки. Половинка стороны, за которой сосед остался крупной
+    гранью, берётся точно с его граничной кривой (coarse_side — такие стороны), остальные границы —
+    по точкам поверхности. Возвращает список поверхностей."""
+    from scipy.interpolate import BSpline
+
+    tk = np.r_[[0.0] * 3, np.linspace(0, 1, n - 2), [1.0] * 3]
+    s = np.linspace(0, 1, K)
+    E = BSpline.design_matrix(0.5 * s, tk, 3).toarray()   # первая половина целой кривой
+    S, T = np.meshgrid(s, s, indexing="ij")
+    w = np.stack([(1 - S) * (1 - T), S * (1 - T), S * T, (1 - S) * T], -1).reshape(-1, 4)
+    Bh, ih = _half_basis(K, n, 0)
+    # граничные кривые пары от угла к углу: (откуда, куда) → полюса в этом направлении
+    curve = {}
+    for i0, i1, poles in ((0, 1, C[:, 0]), (1, 2, C[-1, :]), (3, 2, C[:, -1]), (0, 3, C[0, :])):
+        curve[(i0, i1)], curve[(i1, i0)] = poles, poles[::-1]
+    out = []
+    for tri, nn in (((0, 1, 3), na), ((1, 2, 3), nb)):
+        G = q[list(tri)].mean(0)
+        for k in range(3):
+            v, nx, pv = tri[k], tri[(k + 1) % 3], tri[(k + 2) % 3]
+            quad = np.array([q[v], (q[v] + q[nx]) / 2, G, (q[v] + q[pv]) / 2])
+            P = _evened(proj(w @ quad, nn).reshape(K, K, 3))
+            if (v, nx) in curve and _edge_key(q[v], q[nx]) in coarse_side:
+                P[:, 0] = E @ curve[(v, nx)]
+            if (v, pv) in curve and _edge_key(q[v], q[pv]) in coarse_side:
+                P[0, :] = E @ curve[(v, pv)]
+            Cs, _ = _lsq_fit(P, Bh, Bh)
+            out.append(_bspline(Cs, ih, ih))
+    return out
 
 
 def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool = True):
@@ -406,19 +507,9 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
             tag, fit = _plane_tags(mesh, quads, [proj(w @ q, nn_) for (q, _), nn_ in zip(quads, nrm)], proj, w)
         except Exception:  # noqa: BLE001  плоскости — улучшение, без них тело то же
             tag, fit = -np.ones(len(quads), int), {}
-    faces = []
-    for (q, _), nn_ in zip(quads, nrm):
-        P = proj(w @ q, nn_).reshape(K, K, 3)
-        arr = TColgp_Array2OfPnt(1, K, 1, K)
-        for i in range(K):
-            for j in range(K):
-                arr.SetValue(i + 1, j + 1, gp_Pnt(*map(float, P[i, j])))
-        if NP:
-            srf = _lsq_surface(P, NP)
-        else:
-            api = GeomAPI_PointsToBSplineSurface()
-            api.Interpolate(arr, Approx_ParametrizationType.Approx_IsoParametric, False)
-            srf = api.Surface()
+    faces, ftag = [], []
+
+    def add(srf, t):
         u0, u1, v0, v1 = srf.Bounds()
         for u in u0 + (u1 - u0) * cm:
             for vv in v0 + (v1 - v0) * cm:
@@ -427,7 +518,46 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
         fc = BRepBuilderAPI_MakeFace(srf, 1e-6).Face()
         sew.Add(fc)
         faces.append(fc)
-        n_faces += 1
+        ftag.append(t)
+
+    pre, split, sides = {}, set(), {}
+    if NP:
+        B, inner = _basis(K, NP)
+        A = np.kron(B, B)
+        fitted = []
+        for i, ((q, _), nn_) in enumerate(zip(quads, nrm)):
+            C, _r = _lsq_fit(_evened(proj(w @ q, nn_).reshape(K, K, 3)), B, B)
+            pre[i] = C
+            fitted.append(A @ C.reshape(-1, 3))
+        if SPLIT and pq is not None:
+            split = {i for i in _lossy(fitted, proj, FACE_TOL) if tag[i] < 0}
+            for i in split:
+                q = quads[i][0]
+                for i0, i1 in ((0, 1), (1, 2), (2, 3), (3, 0)):
+                    key = _edge_key(q[i0], q[i1])
+                    sides[key] = sides.get(key, 0) + 1
+    for i, ((q, _), nn_) in enumerate(zip(quads, nrm)):
+        if NP:
+            C = pre[i]
+            if i in split:
+                coarse_side = {key for key in (_edge_key(q[i0], q[i1]) for i0, i1 in ((0, 1), (1, 2), (2, 3), (3, 0)))
+                               if sides[key] == 1}
+                for srf in _tri_faces(q, pq[i][2], pq[i][3], C, NP, proj, coarse_side):
+                    add(srf, -1)
+                continue
+            srf = _bspline(C, inner, inner)
+        else:
+            P = proj(w @ q, nn_).reshape(K, K, 3)
+            arr = TColgp_Array2OfPnt(1, K, 1, K)
+            for a in range(K):
+                for b in range(K):
+                    arr.SetValue(a + 1, b + 1, gp_Pnt(*map(float, P[a, b])))
+            api = GeomAPI_PointsToBSplineSurface()
+            api.Interpolate(arr, Approx_ParametrizationType.Approx_IsoParametric, False)
+            srf = api.Surface()
+        add(srf, int(tag[i]))
+    tag = np.array(ftag, int)
+    n_faces = len(faces)
     sew.Perform()
     if sew.NbFreeEdges():
         return None, n_faces, None
@@ -463,7 +593,9 @@ def near_share(pts: np.ndarray, proj: _Projector, tol: float = 0.1) -> float:
 
 def cover_share(body, proj: _Projector, tol: float = 0.3, n: int = 30000) -> float:
     """Доля точек чистой поверхности, у которых в пределах tol мм есть поверхность модели."""
-    v, f = body.tessellate(0.05, 0.5)
+    # 0,01, а не 0,05: допуск разбиения в CadQuery относительный (доля размера грани), и у крупной
+    # грани сетка при 0,05 уходила от самой грани до 0,8 мм — «потери» были ошибкой измерения (Э11)
+    v, f = body.tessellate(0.01, 0.5)
     m = trimesh.Trimesh([(q.x, q.y, q.z) for q in v], f, process=False)
     pts = proj.dp[np.random.default_rng(3).choice(len(proj.dp), min(n, len(proj.dp)), replace=False)]
     _, d, _ = trimesh.proximity.closest_point(m, pts)
@@ -476,7 +608,8 @@ def smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 90
     t0 = time.time()
     proj = _Projector(mesh)
     best, info = None, {"faces": 0, "near": 0.0, "score": -1.0}
-    global K, NP, PAIR
+    global K, NP, PAIR, FACE_TOL
+    FACE_TOL = min(tol, 0.5)  # потери по граням считаются тем же допуском, что и приёмка
     for tri, K, NP, PAIR in STEPS:
         if time.time() - t0 > budget / 3 and best is not None:
             break

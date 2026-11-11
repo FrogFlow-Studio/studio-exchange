@@ -54,8 +54,11 @@ try:
     cq.exporters.export(shape, str(out / "model.step"))
     # гладкое тело из тысяч B-сплайн граней при мелком угловом шаге даёт миллионы треугольников
     # (сотни мегабайт и падение); точность STL задаёт линейный допуск, угол можно взять крупнее
-    many = len(shape.Faces()) > 1000
-    cq.exporters.export(shape, str(out / "model.stl"), tolerance=0.05 if many else 0.02,
+    # Линейный допуск здесь относительный (доля размера грани): при 0,05 сетка крупной сплайновой
+    # грани уходила от неё до 0,8 мм, и сравнение со сканом штрафовало модель за погрешность самой
+    # сетки (Э11). Поэтому у гладкого тела допуск 0,01; признак — число сплайновых граней, а не всех.
+    many = sum(f.geomType() not in ("PLANE", "CYLINDER", "CONE", "SPHERE", "TORUS") for f in shape.Faces()) > 200
+    cq.exporters.export(shape, str(out / "model.stl"), tolerance=0.01 if many else 0.02,
                         angularTolerance=1.0 if many else 0.1)
     info["ok"] = True
 except Exception as e:  # noqa: BLE001 — вся ошибка уходит обратно ИИ

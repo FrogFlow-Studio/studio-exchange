@@ -211,6 +211,25 @@ def _holes_row(rows):
     return (not bad, title, note)
 
 
+
+def check_step(step: Path) -> tuple[bool, str]:
+    """Готовый STEP читается заново, как его прочтёт SolidWorks или КОМПАС: тело одно и валидное,
+    единицы длины — миллиметры. Это замена открытия в CAD, а не само открытие."""
+    import cadquery as cq
+
+    t = time.time()
+    try:
+        shape = cq.importers.importStep(str(step)).val()
+    except Exception as ex:  # noqa: BLE001
+        return False, f"не читается: {type(ex).__name__}"
+    with open(step, encoding="latin-1") as fh:
+        head = fh.read(200_000)
+    mm = "SI_UNIT(.MILLI.,.METRE.)" in head.replace(" ", "")
+    solids, valid = len(shape.Solids()), bool(shape.isValid())
+    note = (f"тел {solids}, валидно: {'да' if valid else 'нет'}, единицы: {'мм' if mm else 'не мм'}, "
+            f"граней {len(shape.Faces())}, файл {step.stat().st_size / 1e6:.1f} МБ, чтение {time.time() - t:.0f} с")
+    return solids == 1 and valid and mm, note
+
 def print_ready_html(best: dict | None, ctx: dict) -> str:
     """Готово ли к печати: что проверено автоматически, а что — только инженером."""
     e = html.escape
@@ -231,6 +250,9 @@ def print_ready_html(best: dict | None, ctx: dict) -> str:
          ("достроено: " + "; ".join(map(str, restored))) if restored else "достроенных мест модель не указала"),
         _holes_row(ctx.get("holes")),
     ]
+    if ctx.get("step_check"):
+        rows.append((ctx["step_check"][0], "Файл STEP открывается заново: одно валидное тело, единицы — миллиметры",
+                     ctx["step_check"][1]))
     mark = {True: "<b style='color:var(--ok)'>да</b>", False: "<b class=err>нет</b>", None: "инженер"}
     auto = [r for r in rows if r[0] is not None]
     done = sum(1 for r in auto if r[0])
@@ -1017,6 +1039,10 @@ def main() -> None:
             log(f"отверстия: найдено {len(holes_rows)}, совпали {sum(r['ok'] for r in holes_rows)}")
         except Exception as ex:  # noqa: BLE001
             log(f"проверка отверстий не удалась: {ex}")
+    step_check = None
+    if best and (out / "model.step").exists():
+        step_check = check_step(out / "model.step")
+        log("файл STEP перечитан: " + step_check[1])
     test_label = ""
     if "samples" in Path(a.scan).resolve().parts:
         test_label = "Тестовая деталь, сломанная нами специально. Это не деталь студии."
@@ -1024,7 +1050,7 @@ def main() -> None:
         "iterations": iterations, "best": best, "sheet": sheet, "mode": mode, "mode_label": mode_label,
         "started": started.strftime("%d.%m.%Y %H:%M"), "scan_name": Path(a.scan).name, "tol": a.tol,
         "target": a.target, "converged": converged, "total_s": (dt.datetime.now() - started).total_seconds(),  # весь запуск, с замерами
-        "truth": truth, "holes": holes_rows,
+        "truth": truth, "holes": holes_rows, "step_check": step_check,
         "test_label": test_label, "scan_mesh": scan})
     log(f"готово: {rep}")
     if not a.no_open:

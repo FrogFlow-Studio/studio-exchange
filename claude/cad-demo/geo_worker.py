@@ -75,7 +75,8 @@ elif len(sys.argv) > 5 and sys.argv[5] == "smooth":
     import nurbs
     import surface
 
-    body, info = nurbs.smooth_body(surface.flatten_planes(surface.surface_mesh(scan)), scan)
+    tol = max(0.3, 3 * float(sheet.get("diagnostics", {}).get("noise_mm", 0) or 0))  # как допуск сравнения в demo.py
+    body, info = nurbs.smooth_body(surface.flatten_planes(surface.surface_mesh(scan)), scan, tol=tol)
     if body is None:
         raise SystemExit("гладкое тело не собралось")
     body, cut = surface.cut_holes(body, scan)

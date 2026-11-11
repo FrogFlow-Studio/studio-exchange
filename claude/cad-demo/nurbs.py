@@ -35,12 +35,15 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 K = 7  # точек на сторону лоскута (меняется по шагам)
-# (треугольников грубой сетки, точек на сторону, полюсов на сторону; 0 — интерполяция): сначала крупные
-# грани, при нехватке точности мельче. Густые точки (13) со сглаживающей подгонкой на 7×7 полюсов дают
-# ту же точность при вдвое-втрое меньшем числе граней, и OpenCascade режет такую грань на треугольники
-# по полюсам, а не по точкам: STL не раздувается (11.11, EXPERIMENTS.md, Э3 и Э5). Интерполяция —
-# запасной путь, если подгонка не сшилась.
-STEPS = ((800, 13, 7), (1500, 13, 7), (1500, 7, 0), (4000, 5, 0))
+# Шаги: (треугольников грубой сетки, точек на сторону, полюсов на сторону; 0 — интерполяция, склейка парами).
+# Сначала самые крупные грани, при нехватке точности мельче:
+# 1) треугольники склеены парами в четырёхугольники, сглаживающая подгонка — граней в 5–6 раз меньше,
+#    но мелкие детали и острые кромки такая грань сглаживает, поэтому проходит только на плавных деталях;
+# 2) треугольник делится на три лоскута, сглаживающая подгонка 7×7 полюсов по 13×13 точкам;
+# 3) интерполяция через все точки — запасной путь (EXPERIMENTS.md, Э3, Э5, Э6).
+STEPS = ((1500, 17, 10, True), (800, 13, 7, False), (1500, 13, 7, False), (1500, 7, 0, False), (4000, 5, 0, False))
+PAIR = False  # склейка треугольников парами (меняется по шагам)
+COVER = 0.99  # для сглаживающей подгонки: доля чистой поверхности, покрытая моделью в допуске сравнения
 NP = None  # полюсов на сторону грани: None — интерполяция через все точки, иначе сглаживающая подгонка
 GOAL, GOAL_TOL = 0.98, 0.2  # доля чистой поверхности в пределах GOAL_TOL мм
 
@@ -67,7 +70,8 @@ class _Projector:
             # плоскость — точнее, чем просто взять образец, и быстрее точной проекции
             Pn = P[need]
             _, ii = self.tree.query(Pn, k=32)
-            same = self.dn[ii] @ N > 0.3
+            Nn = np.broadcast_to(N, P.shape)[need]
+            same = np.einsum("ikj,ij->ik", self.dn[ii], Nn) > 0.3
             pick = np.where(same.any(1), same.argmax(1), 0)
             s0 = self.dp[ii[np.arange(len(ii)), pick]]
             n0 = self.dn[ii[np.arange(len(ii)), pick]]
@@ -90,6 +94,49 @@ def _quads(coarse: trimesh.Trimesh):
         for q in ((A, mab, G, mda), (B, mbd, G, mab), (D, mda, G, mbd)):
             yield np.array(q), n
 
+
+
+def _paired_quads(coarse: trimesh.Trimesh):
+    """Треугольники грубой сетки склеиваются парами в четырёхугольники: у замкнутой поверхности
+    граф соседства треугольников кубический и без мостов, поэтому разбиение на пары без остатка
+    существует всегда (теорема Петерсена). Пары выбираются так, чтобы четырёхугольники были как
+    можно ровнее и площе. Граней выходит в 6 раз меньше, чем при делении треугольника на три."""
+    import networkx as nx
+
+    V, F, fn = coarse.vertices, coarse.faces, coarse.face_normals
+    g = nx.Graph()
+    info = {}
+    for (a, b), (u, v) in zip(coarse.face_adjacency, coarse.face_adjacency_edges):
+        fa = list(F[a])
+        oa = next(x for x in fa if x != u and x != v)
+        i = fa.index(oa)
+        x, y = fa[(i + 1) % 3], fa[(i + 2) % 3]
+        ob = next(z for z in F[b] if z != u and z != v)
+        q = V[[oa, x, ob, y]]
+        n = fn[a] + fn[b]
+        ln = np.linalg.norm(n)
+        if ln < 1e-9:
+            continue
+        n = n / ln
+        e = np.roll(q, -1, 0) - q
+        turn = np.array([np.cross(e[k - 1], e[k]) @ n for k in range(4)])
+        le = np.linalg.norm(e, axis=1)
+        sin = turn / np.maximum(np.roll(le, 1) * le, 1e-12)
+        shape = float(sin.min())  # 1 у прямоугольника, ≤ 0 у невыпуклого
+        wgt = max(shape, 0.0) * max(float(fn[a] @ fn[b]), 0.0) + (1e-3 if shape > 0 else 0.0)
+        g.add_edge(int(a), int(b), weight=wgt)
+        info[(int(a), int(b))] = (q, n, shape)
+    g.add_nodes_from(range(len(F)))
+    m = nx.max_weight_matching(g, maxcardinality=True)
+    if 2 * len(m) != len(F):
+        return None
+    out = []
+    for a, b in m:
+        q, n, shape = info.get((a, b)) or info[(b, a)]
+        if (b, a) in info and (a, b) not in info:
+            a, b = b, a
+        out.append((q, n, fn[a], fn[b], shape))
+    return out
 
 
 def _plane_tags(mesh, quads, raw, proj, w):
@@ -255,6 +302,24 @@ def _basis(K: int, n: int) -> tuple[np.ndarray, np.ndarray]:
     return B, inner
 
 
+def _even(P: np.ndarray, ratio: float = 4.0) -> np.ndarray:
+    """Ряды сетки, где точки сбились в кучку, раскладываются заново равномерно по длине ломаной.
+
+    На ребре с изломом проекция стягивает точки к одной стороне (одна длинная ступень и десяток
+    коротких). При равномерных параметрах кривая по таким точкам петляет, и грань не сшивается с
+    соседней. Ряд перекладывается только по собственным точкам и одинаково в обе стороны, поэтому
+    общая граница у соседних граней остаётся общей."""
+    P = P.copy()
+    for r in range(P.shape[0]):
+        seg = np.linalg.norm(np.diff(P[r], axis=0), axis=1)
+        if seg.max() < 1e-9 or seg.max() <= ratio * max(np.median(seg), 1e-9):
+            continue
+        L = np.r_[0, np.cumsum(seg)]
+        t = np.linspace(0, L[-1], len(L))
+        P[r] = np.column_stack([np.interp(t, L, P[r][:, k]) for k in range(3)])
+    return P
+
+
 def _lsq_surface(P: np.ndarray, n: int):
     """Сглаживающая грань: n×n полюсов по K×K точкам методом наименьших квадратов.
 
@@ -267,6 +332,7 @@ def _lsq_surface(P: np.ndarray, n: int):
     from OCP.TColStd import TColStd_Array1OfInteger, TColStd_Array1OfReal
 
     K = P.shape[0]
+    P = _even(_even(P).transpose(1, 0, 2)).transpose(1, 0, 2)
     B, inner = _basis(K, n)
     C = np.zeros((n, n, 3))
 
@@ -323,16 +389,26 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
     n_faces = 0
     mids = []  # точки поверхности в серединах ячеек: по ним меряется точность
     cm = (np.arange(K - 1) + 0.5) / (K - 1)
-    quads = list(_quads(coarse))
+    S_, T_ = S.ravel(), T.ravel()
+    pq = _paired_quads(coarse) if PAIR else None
+    if PAIR and pq is None:
+        return None, 0, None
+    if pq is not None:
+        quads = [(q, n) for q, n, *_ in pq]
+        # у каждой точки нормаль своего треугольника: сторона стенки выбирается точнее
+        nrm = [np.where((S_ + T_ <= 1)[:, None], na, nb) for _, _, na, nb, _ in pq]
+    else:
+        quads = list(_quads(coarse))
+        nrm = [n for _, n in quads]
     tag, fit = -np.ones(len(quads), int), {}
     if planes:
         try:
-            tag, fit = _plane_tags(mesh, quads, [proj(w @ q, n) for q, n in quads], proj, w)
+            tag, fit = _plane_tags(mesh, quads, [proj(w @ q, nn_) for (q, _), nn_ in zip(quads, nrm)], proj, w)
         except Exception:  # noqa: BLE001  плоскости — улучшение, без них тело то же
             tag, fit = -np.ones(len(quads), int), {}
     faces = []
-    for q, n in quads:
-        P = proj(w @ q, n).reshape(K, K, 3)
+    for (q, _), nn_ in zip(quads, nrm):
+        P = proj(w @ q, nn_).reshape(K, K, 3)
         arr = TColgp_Array2OfPnt(1, K, 1, K)
         for i in range(K):
             for j in range(K):
@@ -385,23 +461,23 @@ def near_share(pts: np.ndarray, proj: _Projector, tol: float = 0.1) -> float:
     return float((d.min(1) < tol).mean())
 
 
-def cover_share(body, proj: _Projector, tol: float = 0.5, n: int = 30000) -> float:
+def cover_share(body, proj: _Projector, tol: float = 0.3, n: int = 30000) -> float:
     """Доля точек чистой поверхности, у которых в пределах tol мм есть поверхность модели."""
-    v, f = body.tessellate(0.1, 0.5)
+    v, f = body.tessellate(0.05, 0.5)
     m = trimesh.Trimesh([(q.x, q.y, q.z) for q in v], f, process=False)
     pts = proj.dp[np.random.default_rng(3).choice(len(proj.dp), min(n, len(proj.dp)), replace=False)]
     _, d, _ = trimesh.proximity.closest_point(m, pts)
     return float((d < tol).mean())
 
 
-def smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 900.0):
-    """mesh — замкнутая чистая поверхность (из surface.py), scan — исходный скан для проверки.
-    Возвращает (тело или None, сведения)."""
+def smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 900.0, tol: float = 0.3):
+    """mesh — замкнутая чистая поверхность (из surface.py), scan — исходный скан, tol — допуск, с которым
+    модель потом сравнивается со сканом. Возвращает (тело или None, сведения)."""
     t0 = time.time()
     proj = _Projector(mesh)
-    best, info = None, {"faces": 0, "near": 0.0}
-    global K, NP
-    for tri, K, NP in STEPS:
+    best, info = None, {"faces": 0, "near": 0.0, "score": -1.0}
+    global K, NP, PAIR
+    for tri, K, NP, PAIR in STEPS:
         if time.time() - t0 > budget / 3 and best is not None:
             break
         proj.cache.clear()
@@ -410,15 +486,20 @@ def smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 90
             continue
         # точность считается от чистой поверхности: шум скана сглажен ещё в surface.py, и
         # мерить по сырому скану значило бы гнаться за шумом
-        share = near_share(mids, proj, GOAL_TOL)
-        if NP:
-            # подгонка не проходит через точки и на тонких местах может срезать целый участок
-            # (ребро, бортик): тогда точки модели лежат на поверхности, а куска поверхности в модели
-            # нет. Поэтому проверяется и обратное: чистая поверхность должна быть покрыта моделью.
-            share = min(share, cover_share(body, proj))
-        if best is None or share > info["near"]:
-            best, info = body, {"faces": n, "near": share}
-        if share >= GOAL:
+        share = score = near_share(mids, proj, GOAL_TOL)
+        ok = share >= GOAL
+        if NP and ok:
+            # Мера выше односторонняя: точки модели лежат у поверхности. Подгонка же не проходит через
+            # точки и может срезать ребро или мелкую деталь — тогда куска поверхности в модели нет, и при
+            # сравнении со сканом тело проигрывает (линза: 98,9% по этой мере и 96,5% в допуске). Поэтому
+            # для подгонки проверяется и обратное, тем же допуском, что и итоговое сравнение.
+            # не шире 0,5 мм: у шумного скана допуск сравнения 2 мм, а чистая поверхность уже сглажена
+            cover = cover_share(body, proj, min(tol, 0.5))
+            score = min(share, cover)
+            ok = cover >= COVER
+        if best is None or score > info["score"]:
+            best, info = body, {"faces": n, "near": share, "score": score}
+        if ok:
             break
     info["sec"] = round(time.time() - t0)
     return best, info

@@ -1,0 +1,431 @@
+diff --git a/claude/cad-demo/cad_runner.py b/claude/cad-demo/cad_runner.py
+index 509a378..a84b0a5 100644
+--- a/claude/cad-demo/cad_runner.py
++++ b/claude/cad-demo/cad_runner.py
+@@ -1,16 +1,21 @@
+ """Исполняет код CadQuery, который написал ИИ, в отдельном процессе.
+ 
+-Запуск: python cad_runner.py code.py outdir
++Запуск: python cad_runner.py code.py outdir [STEP от геометрического воркера]
+ Код должен положить итоговое тело в переменную `result`.
+ Пишет outdir/model.step, outdir/model.stl, outdir/run.json (валидность, объём,
+ габарит) или outdir/run.json с ошибкой и трассировкой.
+ """
+ import json
++import os
++import shutil
+ import sys
+ import traceback
+ from pathlib import Path
+ 
++from cad_checks import measured
++
+ code_path, out = Path(sys.argv[1]), Path(sys.argv[2])
++step_source = Path(sys.argv[3]) if len(sys.argv) > 3 else None
+ # Ядро CAD на неудачной геометрии иногда съедает всю память; ограничиваем процесс
+ # (3 ГБ), чтобы упала одна попытка, а не ноутбук. На Windows такого ограничения нет.
+ try:
+@@ -19,17 +24,20 @@ try:
+     resource.setrlimit(resource.RLIMIT_AS, (3 * 1024 ** 3, 3 * 1024 ** 3))
+ except (ImportError, ValueError, OSError):
+     pass
+-info = {"ok": False}
++timings = {}
++info = {"ok": False, "timings": timings}
+ try:
+     import cadquery as cq
+ 
+-    ns: dict = {"cq": cq, "__name__": "__ai_model__"}
+-    import os
+-
+-    if os.environ.get("CAD_DRAFT") and Path(os.environ["CAD_DRAFT"]).exists():
+-        ns["draft"] = cq.importers.importStep(os.environ["CAD_DRAFT"]).val()  # черновик без ИИ
+-    exec(compile(code_path.read_text(encoding="utf-8"), str(code_path), "exec"), ns)
+-    res = ns.get("result")
++    if step_source is not None:
++        with measured(timings, "step_import"):
++            res = cq.importers.importStep(str(step_source)).val()
++    else:
++        ns: dict = {"cq": cq, "__name__": "__ai_model__"}
++        if os.environ.get("CAD_DRAFT") and Path(os.environ["CAD_DRAFT"]).exists():
++            ns["draft"] = cq.importers.importStep(os.environ["CAD_DRAFT"]).val()
++        exec(compile(code_path.read_text(encoding="utf-8"), str(code_path), "exec"), ns)
++        res = ns.get("result")
+     if res is None:
+         raise RuntimeError("код не задал переменную result")
+     shape = res.val() if isinstance(res, cq.Workplane) else res
+@@ -51,15 +59,29 @@ try:
+         # типы граней: точные (плоскость, цилиндр…) инженер правит размером, сплайн — только формой
+         "face_types": {t: n for t, n in __import__("collections").Counter(f.geomType() for f in shape.Faces()).items()},
+     })
+-    cq.exporters.export(shape, str(out / "model.step"))
++    if step_source is None:
++        with measured(timings, "step_write"):
++            cq.exporters.export(shape, str(out / "model.step"))
++    else:
++        with measured(timings, "step_copy"):
++            shutil.copyfile(step_source, out / "model.step")
+     # гладкое тело из тысяч B-сплайн граней при мелком угловом шаге даёт миллионы треугольников
+     # (сотни мегабайт и падение); точность STL задаёт линейный допуск, угол можно взять крупнее
+     # Линейный допуск здесь относительный (доля размера грани): при 0,05 сетка крупной сплайновой
+     # грани уходила от неё до 0,8 мм, и сравнение со сканом штрафовало модель за погрешность самой
+     # сетки (Э11). Поэтому у гладкого тела допуск 0,01; признак — число сплайновых граней, а не всех.
+     many = sum(f.geomType() not in ("PLANE", "CYLINDER", "CONE", "SPHERE", "TORUS") for f in shape.Faces()) > 200
+-    cq.exporters.export(shape, str(out / "model.stl"), tolerance=0.01 if many else 0.02,
+-                        angularTolerance=1.0 if many else 0.1)
++    from OCP.BRepMesh import BRepMesh_IncrementalMesh
++    from OCP.StlAPI import StlAPI_Writer
++
++    # CadQuery exportStl already uses relative deflection and parallel meshing.
++    with measured(timings, "stl_tessellation"):
++        BRepMesh_IncrementalMesh(shape.wrapped, 0.01 if many else 0.02, True, 1.0 if many else 0.1, True)
++    with measured(timings, "stl_write"):
++        writer = StlAPI_Writer()
++        writer.ASCIIMode = False
++        if not writer.Write(shape.wrapped, str(out / "model.stl")):
++            raise RuntimeError("не удалось записать STL")
+     info["ok"] = True
+ except Exception as e:  # noqa: BLE001 — вся ошибка уходит обратно ИИ
+     tb = traceback.format_exc()
+diff --git a/claude/cad-demo/compare.py b/claude/cad-demo/compare.py
+index 314bece..fedb277 100644
+--- a/claude/cad-demo/compare.py
++++ b/claude/cad-demo/compare.py
+@@ -14,6 +14,8 @@ import trimesh
+ from scipy.sparse.csgraph import connected_components
+ from scipy.spatial import cKDTree
+ 
++from cad_checks import measured
++
+ 
+ def clusters(points: np.ndarray, values: np.ndarray, link: float = 2.0, min_pts: int = 15) -> list[dict]:
+     if len(points) == 0:
+@@ -39,38 +41,101 @@ def clusters(points: np.ndarray, values: np.ndarray, link: float = 2.0, min_pts:
+     return sorted(out, key=lambda c: -c["points"])
+ 
+ 
+-def compare(scan: trimesh.Trimesh, model: trimesh.Trimesh, tol: float = 0.3, n: int = 12000, seed: int = 0) -> dict:
++class ScanComparison:
++    """Reuse samples and spatial indexes for one immutable scan."""
++
++    def __init__(self, scan):
++        self.scan = scan
++        self.samples = {}
++        self.vertices = None
++
++    def sample(self, n, seed):
++        key = n, seed
++        if key not in self.samples:
++            self.samples[key] = trimesh.sample.sample_surface_even(self.scan, n, seed=seed)[0]
++        return self.samples[key]
++
++    def distances(self, points):
++        # Same candidate AABBs and tie-breaking as trimesh 5.2 closest_point.
++        # Only the distances are needed in the model-to-scan direction.
++        from trimesh.constants import tol as mesh_tol
++        from trimesh.triangles import closest_point
++        from trimesh.util import diagonal_dot
++
++        scan = self.scan
++        if self.vertices is None:
++            self.vertices = cKDTree(scan.vertices[scan.referenced_vertices])
++        radii = self.vertices.query(points)[0][:, None] + mesh_tol.merge
++        bounds = np.column_stack((points - radii, points + radii))
++        tree = scan.triangles_tree
++        try:
++            triangles, counts = tree.intersection_v(bounds[:, :3], bounds[:, 3:])
++        except Exception:
++            candidates = [list(tree.intersection(box)) for box in bounds]
++            triangles = np.concatenate(candidates).astype(int)
++            counts = np.array(list(map(len, candidates)))
++        counts = np.asarray(counts, dtype=np.intp)
++        if not len(points) or np.any(counts == 0):
++            return trimesh.proximity.closest_point(scan, points)[1]
++        starts = np.r_[0, np.cumsum(counts)[:-1]]
++        owners = np.repeat(np.arange(len(points)), counts)
++        query = points[owners]
++        vectors = query - closest_point(scan.triangles.view(np.ndarray)[triangles], query)
++        squared = diagonal_dot(vectors, vectors)
++        nearest = np.minimum.reduceat(squared, starts)
++        # Legacy considers the normal of the two closest triangles on near ties.
++        # Sorting only these groups keeps both the old tie rule and its order.
++        tied = np.add.reduceat((squared - nearest[owners] < mesh_tol.merge).astype(int), starts)
++        ambiguous = np.flatnonzero((tied >= 2) & (nearest > mesh_tol.merge))
++        if len(ambiguous):
++            best = np.array([starts[i] + squared[starts[i]:starts[i] + counts[i]].argsort()[:2]
++                             for i in ambiguous])
++            directions = vectors[best] / squared[best, None] ** 0.5
++            normals = scan.face_normals[triangles[best]]
++            choice = (normals * directions).sum(axis=2).argmax(axis=1)
++            nearest[ambiguous] = squared[best[np.arange(len(best)), choice]]
++        return nearest ** 0.5
++
++
++def compare(scan: trimesh.Trimesh, model: trimesh.Trimesh, tol: float = 0.3, n: int = 12000, seed: int = 0,
++            *, prepared=None, timings=None) -> dict:
+     rng = np.random.default_rng(seed)
+-    sp_pts, _ = trimesh.sample.sample_surface_even(scan, n, seed=int(rng.integers(1 << 30)))
++    scan_seed, model_seed = (int(rng.integers(1 << 30)) for _ in range(2))
++    with measured(timings, "compare_sample"):
++        sp_pts = (prepared.sample(n, scan_seed) if prepared is not None
++                  else trimesh.sample.sample_surface_even(scan, n, seed=scan_seed)[0])
++        mp_pts, _ = trimesh.sample.sample_surface_even(model, n, seed=model_seed)
+     # signed_distance: >0 внутри модели, <0 снаружи.
+-    sd = trimesh.proximity.signed_distance(model, sp_pts)
+-    ad = np.abs(sd)
+-    outside = sd < -tol
+-    inside = sd > tol
+-    mp_pts, _ = trimesh.sample.sample_surface_even(model, n, seed=int(rng.integers(1 << 30)))
+-    _, d_model, _ = trimesh.proximity.closest_point(scan, mp_pts)
+-    added = d_model > tol
+-    within = float((ad <= tol).mean())
+-    # шаг между точками выборки: на большой детали он больше 2 мм, и с постоянной связью
+-    # промахи не собирались в области — ИИ не видел, где чинить
+-    link = max(2.0, 2.5 * float(np.sqrt(scan.area / n)))
+-    return {
+-        "tolerance_mm": tol,
+-        "scan_points": int(len(sp_pts)),
+-        "within_tol_share": round(within, 4),
+-        "mean_abs_dev_mm": round(float(ad.mean()), 3),
+-        "median_abs_dev_mm": round(float(np.median(ad)), 3),
+-        "p95_abs_dev_mm": round(float(np.percentile(ad, 95)), 3),
+-        "max_abs_dev_mm": round(float(ad.max()), 3),
+-        "outside_share": round(float(outside.mean()), 4),
+-        "inside_share": round(float(inside.mean()), 4),
+-        "added_surface_share": round(float(added.mean()), 4),
+-        "clusters_outside": clusters(sp_pts[outside], sd[outside], link=link, min_pts=8),
+-        "clusters_inside": clusters(sp_pts[inside], sd[inside], link=link, min_pts=8),
+-        "clusters_added": clusters(mp_pts[added], d_model[added], link=link, min_pts=8),
+-        # для картинок
+-        "_scan_pts": sp_pts, "_scan_dev": sd, "_model_pts": mp_pts, "_model_dev": d_model,
+-    }
++    with measured(timings, "compare_signed"):
++        sd = trimesh.proximity.signed_distance(model, sp_pts)
++    with measured(timings, "compare_reverse"):
++        d_model = (prepared.distances(mp_pts) if prepared is not None
++                   else trimesh.proximity.closest_point(scan, mp_pts)[1])
++    with measured(timings, "compare_metrics"):
++        ad = np.abs(sd)
++        outside = sd < -tol
++        inside = sd > tol
++        added = d_model > tol
++        within = float((ad <= tol).mean())
++        # Шаг связи областей остаётся привязан к площади и прежнему размеру выборки.
++        link = max(2.0, 2.5 * float(np.sqrt(scan.area / n)))
++        return {
++            "tolerance_mm": tol,
++            "scan_points": int(len(sp_pts)),
++            "within_tol_share": round(within, 4),
++            "mean_abs_dev_mm": round(float(ad.mean()), 3),
++            "median_abs_dev_mm": round(float(np.median(ad)), 3),
++            "p95_abs_dev_mm": round(float(np.percentile(ad, 95)), 3),
++            "max_abs_dev_mm": round(float(ad.max()), 3),
++            "outside_share": round(float(outside.mean()), 4),
++            "inside_share": round(float(inside.mean()), 4),
++            "added_surface_share": round(float(added.mean()), 4),
++            "clusters_outside": clusters(sp_pts[outside], sd[outside], link=link, min_pts=8),
++            "clusters_inside": clusters(sp_pts[inside], sd[inside], link=link, min_pts=8),
++            "clusters_added": clusters(mp_pts[added], d_model[added], link=link, min_pts=8),
++            # для картинок
++            "_scan_pts": sp_pts, "_scan_dev": sd, "_model_pts": mp_pts, "_model_dev": d_model,
++        }
+ 
+ 
+ def public(rep: dict) -> dict:
+diff --git a/claude/cad-demo/demo.py b/claude/cad-demo/demo.py
+index 9a47734..c6cb08c 100644
+--- a/claude/cad-demo/demo.py
++++ b/claude/cad-demo/demo.py
+@@ -34,6 +34,7 @@ import trimesh
+ 
+ logging.getLogger("trimesh").setLevel(logging.ERROR)
+ 
++from cad_checks import measured
+ import compare as cmpmod
+ import holes as holesmod
+ import gates
+@@ -134,7 +135,7 @@ class SmoothJob:
+ DRAFT: dict = {}  # путь к STEP черновика, который ИИ может взять за основу (переменная draft)
+ 
+ 
+-def run_code(code: str, it_dir: Path, timeout: int = 90) -> dict:
++def run_code(code: str, it_dir: Path, timeout: int = 90, *, step_source: Path | None = None) -> dict:
+     (it_dir / "model.py").write_text(code, encoding="utf-8")
+     try:
+         # код от ИИ не должен видеть ключи и прочие секреты окружения
+@@ -142,8 +143,10 @@ def run_code(code: str, it_dir: Path, timeout: int = 90) -> dict:
+                if not any(t in k.upper() for t in ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"))}
+         if DRAFT.get("step"):
+             env["CAD_DRAFT"] = str(DRAFT["step"])
+-        subprocess.run([sys.executable, str(HERE / "cad_runner.py"), str(it_dir / "model.py"), str(it_dir)],
+-                       timeout=timeout, capture_output=True, text=True, env=env)
++        cmd = [sys.executable, str(HERE / "cad_runner.py"), str(it_dir / "model.py"), str(it_dir)]
++        if step_source is not None and os.environ.get("CAD_REUSE_WORKER_STEP", "1") != "0":
++            cmd.append(str(step_source))
++        subprocess.run(cmd, timeout=timeout, capture_output=True, text=True, env=env)
+     except subprocess.TimeoutExpired:
+         return {"ok": False, "error": f"код считался дольше {timeout} с и был остановлен"}
+     p = it_dir / "run.json"
+@@ -691,35 +694,48 @@ def main() -> None:
+     stages = {"загрузка и замеры": time.perf_counter() - load_started}
+     worker_times = {}
+ 
++    prepared_scans = {}
++
+     def compare_models(a_mesh, b_mesh):
+-        t = time.perf_counter()
+-        try:
+-            return cmpmod.compare(a_mesh, b_mesh, tol=a.tol)
+-        finally:
+-            stages["сравнение"] = stages.get("сравнение", 0.0) + time.perf_counter() - t
++        prepared = None
++        if os.environ.get("CAD_COMPARE_CACHE", "1") != "0":
++            key = id(a_mesh)
++            if key not in prepared_scans:
++                prepared_scans[key] = cmpmod.ScanComparison(a_mesh)
++            prepared = prepared_scans[key]
++        with measured(stages, "сравнение"):
++            return cmpmod.compare(a_mesh, b_mesh, tol=a.tol, prepared=prepared, timings=stages)
++
++    def load_stl(path):
++        with measured(stages, "stl_load"):
++            return trimesh.load(path, force="mesh")
+ 
+     iterations, llm_log, best, converged = [], [], None, False
+ 
+-    def evaluate(n: int, code: str, meta: dict, t0: float, by: str) -> dict:
++    def evaluate(n: int, code: str, meta: dict, t0: float, by: str, *, step_source=None) -> dict:
+         it_dir = out / f"iter{n}"
+         it_dir.mkdir(exist_ok=True)
+         log("3/4 строю модель…")
+         # черновик из стенок собирается из сотен пластин: на крупной детали это минуты
+         limit = 420 if n in ("0б", "0в", "0к") else 180
+         build_started = time.perf_counter()
+-        run = run_code(code, it_dir, timeout=limit) if code else {"ok": False, "error": "в ответе нет блока python"}
++        run = run_code(code, it_dir, timeout=limit, step_source=step_source) if code else {
++            "ok": False, "error": "в ответе нет блока python"}
++        for key, elapsed in run.get("timings", {}).items():
++            stages[key] = stages.get(key, 0.0) + elapsed
+         if n in (0, "0в", "0к"):
+             stages[f"{n}, построение/экспорт"] = time.perf_counter() - build_started
+         cmp = None
+         model = None
+         if run.get("ok"):
+-            model = trimesh.load(it_dir / "model.stl", force="mesh")
++            model = load_stl(it_dir / "model.stl")
+             log(f"    тело валидно: {run.get('valid')}, объём {run.get('volume_mm3')} мм³")
+             log("4/4 сравниваю со сканом…")
+             cmp = compare_models(scan, model)
+             log(f"    в допуске {cmp['within_tol_share']*100:.1f}%, не хватает материала {cmp['outside_share']*100:.2f}%, "
+                 f"скол/лишнее {cmp['inside_share']*100:.2f}%, 95% ближе {cmp['p95_abs_dev_mm']} мм")
+-            render(cmp, it_dir / "deviation.png", f"Попытка {n} ({by})")
++            with measured(stages, "compare_render"):
++                render(cmp, it_dir / "deviation.png", f"Попытка {n} ({by})")
+         else:
+             log(f"    ошибка: {run.get('error', '')[:200]}")
+         gate_fail = gates.check(run, model, sheet, scan)
+@@ -865,7 +881,8 @@ def main() -> None:
+                 g = json.loads(sj.read_text(encoding="utf-8"))
+                 worker_times["0в"] = g.get("timings", {})
+                 log("    " + g["meta"]["plan"])
+-                its = evaluate("0в", g["code"], g["meta"], t0, "поверхность, без ИИ")
++                its = evaluate("0в", g["code"], g["meta"], t0, "поверхность, без ИИ",
++                               step_source=sj.with_suffix(".step"))
+                 iterations.append(its)
+                 if its["run"].get("ok") and (best is None or rank(its) > rank(best)):
+                     best = its
+@@ -896,7 +913,8 @@ def main() -> None:
+                     g = json.loads(kj.read_text(encoding="utf-8"))
+                     worker_times["0к"] = g.get("timings", {})
+                     log("    " + g["meta"]["plan"])
+-                    itk = evaluate("0к", g["code"], g["meta"], t0, "гладкие грани, без ИИ")
++                    itk = evaluate("0к", g["code"], g["meta"], t0, "гладкие грани, без ИИ",
++                                   step_source=kj.with_suffix(".step"))
+                     iterations.append(itk)
+                     if itk["run"].get("ok") and not itk["gates"] and itk["cmp"] and (
+                             best is None or best["cmp"] is None
+@@ -1136,12 +1154,12 @@ def main() -> None:
+                 import cadquery as cq
+ 
+                 cq.exporters.export(cq.importers.importStep(str(tp)), str(out / "_truth.stl"), tolerance=0.02)
+-                tm = trimesh.load(out / "_truth.stl", force="mesh")
++                tm = load_stl(out / "_truth.stl")
+             else:
+-                tm = trimesh.load(tp, force="mesh")
++                tm = load_stl(tp) if tp.suffix.lower() == ".stl" else trimesh.load(tp, force="mesh")
+             # эталон в координатах исходного скана → переводим в выровненные
+             tm.apply_transform(np.array(sheet["transform_from_scan_4x4"]))
+-            truth = compare_models(tm, trimesh.load(out / "model.stl", force="mesh"))
++            truth = compare_models(tm, load_stl(out / "model.stl"))
+             log(f"эталон: в допуске {truth['within_tol_share']*100:.1f}% (тестовая деталь)")
+             # каждая попытка против эталона: совпадение и точность диаметров отверстий
+             try:
+@@ -1153,7 +1171,7 @@ def main() -> None:
+             for it in iterations:
+                 if not it["run"].get("ok") or not (it["dir"] / "model.stl").exists():
+                     continue
+-                mm = trimesh.load(it["dir"] / "model.stl", force="mesh")
++                mm = load_stl(it["dir"] / "model.stl")
+                 errs, miss = [], 0
+                 for h, m in th:
+                     r = holesmod._measure(mm, h, 0.6)
+@@ -1172,7 +1190,7 @@ def main() -> None:
+     if best and (out / "model.stl").exists():
+         log("4/4 ищу отверстия скана и сверяю их с моделью…", 600)
+         try:  # отверстия скана: на месте ли они в модели и того же ли размера
+-            holes_rows = holesmod.check(scan, trimesh.load(out / "model.stl", force="mesh"), tol=max(0.2, a.tol / 2))
++            holes_rows = holesmod.check(scan, load_stl(out / "model.stl"), tol=max(0.2, a.tol / 2))
+             log(f"отверстия: найдено {len(holes_rows)}, совпали {sum(r['ok'] for r in holes_rows)}")
+         except Exception as ex:  # noqa: BLE001
+             log(f"проверка отверстий не удалась: {ex}")
+@@ -1228,6 +1246,17 @@ def main() -> None:
+         times = stage["times"]
+         detail = ", ".join(f"{label} {duration(times[key])}" for key, label in phase_names.items() if key in times)
+         parts.append(f"ступень 0к/{stage['step']} ({stage_names[stage['status']]}): {detail}")
++    for key, label in (
++        ("stl_load", "загрузка STL"), ("compare_sample", "выборка сравнения"),
++        ("compare_signed", "расстояния скан → модель"), ("compare_reverse", "расстояния модель → скан"),
++        ("compare_metrics", "метрики и области отклонений"), ("compare_render", "карты отклонений"),
++        ("step_import", "чтение STEP воркера"), ("step_write", "запись STEP"),
++        ("step_copy", "копирование STEP воркера"), ("stl_tessellation", "тесселяция STL"),
++        ("stl_write", "запись STL"),
++    ):
++        elapsed = stages.get(key, 0) + sum(worker.get(key, 0) for worker in worker_times.values())
++        if elapsed:
++            parts.append(f"{label} {duration(elapsed)}")
+     timing_text = "время по этапам: " + ", ".join(parts) + " (фоновые этапы перекрываются)"
+     log(timing_text)
+     log(route_text(iterations, best))
+diff --git a/claude/cad-demo/geo_worker.py b/claude/cad-demo/geo_worker.py
+index 48b3103..61a2f84 100644
+--- a/claude/cad-demo/geo_worker.py
++++ b/claude/cad-demo/geo_worker.py
+@@ -159,6 +159,8 @@ def _hole_specs(scan, scan_path: Path, answer: Path, *, digest=None):
+ 
+ 
+ def main() -> None:
++    from cad_checks import measured
++
+     started = time.perf_counter()
+     timings = {}
+     _memory_guard()
+@@ -201,7 +203,8 @@ def main() -> None:
+         timings["cleanup"] = time.perf_counter() - t
+         body, info = surface.surface_body(scan, prepared=clean, timings=timings, hole_finder=hole_finder)
+         step = Path(sys.argv[4]).with_suffix(".step")
+-        cq.exporters.export(body, str(step))
++        with measured(timings, "step_write"):
++            cq.exporters.export(body, str(step))
+         code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
+         meta = {"plan": f"тело по поверхности скана: {info['faces']} треугольников, отверстий вырезано точно {info['holes_cut']}",
+                 "restored": [], "assumptions": ["форма любая: тело повторяет поверхность скана, плоские участки выпрямлены"]}
+@@ -249,7 +252,8 @@ def main() -> None:
+         body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings, hole_finder=hole_finder)
+         timings["holes"] = time.perf_counter() - t
+         step = Path(sys.argv[4]).with_suffix(".step")
+-        cq.exporters.export(body, str(step))
++        with measured(timings, "step_write"):
++            cq.exporters.export(body, str(step))
+         code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
+         meta = {"plan": f"гладкое тело: {info['faces']} граней по скану (из них {planes} точных плоскостей, остальные B-сплайн), {round(info['near'] * 100, 1)}% поверхности "
+                         f"в пределах 0,2 мм, отверстий вырезано точно {cut}",

@@ -35,8 +35,8 @@ reply_to: claude/messages/2026-11-11-2100-chatgpt-1-speedup-task.md
 Применение из корня рабочей копии, сначала с проверкой:
 
 ```powershell
-git apply --check chatgpt-1/cad-intelligence/cad-speedup-2026-11-11/cad-speedup.patch
-git apply chatgpt-1/cad-intelligence/cad-speedup-2026-11-11/cad-speedup.patch
+git apply --ignore-space-change --check chatgpt-1/cad-intelligence/cad-speedup-2026-11-11/cad-speedup.patch
+git apply --ignore-space-change chatgpt-1/cad-intelligence/cad-speedup-2026-11-11/cad-speedup.patch
 python claude/cad-demo/selftest.py
 ```
 

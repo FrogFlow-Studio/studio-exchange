@@ -82,7 +82,8 @@ elif len(sys.argv) > 5 and sys.argv[5] == "smooth":
     step = Path(sys.argv[4]).with_suffix(".step")
     cq.exporters.export(body, str(step))
     code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
-    meta = {"plan": f"гладкое тело: {info['faces']} B-сплайн граней по скану, {round(info['near'] * 100, 1)}% поверхности "
+    planes = sum(f.geomType() == "PLANE" for f in body.Faces())
+    meta = {"plan": f"гладкое тело: {info['faces']} граней по скану (из них {planes} точных плоскостей, остальные B-сплайн), {round(info['near'] * 100, 1)}% поверхности "
                     f"в пределах 0,2 мм, отверстий вырезано точно {cut}",
             "restored": [], "assumptions": ["форма любая: гладкие грани повторяют поверхность скана"]}
 else:

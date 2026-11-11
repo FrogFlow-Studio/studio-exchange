@@ -690,9 +690,14 @@ def main() -> None:
         # черновик из стенок (каждая пластина целиком по паре параллельных сторон).
         if best is None or best["cmp"]["within_tol_share"] < 0.9:
             t0 = time.time()
-            log("2/4 попытка 0б: черновик из стенок (для тонкостенных деталей), без ИИ…", max(10.0, bg_limit - (time.time() - bg_started)))
+            w_limit = bg_limit
+            if surf_proc is not None and surf_proc.poll() == 0 and walls_proc is not None and walls_proc.poll() is None:
+                # тело по поверхности уже готово, а стенки ещё считаются: на тонкостенной детали они
+                # обычно успевают за минуту, на кривой оболочке не успевают совсем — долго не ждём
+                w_limit = min(bg_limit, time.time() - bg_started + 60)
+            log("2/4 попытка 0б: черновик из стенок (для тонкостенных деталей), без ИИ…", max(10.0, w_limit - (time.time() - bg_started)))
             try:
-                finish(walls_proc, bg_limit)
+                finish(walls_proc, w_limit)
                 w = json.loads(wj.read_text(encoding="utf-8"))
                 log("    " + w["meta"]["plan"])
                 itw = evaluate("0б", w["code"], w["meta"], t0, "стенки, без ИИ")

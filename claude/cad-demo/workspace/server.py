@@ -33,7 +33,7 @@ ASSETS = {"scan": "scan.stl", "model": "model.stl", "step": "model.step",
           "deviations": "deviations.bin", "model_deviation": "model-deviation.bin",
           "unobserved": "unobserved.bin", "macro": "model_sw.bas", "report": "inspection.json"}
 STATIC = {"": "index.html", "workspace.css": "workspace.css",
-          "workspace.js": "workspace.js", "viewport.js": "viewport.js"}
+          "workspace.js": "workspace.js", "viewport.js": "viewport.js", "favicon.png": "favicon.png"}
 VENDOR = {"three.module.min.js", "OrbitControls.js", "STLLoader.js"}
 MAX_UPLOAD = 300 * 1024**2
 LIMIT = 2100
@@ -65,7 +65,11 @@ def engine_revision():
         return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=DEMO,
                                        text=True, stderr=subprocess.DEVNULL, timeout=5).strip()
     except (OSError, subprocess.SubprocessError):
-        return None
+        # в установленной программе git нет: версию кладёт сборщик установщика
+        try:
+            return (DEMO / "VERSION").read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
 
 
 AI_BUDGET_USD = 0.3   # предел расхода на один расчёт с ИИ: прогон останавливается, если оценка выше
@@ -500,6 +504,17 @@ class Handler(BaseHTTPRequestHandler):
         units = self.headers.get("X-Units", "mm")
         if units not in UNITS:
             return self.send_json({"error": "Выберите единицы скана."}, 400)
+        if self.path == "/api/ai-key":
+            # ключ живёт только в памяти этого процесса (на диск не пишется) и уходит лишь в расчёт с галочкой ИИ
+            try:
+                count = int(self.headers.get("Content-Length", "0"))
+                key = json.loads(self.rfile.read(count) if 0 < count <= 4096 else b"{}").get("key", "").strip()
+            except (ValueError, AttributeError):
+                key = ""
+            if not re.fullmatch(r"sk-[A-Za-z0-9_\-]{20,300}", key):
+                return self.send_json({"error": "Это не похоже на ключ ИИ (он начинается с sk-)."}, 400)
+            os.environ["OPENAI_API_KEY" if not key.startswith("sk-ant-") else "ANTHROPIC_API_KEY"] = key
+            return self.send_json({"ai": ai_key(), "ai_budget_usd": AI_BUDGET_USD})
         try:
             if self.path == "/api/jobs":
                 count = int(self.headers.get("Content-Length", "0"))

@@ -142,4 +142,8 @@ body.dragging .viewport { outline: 2px dashed var(--cyan); outline-offset: -7px;
 .notes-field textarea { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: 13px; color: var(--text);
   background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.12); border-radius: 6px; padding: 7px 8px; }
 .notes-field textarea:disabled { opacity: .6; }
+.ai-key { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0 21px; }
+.ai-key input { flex: 1 1 120px; min-width: 0; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line, #2a3442); background: transparent; color: inherit; font: inherit; font-size: 12px; }
+.ai-key button { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--line, #2a3442); background: transparent; color: inherit; font-size: 12px; cursor: pointer; }
+.ai-key .ai-note { margin: 0; flex-basis: 100%; }
 .ai-note { margin: 4px 0 0 21px; font-size: 11px; line-height: 1.4; color: var(--muted, #8a97a8); }

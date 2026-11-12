@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>CAD Intelligence — рабочее окно</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="stylesheet" href="/workspace.css">
   <script type="importmap">{"imports":{"three":"/vendor/three.module.min.js","three/addons/controls/OrbitControls.js":"/vendor/OrbitControls.js","three/addons/loaders/STLLoader.js":"/vendor/STLLoader.js"}}</script>
 </head>
@@ -52,6 +53,11 @@
           <label class="notes-field"><span>Что сломано, что важно</span><textarea id="notes" rows="3" placeholder="Например: отколот угол фланца, отверстие в нём потеряно"></textarea></label>
           <label class="regions-option"><input id="ai" type="checkbox"> <span id="ai-label">Построить с ИИ</span></label>
           <p class="ai-note" id="ai-note"></p>
+          <form class="ai-key" id="ai-key" hidden>
+            <input id="ai-key-value" type="password" autocomplete="off" placeholder="Ключ ИИ (sk-…)">
+            <button type="submit">Подключить</button>
+            <span class="ai-note">Ключ хранится только в памяти, пока программа запущена; на диск не пишется.</span>
+          </form>
         </section>
         <section class="sidebar-section history">
           <h2>История</h2>

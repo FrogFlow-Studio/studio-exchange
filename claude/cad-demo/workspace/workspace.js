@@ -453,13 +453,28 @@ drop.addEventListener('drop', (event) => {
   upload(event.dataTransfer.files[0]);
 });
 
-request('/api/config').then((value) => {
+function applyConfig(value) {
   Object.assign(config, value);
   $('ai-label').textContent = 'Построить с ИИ (платно, не больше $' + number(config.ai_budget_usd, 2) + ' за расчёт)';
   $('ai-note').textContent = config.ai ? 'Без галочки строит алгоритм, бесплатно.'
     : 'Ключ ИИ не задан: строит алгоритм без ИИ, бесплатно.';
+  $('ai-key').hidden = config.ai;
   showActions();
-}).catch(() => {});
+}
+
+request('/api/config').then(applyConfig).catch(() => {});
+
+$('ai-key').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const key = $('ai-key-value').value.trim();
+  if (!key) return;
+  request('/api/ai-key', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CAD-Workspace': '1'},
+    body: JSON.stringify({key})}).then((value) => {
+    $('ai-key-value').value = '';
+    message('');
+    applyConfig(value);
+  }).catch((error) => message(error.message));
+});
 
 history().then((jobs) => {
   let previous;

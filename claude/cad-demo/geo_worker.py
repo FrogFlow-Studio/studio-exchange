@@ -293,7 +293,8 @@ def main() -> None:
                     print(f"    отверстий закрыто в сетке перед гладким телом: {len(done_plug)} из {len(found_all)}", flush=True)
             except Exception:  # noqa: BLE001
                 plugged = None
-        body, info = nurbs.smooth_body(surface.flatten_planes(clean), scan, tol=tol)
+        fit_mesh = surface.flatten_planes(clean)
+        body, info = nurbs.smooth_body(fit_mesh, scan, tol=tol)
         timings["smooth"] = time.perf_counter() - t
         timings["nurbs_steps"] = info["stages"]
         if body is None:
@@ -326,9 +327,23 @@ def main() -> None:
                     body, analytic = try_analytic_bores(body, scan, specs, tol=0.3)
                 except Exception as error:  # an inconclusive trial keeps the existing route
                     analytic = {"status": "rollback", "reason": f"{type(error).__name__}: {error}"}
+        local_bores = None
         if analytic and analytic["status"] == "accepted":
             cut = analytic["bores"]
+        elif plugged is None and os.environ.get("CAD_BORE_STITCH", "0") == "1":
+            with measured(timings, "holes_stitch"):
+                try:
+                    from bore_stitch import repair_bores
+
+                    if specs is None:
+                        specs = hole_finder(scan)
+                    body, local_bores = repair_bores(body, scan, specs, clean=fit_mesh, noise_mm=noise)
+                except Exception as error:
+                    local_bores = {"accepted": 0, "reason": f"{type(error).__name__}: {error}"}
+            cut = local_bores["accepted"]
         else:
+            cut = 0
+        if not cut:
             found = specs if specs is not None else plugged
             finder = hole_finder if found is None else lambda _: found
             body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings, hole_finder=finder,
@@ -347,6 +362,8 @@ def main() -> None:
                 "assumptions": ["форма любая: гладкие грани повторяют поверхность скана"] + fil_note}
         if analytic:
             meta["analytic_bores"] = analytic
+        if local_bores is not None:
+            meta["bore_stitch"] = local_bores
     else:
         code, meta = geometric.build(scan, sheet, restore=sys.argv[3] == "1")
     timings["total"] = time.perf_counter() - started

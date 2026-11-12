@@ -1,0 +1,449 @@
+"""Replace local spline bore walls on a selected, sewn smooth body."""
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass
+from math import cos, pi, radians
+from time import perf_counter
+
+import cadquery as cq
+import networkx as nx
+import numpy as np
+import trimesh
+from OCP.BRep import BRep_Tool
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy, BRepBuilderAPI_Sewing
+from OCP.BRepLib import BRepLib
+from OCP.TopAbs import TopAbs_FORWARD
+from OCP.TopoDS import TopoDS
+
+from analytic_bores import coverage_share
+
+SEW_TOL = .003
+EDGE_LIMIT = .05
+
+
+def _vector(values):
+    return cq.Vector(*map(float, values))
+
+
+@dataclass(frozen=True)
+class Bore:
+    center: np.ndarray
+    axis: np.ndarray
+    radius: float
+    length: float
+    frame: np.ndarray
+
+    @classmethod
+    def from_spec(cls, spec):
+        origin, direction, radius, length = spec
+        origin, direction = np.array(origin, dtype=float), np.array(direction, dtype=float)
+        if origin.shape != (3,) or direction.shape != (3,):
+            raise ValueError("invalid bore coordinates")
+        norm = np.linalg.norm(direction)
+        if not np.isfinite([*origin, *direction, radius, length]).all() or min(norm, radius, length) <= 0:
+            raise ValueError("invalid bore dimensions")
+        axis = direction / norm
+        u = np.cross(axis, np.eye(3)[np.argmin(abs(axis))])
+        u /= np.linalg.norm(u)
+        return cls(origin, axis, float(radius), float(length), np.vstack((u, np.cross(axis, u), axis)))
+
+    def local(self, points):
+        return (points - self.center) @ self.frame.T
+
+    def circle(self, angles, height):
+        u, v, axis = self.frame
+        return self.center + height * axis + self.radius * (
+            np.cos(angles)[:, None] * u + np.sin(angles)[:, None] * v)
+
+
+def observed_span(scan, bore, tol):
+    # Require a full circular wall at contiguous depths on the original scan.
+    # The detector may have measured only the flat half of a deeper hole.
+    local = bore.local(scan.vertices)
+    nearby = local[np.linalg.norm(local[:, :2], axis=1) <= bore.radius + tol, 2]
+    if not len(nearby):
+        return None
+    reach = 2 * max(bore.radius, bore.length)
+    low, high = max(float(nearby.min()), -reach), min(float(nearby.max()), bore.length + reach)
+    step = max((high - low) / 256, min(tol / 2, bore.radius / 6))
+    heights = np.arange(low, high + step / 2, step)
+    ring = bore.circle(np.linspace(0, 2 * pi, 24, endpoint=False), 0)
+    supported = [i for i, h in enumerate(heights)
+                 if coverage_share(scan, ring + h * bore.axis, tol * .6) >= .875]
+    runs = np.split(np.array(supported, dtype=int), np.flatnonzero(np.diff(supported) != 1) + 1)
+    matches = [(float(heights[a[0]]), float(heights[a[-1]])) for a in runs if len(a) >= 3
+               and min(bore.length, heights[a[-1]]) - max(0, heights[a[0]]) >= bore.length / 2]
+    return matches[0] if len(matches) == 1 else None
+
+
+@dataclass(frozen=True)
+class Rim:
+    cost: float
+    path: list
+    heights: np.ndarray
+    angles: np.ndarray
+
+
+class ShellIndex:
+    """Shared B-rep edges and their two incident patches."""
+    def __init__(self, body):
+        self.body = body
+        self.faces = body.Faces()
+        owners = defaultdict(list)
+        for i, face in enumerate(self.faces):
+            for edge in face.Edges():
+                owners[edge].append(i)
+        self.edges = list(owners)
+        self.adjacency = [(owners[e][0], owners[e][1], i) for i, e in enumerate(self.edges)
+                          if len(owners[e]) == 2]
+        nodes, self.links, samples = {}, [], []
+        for _, _, i in self.adjacency:
+            edge = self.edges[i]
+            vertices = edge.Vertices()
+            if len(vertices) != 2 or vertices[0] == vertices[1]:
+                continue
+            a, b = [nodes.setdefault(vertex, len(nodes)) for vertex in vertices]
+            xyz = np.asarray([edge.positionAt(t).toTuple() for t in (0., .25, .5, .75, 1.)])
+            first = np.asarray(vertices[0].toTuple())
+            if np.linalg.norm(xyz[0] - first) > np.linalg.norm(xyz[-1] - first):
+                a, b = b, a
+            self.links.append((a, b, i))
+            samples.append(xyz)
+        self.samples = np.asarray(samples).reshape(-1, 5, 3)
+        self.vertices = np.asarray([vertex.toTuple() for vertex in nodes]).reshape(-1, 3)
+
+    def rims(self, bore, height, reach, tol):
+        local, points = bore.local(self.samples), bore.local(self.vertices)
+        radius, heights = np.linalg.norm(local[:, :, :2], axis=2), local[:, :, 2]
+        mask = np.all((radius >= max(tol, bore.radius - reach)) & (radius <= bore.radius + reach)
+                      & (abs(heights - height) <= reach), axis=1)
+        angles = np.arctan2(points[:, 1], points[:, 0])
+        graph, seam = nx.Graph(), []
+        for j in np.flatnonzero(mask):
+            a, b, edge = self.links[j]
+            length = np.linalg.norm(np.diff(self.samples[j], axis=0), axis=1).sum()
+            error = np.mean(abs(heights[j] - height)) + np.mean(abs(radius[j] - bore.radius))
+            weight = float(length * (1 + error / reach))
+            if abs(angles[b] - angles[a]) > pi:
+                seam.append((a, b, j, weight))
+            elif not graph.has_edge(a, b) or graph[a][b]["weight"] > weight:
+                graph.add_edge(a, b, link=j, weight=weight)
+
+        rims, seen = [], set()
+        for a, b, link, weight in seam:
+            if a not in graph or b not in graph:
+                continue
+            try:
+                route = nx.shortest_path(graph, a, b, weight="weight")
+            except nx.NetworkXNoPath:
+                continue
+            path = [(u, v, graph[u][v]["link"]) for u, v in zip(route, route[1:])]
+            path.append((b, a, link))
+            signature = frozenset(self.links[j][2] for _, _, j in path)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            polyline = np.array([local[j] if self.links[j][0] == u else local[j][::-1] for u, _, j in path])
+            theta = np.unwrap(np.arctan2(polyline[:, :, 1], polyline[:, :, 0]).ravel()).reshape(-1, 5)
+            turns = np.diff(theta, axis=1)
+            wind = abs(turns.sum())
+            backtrack = float(abs(turns).sum() - wind)
+            if abs(wind - 2 * pi) > .1 or backtrack > 1.2:
+                continue
+            score = weight + sum(graph[u][v]["weight"] for u, v in zip(route, route[1:])) + backtrack * reach
+            rims.append(Rim(score, path, polyline[:, :, 2], theta))
+        return sorted(rims, key=lambda rim: rim.cost)[:6]
+
+    def between(self, low, high):
+        if {u for u, _, _ in low.path} & {u for u, _, _ in high.path}:
+            return None
+        boundary = {self.links[j][2] for rim in (low, high) for _, _, j in rim.path}
+        graph = nx.Graph()
+        graph.add_nodes_from(range(len(self.faces)))
+        graph.add_edges_from((a, b) for a, b, e in self.adjacency if e not in boundary)
+        if nx.number_connected_components(graph) != 2:
+            return None
+        removed = min(nx.connected_components(graph), key=len)
+        separates = {e for a, b, e in self.adjacency if (a in removed) != (b in removed)}
+        return removed if separates == boundary and len(removed) < len(self.faces) / 3 else None
+
+
+def _rim_angles(rim, radius, tol):
+    edges = np.r_[rim.angles[:, 0], rim.angles[-1, -1]]
+    sense = np.sign(edges[-1] - edges[0])
+    values = sense * (edges - edges[0])
+    spacing = (6 * SEW_TOL / radius) * np.arange(len(values))
+    corrected = np.maximum.accumulate(values - spacing) + spacing
+    corrected *= (2 * pi) / corrected[-1]
+    if np.max(abs(corrected - values)) > tol / radius:
+        raise ValueError("rim would move farther than the scan tolerance")
+    return edges[0] + sense * corrected
+
+
+def _collar(index, copied, rim, bore, height, tol):
+    angles = _rim_angles(rim, bore.radius, tol)
+    faces = []
+    for i, (u, _, link) in enumerate(rim.path):
+        a, b = angles[i:i + 2]
+        xyz = bore.circle(np.array([a, (a + b) / 2, b]), height)
+        start, _, edge = index.links[link]
+        if start != u:
+            xyz = xyz[::-1]
+        arc = cq.Edge.makeThreePointArc(*[_vector(p) for p in xyz])
+        source = copied.ModifiedShape(index.edges[edge].wrapped).Oriented(TopAbs_FORWARD)
+        faces.append(cq.Face.makeRuledSurface(cq.Edge(TopoDS.Edge_s(source)), arc))
+    return faces
+
+
+def _stitch(index, plans, tol):
+    copy = BRepBuilderAPI_Copy(index.body.wrapped, True, False)
+    additions, removed = [], set()
+    for plan in plans:
+        bore, a, b = plan.bore, plan.low_height, plan.high_height
+        removed.update(plan.removed)
+        additions.extend(_collar(index, copy, plan.low, bore, a, tol))
+        additions.extend(_collar(index, copy, plan.high, bore, b, tol))
+        cylinder = cq.Solid.makeCylinder(bore.radius, b - a, _vector(bore.center + a * bore.axis),
+                                         _vector(bore.axis))
+        additions.extend(face for face in cylinder.Faces() if face.geomType() == "CYLINDER")
+    sew = BRepBuilderAPI_Sewing(SEW_TOL)
+    for i, face in enumerate(index.faces):
+        if i not in removed:
+            sew.Add(copy.ModifiedShape(face.wrapped))
+    for face in additions:
+        sew.Add(face.wrapped)
+    sew.Perform()
+    if sew.NbFreeEdges() or sew.NbMultipleEdges():
+        return None, f"sewing: {sew.NbFreeEdges()} free, {sew.NbMultipleEdges()} multiple edges"
+    shells = cq.Shape.cast(sew.SewedShape()).Shells()
+    if len(shells) != 1 or not BRep_Tool.IsClosed_s(shells[0].wrapped):
+        return None, "not_one_closed_shell"
+    solid = TopoDS.Solid_s(cq.Solid.makeSolid(shells[0]).wrapped)
+    if not BRepLib.OrientClosedSolid_s(solid):
+        return None, "orientation"
+    result = cq.Solid(solid)
+    if not result.isValid():
+        return None, "invalid_solid"
+    edges = [BRep_Tool.Tolerance_s(e.wrapped) for e in result.Edges()]
+    before = [BRep_Tool.Tolerance_s(e.wrapped) for e in index.edges]
+    if max(edges, default=0) > max(EDGE_LIMIT, max(before, default=0)) or (
+            sum(t > EDGE_LIMIT for t in edges) > sum(t > EDGE_LIMIT for t in before)):
+        return None, "inflated_edge_tolerances"
+    return result, None
+
+
+def exact_wall(body, bore, span, tol):
+    for face in body.Faces():
+        if face.geomType() != "CYLINDER":
+            continue
+        s = BRepAdaptor_Surface(face.wrapped)
+        cylinder = s.Cylinder()
+        axis = np.asarray(cylinder.Axis().Direction().Coord())
+        offset = bore.local(np.asarray(cylinder.Location().Coord()))
+        if (abs(cylinder.Radius() - bore.radius) > min(.1, tol / 3)
+                or abs(axis @ bore.axis) < cos(radians(2)) or np.linalg.norm(offset[:2]) > tol):
+            continue
+        u0, u1 = s.FirstUParameter(), s.LastUParameter()
+        v0, v1 = s.FirstVParameter(), s.LastVParameter()
+        sample = lambda v: np.asarray(s.Value((u0 + u1) / 2, v).Coord())
+        h0, h1 = sorted((float(bore.local(sample(v0))[2]), float(bore.local(sample(v1))[2])))
+        if max(abs(h0 - span[0]), abs(h1 - span[1])) > 2 * tol:
+            continue
+        if u1 - u0 < 2 * pi - 1e-5:
+            continue
+        if face.Area() < .995 * 2 * pi * cylinder.Radius() * (v1 - v0):
+            continue
+        p = sample((v0 + v1) / 2)
+        radial = p - np.asarray(cylinder.Location().Coord())
+        radial -= (radial @ axis) * axis
+        if np.asarray(face.normalAt(_vector(p)).toTuple()) @ radial < 0:
+            return {"radius_mm": cylinder.Radius(), "span_mm": [h0, h1]}
+    return None
+
+
+class Coverage:
+    def __init__(self, scan, clean, tol):
+        self.scan, self.clean, self.tol = scan, clean, tol
+        self.raw_points = self._sample(scan, 19213)
+        self.clean_points = self._sample(clean, 19215) if clean is not None else None
+
+    @staticmethod
+    def _sample(mesh, seed):
+        return trimesh.sample.sample_surface(mesh, 4000, seed=seed)[0]
+
+    def measure(self, mesh):
+        result = {"scan_to_body": coverage_share(mesh, self.raw_points, self.tol),
+                  "body_to_scan": coverage_share(self.scan, self._sample(mesh, 19214), self.tol)}
+        if self.clean is not None:
+            result["clean_to_body"] = coverage_share(mesh, self.clean_points, self.tol)
+        return result
+
+
+def _rim_pairs(index, bore, span, tol):
+    seen = set()
+    for scale in (.3, .6, .85, 1.05):
+        reach = max(2 * tol, scale * bore.radius)
+        lows = index.rims(bore, span[0], reach, tol)
+        highs = index.rims(bore, span[1], reach, tol)
+        for low, high in sorted(((a, b) for a in lows for b in highs), key=lambda pair: sum(r.cost for r in pair)):
+            key = tuple(frozenset(j for _, _, j in r.path) for r in (low, high))
+            if key in seen:
+                continue
+            seen.add(key)
+            region = index.between(low, high)
+            if region is not None:
+                yield low, high, region
+
+
+@dataclass(frozen=True)
+class Plan:
+    bore: Bore
+    span: tuple
+    low: Rim
+    high: Rim
+    removed: set
+    low_height: float
+    high_height: float
+    affected: set
+
+    def describe(self):
+        return {"removed": len(self.removed), "rim_edges": [len(self.low.path), len(self.high.path)],
+                "span_mm": [self.low_height, self.high_height]}
+
+
+def _plans(index, bore, span, tol):
+    for low, high, removed in _rim_pairs(index, bore, span, tol):
+        a = max(span[0], float(np.quantile(low.heights, .1)))
+        b = min(span[1], float(np.quantile(high.heights, .9)))
+        if b <= a or max(a - span[0], span[1] - b) > 2 * tol:
+            continue
+        try:
+            _rim_angles(low, bore.radius, tol)
+            _rim_angles(high, bore.radius, tol)
+        except ValueError:
+            continue
+        border = {index.links[j][2] for rim in (low, high) for _, _, j in rim.path}
+        neighbors = {face for x, y, edge in index.adjacency if edge in border for face in (x, y)}
+        yield Plan(bore, span, low, high, removed, a, b, removed | neighbors)
+
+
+def repair_bores(body, scan, specs, *, clean=None, tol=.3, noise_mm=0., face_growth=.1, budget=45.):
+    """Try local bore replacement and return the last accepted shape and audit."""
+    from nurbs import body_mesh
+
+    if not np.isfinite([tol, noise_mm, face_growth, budget]).all() or tol <= 0 or face_growth < 0 or budget < 0:
+        raise ValueError("invalid bore repair limits")
+    start = perf_counter()
+    cap = int(len(body.Faces()) * (1 + face_growth))
+    report = {"before_faces": len(body.Faces()), "face_cap": cap, "bores": [], "accepted": 0}
+    gate = index = before = None
+    active_walls, pending = [], []
+
+    def available():
+        return perf_counter() - start < budget
+
+    def attempt(plans):
+        nonlocal gate, before, body, index
+        trial = {"patches": [plan.describe() for plan in plans]}
+        began = perf_counter()
+        try:
+            candidate, reason = _stitch(index, plans, tol)
+        except (RuntimeError, ValueError, TypeError) as error:
+            candidate, reason = None, f"{type(error).__name__}: {error}"
+        trial["sewing_seconds"] = perf_counter() - began
+        if candidate is None:
+            return dict(trial, reason=reason)
+        n = len(candidate.Faces())
+        trial["faces"] = n
+        if n > cap:
+            return dict(trial, reason="face_cap")
+        walls = [(p.bore, p.span) for p in plans]
+        exact = [exact_wall(candidate, bore, span, tol) for bore, span in walls]
+        if not all(exact) or any(not exact_wall(candidate, bore, span, tol) for bore, span in active_walls):
+            return dict(trial, reason="missing_exact_wall")
+        began = perf_counter()
+        if gate is None:
+            gate = Coverage(scan, clean, tol)
+        if before is None:
+            before = gate.measure(body_mesh(body, tol / 10))
+        model = body_mesh(candidate, tol / 10)
+        after = gate.measure(model)
+        trial.update(before=before, after=after, exact_walls=exact,
+                     coverage_seconds=perf_counter() - began)
+        if not np.isfinite(model.volume) or model.volume <= 0:
+            return dict(trial, reason="volume_sign")
+        if any(after[key] < value for key, value in before.items()):
+            return dict(trial, reason="coverage_decreased")
+        body, before, index = candidate, after, None
+        active_walls.extend(walls)
+        report["accepted"] += len(plans)
+        return dict(trial, reason="accepted")
+
+    for spec in specs:
+        row = {"status": "rejected", "trials": []}
+        report["bores"].append(row)
+        if not available():
+            row["reason"] = "budget"
+            continue
+        try:
+            bore = Bore.from_spec(spec)
+            span = observed_span(scan, bore, max(tol, noise_mm))
+            if span is None:
+                row["reason"] = "no_circular_wall_evidence"
+                continue
+            row.update(center_mm=bore.center.tolist(), radius_mm=bore.radius, observed_span_mm=span)
+            if exact_wall(body, bore, span, tol):
+                row.update(status="unchanged", reason="already_exact")
+                active_walls.append((bore, span))
+            else:
+                pending.append((bore, span, row))
+        except (RuntimeError, ValueError, TypeError) as error:
+            row["reason"] = f"{type(error).__name__}: {error}"
+
+    if len(pending) >= 2 and available():
+        index = ShellIndex(body)
+        selected, used = [], set()
+        for bore, span, row in pending:
+            if not available():
+                break
+            try:
+                plan = next((p for p in _plans(index, bore, span, tol) if not p.affected & used), None)
+            except (RuntimeError, ValueError, TypeError):
+                continue
+            if plan is not None:
+                used.update(plan.affected)
+                selected.append((plan, row))
+        if len(selected) >= 2 and available():
+            trial = attempt([plan for plan, _ in selected])
+            report["batch"] = trial
+            for i, (plan, row) in enumerate(selected):
+                row["batch_index"] = i
+                if trial["reason"] == "accepted":
+                    row["status"] = "accepted"
+
+    for bore, span, row in pending:
+        if row["status"] == "accepted":
+            continue
+        if not available():
+            row["reason"] = "budget"
+            continue
+        try:
+            if index is None:
+                index = ShellIndex(body)
+            for i, plan in enumerate(_plans(index, bore, span, tol)):
+                if i == 3 or not available():
+                    break
+                trial = attempt([plan])
+                row["trials"].append(trial)
+                if trial["reason"] == "accepted":
+                    row["status"] = "accepted"
+                    break
+            if row["status"] != "accepted":
+                row["reason"] = "no_accepted_patch" if row["trials"] else "no_two_usable_rims"
+        except (RuntimeError, ValueError, TypeError) as error:
+            row["reason"] = f"{type(error).__name__}: {error}"
+    report["after_faces"] = len(body.Faces())
+    report["seconds"] = perf_counter() - start
+    return body, report

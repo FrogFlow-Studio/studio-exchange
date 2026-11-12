@@ -452,6 +452,7 @@ ROUTES = {
     "0б": "из стенок: для тонкостенных деталей",
     "0в": "по поверхности скана: любая форма мелкими плоскими гранями",
     "0к": "гладкое тело: любая форма гладкими гранями с точными плоскостями, отверстиями и скруглениями",
+    "0п": "прямое тело: плоскости — ровные грани с прямыми рёбрами, как построено в CAD",
     "0ж": "по сечениям, размеры граней уточнены по точкам скана",
 }
 
@@ -465,8 +466,9 @@ def route_text(iterations: list, best: dict | None) -> str:
         return f"{it['cmp']['within_tol_share'] * 100:.1f}%" if it.get("cmp") else "не построено"
     tried = [f"{it['n']} ({share(it)})" for it in iterations if str(it["n"]) in ROUTES]
     name = ROUTES.get(str(best["n"]), "вариант ИИ или дополнительного метода")
-    why = ("он лучше остальных совпал со сканом" if str(best["n"]) != "0к" else
-           "по точности он не уступает телу из мелких граней, а править его в CAD удобнее")
+    why = {"0к": "по точности он не уступает телу из мелких граней, а править его в CAD удобнее",
+           "0п": "по точности он не уступает телам по поверхности, а грани у него ровные и рёбра прямые"}.get(
+        str(best["n"]), "он лучше остальных совпал со сканом")
     return (f"Выбран путь {best['n']} — {name}; {why}. "
             f"Пробовались по очереди: {', '.join(tried) if tried else best['n']}.")
 
@@ -705,7 +707,7 @@ def main() -> None:
         it_dir.mkdir(exist_ok=True)
         log("3/4 строю модель…")
         # черновик из стенок собирается из сотен пластин: на крупной детали это минуты
-        limit = 420 if n in ("0б", "0в", "0к") else 180
+        limit = 420 if n in ("0б", "0в", "0к", "0п") else 180
         build_started = time.perf_counter()
         run = run_code(code, it_dir, timeout=limit, step_source=step_source) if code else {
             "ok": False, "error": "в ответе нет блока python"}
@@ -904,6 +906,31 @@ def main() -> None:
                     log(f"    гладкое тело не получилось ({type(ex).__name__})")
         if smooth_job is not None:
             close_smooth(smooth_job)
+        # Прямое тело: скан выпрямляется (плоскости ровные, рёбра — линии пересечения плоскостей), каждая
+        # плоскость становится одной гранью. Выглядит как построенное в CAD, поэтому берётся вместо тел
+        # по поверхности, если по точности им не уступает. CAD_STRAIGHT=0 — без него (для сравнения).
+        if os.environ.get("CAD_STRAIGHT", "1") != "0" and (best is None or best["n"] in ("0в", "0к")):
+            t0 = time.time()
+            log("2/4 попытка 0п: прямое тело — ровные грани и прямые рёбра по выпрямленному скану, без ИИ…", 600)
+            try:
+                pj = out / "straight.json"
+                subprocess.run([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
+                                str(out / "sheet.json"), "1", str(pj), "straight"], check=True, timeout=900,
+                               env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                g = json.loads(pj.read_text(encoding="utf-8"))
+                worker_times["0п"] = g.get("timings", {})
+                log("    " + g["meta"]["plan"])
+                itp = evaluate("0п", g["code"], g["meta"], t0, "ровные грани, без ИИ",
+                               step_source=pj.with_suffix(".step"))
+                iterations.append(itp)
+                if itp["run"].get("ok") and itp["run"].get("valid") and not itp["gates"] and itp["cmp"] and (
+                        best is None or best["cmp"] is None
+                        or itp["cmp"]["within_tol_share"] >= best["cmp"]["within_tol_share"] - 0.01):
+                    best = itp
+            except subprocess.TimeoutExpired:
+                log("    прямое тело не уложилось во время")
+            except Exception as ex:  # noqa: BLE001
+                log(f"    прямое тело не получилось ({type(ex).__name__})")
         # Уточнение по скану: каждая грань нашей модели заново подгоняется по своим точкам скана,
         # точные размеры пишутся обратно в редактируемую программу (fitfaces.py + merge.py)
         if best is not None and best["run"].get("ok") and "importStep" not in best["code"]:
@@ -937,15 +964,16 @@ def main() -> None:
                 proc.kill()  # не понадобился или не уложился во время
 
     hint = ""
-    if best is not None and best["n"] in (0, "0б", "0в", "0к") and best["cmp"]:
+    if best is not None and best["n"] in (0, "0б", "0в", "0к", "0п") and best["cmp"]:
         c0 = best["cmp"]
         hint = ("\n\nДля справки: черновик без ИИ совпал со сканом на "
                 f"{c0['within_tol_share']*100:.1f}%. Он копирует форму ступеньками и не знает замысла; "
                 "построй деталь по замыслу. Что черновик восстановил: " + "; ".join(best["meta"].get("restored", [])))
-    if prov and best is not None and best["n"] in ("0б", "0в", "0к"):
+    if prov and best is not None and best["n"] in ("0б", "0в", "0к", "0п"):
         DRAFT["step"] = best["dir"] / "model.step"
         hint += ("\n\nВ коде доступна готовая переменная `draft` (cq.Shape): это черновик "
-                 + {"0б": "из стенок, ", "0к": "по скану гладкими B-сплайн гранями, "}.get(
+                 + {"0б": "из стенок, ", "0к": "по скану гладкими B-сплайн гранями, ",
+                    "0п": "по выпрямленному скану: ровные плоские грани, остальное мелкими гранями, "}.get(
                      best["n"], "по поверхности скана (много мелких плоских граней), ")
                  + f"он уже совпал со сканом на {best['cmp']['within_tol_share']*100:.1f}%. Не строй деталь "
                  "заново: начни с него (например, result = draft.fuse(...) или draft.cut(...)) и исправь "

@@ -298,7 +298,7 @@ def main() -> None:
         scan = _coarse(scan)
     sheet = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
     digest = None
-    if KIND in ("surface", "smooth") and any(
+    if KIND in ("surface", "smooth", "straight") and any(
             os.environ.get(key, "1") != "0" for key in ("CAD_SURFACE_CACHE", "CAD_HOLE_CACHE")):
         digest = _scan_digest(scan_path)
 
@@ -447,6 +447,53 @@ def main() -> None:
             meta["analytic_bores"] = analytic
         if local_bores is not None:
             meta["bore_stitch"] = local_bores
+    elif KIND == "straight":
+        import cadquery as cq
+
+        import idealize
+        import planar_brep
+
+        noise = float(sheet.get("diagnostics", {}).get("noise_mm", 0) or 0)
+        # Выпрямляется сам скан: у него сетка мельче очищенной, плоскости и рёбра находятся точнее.
+        # Очищенная (и достроенная) поверхность берётся, если скан не замкнут или на нём достроен скол.
+        source, restored, zones = scan, [], []
+        t = time.perf_counter()
+        clean = _clean_surface(scan, scan_path, answer, digest=digest)
+        fixed, restored, zones = _restore(clean, timings, scan, digest, answer)
+        if restored or not scan.is_watertight:
+            source = fixed
+        timings["cleanup"] = time.perf_counter() - t
+        t = time.perf_counter()
+        mesh, info = idealize.idealize(source, noise=noise)
+        timings["idealize"] = time.perf_counter() - t
+        t = time.perf_counter()
+        V, F, label = planar_brep.collapse_degenerate(mesh.vertices, mesh.faces, info["label"], 1e-3)
+        body, built = planar_brep.build(V, F, label, info["regions"])
+        timings["brep"] = time.perf_counter() - t
+        t = time.perf_counter()
+        cut = 0
+        try:   # отверстия — точными цилиндрами, как у гладкого тела; не вышло — тело прежнее
+            import surface
+            from cad_checks import VolumeMemo
+
+            body, cut = surface.cut_holes(body, scan, volumes=VolumeMemo(), timings=timings,
+                                           hole_finder=hole_finder, limit_time=True)
+        except Exception as error:  # noqa: BLE001
+            print(f"    отверстия не вырезаны ({type(error).__name__}: {error})", flush=True)
+        timings["holes"] = time.perf_counter() - t
+        built["holes_cut"] = int(cut)
+        step = Path(sys.argv[4]).with_suffix(".step")
+        with measured(timings, "step_write"):
+            cq.exporters.export(body, str(step))
+        code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
+        meta = {"plan": f"прямое тело: отверстий построено точно {cut};  {built['planar_faces']} ровных граней с прямыми рёбрами на "
+                        f"{round(built['planar_area_share'] * 100)}% площади, остальное — {built['triangle_faces']} "
+                        f"треугольников по выпрямленному скану; плоскостей выровнено по главным направлениям: "
+                        f"{info['aligned_planes']}",
+                "restored": restored, "restored_zones": zones, "straight": {**built, **{
+                    k: v for k, v in info.items() if k not in ("label", "regions", "axes")}},
+                "assumptions": ["плоские участки построены как в CAD: одна плоскость — одна грань, рёбра — "
+                                "линии пересечения плоскостей"]}
     else:
         code, meta = geometric.build(scan, sheet, restore=sys.argv[3] == "1")
     timings["total"] = time.perf_counter() - started

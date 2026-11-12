@@ -1,0 +1,202 @@
+{
+  "scan_faces": 14868,
+  "edge_mm_p10_p50_p90": [
+    1.590612593274025,
+    1.9768903560811115,
+    3.883846822953737
+  ],
+  "bore_evidence": [
+    {
+      "diameter_mm": 8.574028733820223,
+      "legacy_span_mm": [
+        0.2265099840181977,
+        6.676509984018198
+      ],
+      "radial_span_mm": [
+        0.44999999999999996,
+        6.449999999999998
+      ],
+      "plan": {
+        "removed": 16,
+        "rim_edges": [
+          9,
+          9
+        ],
+        "span_mm": [
+          0.5661649508730735,
+          6.426639573806612
+        ]
+      }
+    },
+    {
+      "diameter_mm": 10.586737894578702,
+      "legacy_span_mm": [
+        0.2623868200229076,
+        2.2123868200229078
+      ],
+      "radial_span_mm": [
+        0.525,
+        2.025
+      ],
+      "plan": {
+        "removed": 11,
+        "rim_edges": [
+          11,
+          11
+        ],
+        "span_mm": [
+          0.5373015626502132,
+          1.8543990744856742
+        ]
+      }
+    },
+    {
+      "diameter_mm": 35.15632659364227,
+      "legacy_span_mm": [
+        0.22272544803302163,
+        2.3227254480330215
+      ],
+      "radial_span_mm": [
+        0.3391304347826085,
+        2.2173913043478253
+      ],
+      "plan": null
+    },
+    {
+      "diameter_mm": 6.85425272249132,
+      "legacy_span_mm": null,
+      "radial_span_mm": [
+        0.3749999999999998,
+        6.074999999999999
+      ],
+      "plan": {
+        "removed": 13,
+        "rim_edges": [
+          9,
+          9
+        ],
+        "span_mm": [
+          0.3749999999999998,
+          5.882707858264678
+        ]
+      }
+    },
+    {
+      "diameter_mm": 17.40568894685505,
+      "legacy_span_mm": null,
+      "radial_span_mm": [
+        0.5609999999999997,
+        4.997999999999998
+      ],
+      "plan": {
+        "removed": 14,
+        "rim_edges": [
+          9,
+          9
+        ],
+        "span_mm": [
+          0.6498391661922472,
+          4.9231172423083205
+        ]
+      }
+    },
+    {
+      "diameter_mm": 8.32764782201449,
+      "legacy_span_mm": null,
+      "radial_span_mm": [
+        0.44999999999999996,
+        6.449999999999998
+      ],
+      "plan": {
+        "removed": 13,
+        "rim_edges": [
+          8,
+          8
+        ],
+        "span_mm": [
+          0.6803192402458481,
+          6.068331003803167
+        ]
+      }
+    }
+  ],
+  "baseline": {
+    "faces": 740,
+    "valid": true,
+    "solids": 1,
+    "closed": true,
+    "exact_walls": 0,
+    "walls": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "coverage_0_3_mm": {
+      "scan_to_body": 0.878,
+      "body_to_scan": 0.91675,
+      "clean_to_body": 1.0
+    }
+  },
+  "candidate": {
+    "faces": 770,
+    "valid": true,
+    "solids": 1,
+    "closed": true,
+    "exact_walls": 5,
+    "walls": [
+      null,
+      {
+        "radius_mm": 4.163823911007,
+        "span_mm": [
+          0.3645779577807008,
+          5.752299595051274
+        ]
+      },
+      {
+        "radius_mm": 4.28701436691,
+        "span_mm": [
+          0.13367674071069047,
+          5.994018898410267
+        ]
+      },
+      {
+        "radius_mm": 3.427126361246,
+        "span_mm": [
+          0.05979051058480541,
+          5.567272626251998
+        ]
+      },
+      {
+        "radius_mm": 5.293368947289,
+        "span_mm": [
+          0.32760284640005316,
+          1.6446241938444348
+        ]
+      },
+      {
+        "radius_mm": 8.702844473428,
+        "span_mm": [
+          0.40281454540604106,
+          4.675511054303064
+        ]
+      }
+    ],
+    "coverage_0_3_mm": {
+      "scan_to_body": 0.88575,
+      "body_to_scan": 0.921,
+      "clean_to_body": 0.99825
+    }
+  },
+  "sewing_error": null,
+  "experiment_seconds": 7.676351000001887,
+  "checks": {
+    "at_least_four_walls": true,
+    "one_valid_closed_solid": true,
+    "face_cap": true,
+    "coverage_non_decreasing": false
+  },
+  "base_commit": "d77e6dea9378a952f5a17356f0d3081b1870ddce"
+}

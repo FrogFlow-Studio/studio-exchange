@@ -1,0 +1,1486 @@
+{
+  "baseline_commit": "3a2dd20afe0b964b0da8a22d6ec05f322f34ec93",
+  "runtime": {
+    "python": "3.12.10",
+    "cadquery": "2.8.0",
+    "cadquery-ocp": "7.9.3.1.1"
+  },
+  "merge_tolerance_mm": 0.001,
+  "acceptance_tolerance": {
+    "radius_mm": 0.15,
+    "axis_offset_mm": 0.25,
+    "axis_angle_deg": 2.0,
+    "plane_angle_deg": 1.0,
+    "plane_mm": 0.15,
+    "end_mm": 0.5,
+    "cone_angle_deg": 1.0,
+    "cover_mm": 0.3,
+    "chord_mm": 0.03,
+    "tess_angle_rad": 0.1,
+    "samples": 4000,
+    "seed": 19213
+  },
+  "regressions": {
+    "PLANE": {
+      "status": "merged",
+      "eligible_edges": 4,
+      "removed_faces": 4,
+      "faces_before": {
+        "PLANE": 10
+      },
+      "faces_after": {
+        "PLANE": 6
+      },
+      "protected_faces": 0,
+      "max_relative_volume_change": 0.0,
+      "seconds": 0.0253
+    },
+    "CYLINDER": {
+      "status": "merged",
+      "eligible_edges": 1,
+      "removed_faces": 1,
+      "faces_before": {
+        "CYLINDER": 2,
+        "PLANE": 2
+      },
+      "faces_after": {
+        "PLANE": 2,
+        "CYLINDER": 1
+      },
+      "protected_faces": 0,
+      "max_relative_volume_change": 0.0,
+      "seconds": 0.0168
+    },
+    "CONE": {
+      "status": "merged",
+      "eligible_edges": 1,
+      "removed_faces": 1,
+      "faces_before": {
+        "CONE": 2,
+        "PLANE": 2
+      },
+      "faces_after": {
+        "PLANE": 2,
+        "CONE": 1
+      },
+      "protected_faces": 0,
+      "max_relative_volume_change": 0.0,
+      "seconds": 0.0162
+    },
+    "SPHERE": {
+      "status": "merged",
+      "eligible_edges": 1,
+      "removed_faces": 1,
+      "faces_before": {
+        "SPHERE": 2
+      },
+      "faces_after": {
+        "SPHERE": 1
+      },
+      "protected_faces": 0,
+      "max_relative_volume_change": 4.3425173250915206e-16,
+      "seconds": 0.014
+    },
+    "protected_spline": {
+      "status": "merged",
+      "eligible_edges": 4,
+      "removed_faces": 4,
+      "faces_before": {
+        "PLANE": 10,
+        "BSPLINE": 6
+      },
+      "faces_after": {
+        "BSPLINE": 6,
+        "PLANE": 6
+      },
+      "protected_faces": 6,
+      "max_relative_volume_change": 0.0,
+      "seconds": 0.04
+    },
+    "protected_same_solid": {
+      "status": "merged",
+      "eligible_edges": 3,
+      "removed_faces": 3,
+      "faces_before": {
+        "PLANE": 8,
+        "EXTRUSION": 2
+      },
+      "faces_after": {
+        "PLANE": 5,
+        "EXTRUSION": 2
+      },
+      "protected_faces": 2,
+      "max_relative_volume_change": 0.0,
+      "seconds": 0.0255
+    },
+    "disconnected": {
+      "status": "unchanged",
+      "eligible_edges": 0,
+      "removed_faces": 0,
+      "faces_before": {
+        "PLANE": 12
+      },
+      "faces_after": {
+        "PLANE": 12
+      },
+      "protected_faces": 0,
+      "seconds": 0.0074
+    },
+    "different_radii": {
+      "status": "unchanged",
+      "eligible_edges": 0,
+      "removed_faces": 0,
+      "faces_before": {
+        "CYLINDER": 2,
+        "PLANE": 3
+      },
+      "faces_after": {
+        "CYLINDER": 2,
+        "PLANE": 3
+      },
+      "protected_faces": 0,
+      "seconds": 0.0033
+    },
+    "invalid_candidate": {
+      "status": "rollback",
+      "eligible_edges": 4,
+      "removed_faces": 0,
+      "faces_before": {
+        "PLANE": 10
+      },
+      "faces_after": {
+        "PLANE": 10
+      },
+      "protected_faces": 0,
+      "reason": "output_not_closed_valid_solid",
+      "seconds": 0.0133
+    },
+    "volume_limit": {
+      "status": "rollback",
+      "eligible_edges": 4,
+      "removed_faces": 0,
+      "faces_before": {
+        "PLANE": 10
+      },
+      "faces_after": {
+        "PLANE": 10
+      },
+      "protected_faces": 0,
+      "max_relative_volume_change": 0.010000000000000002,
+      "reason": "volume_change_above_limit",
+      "seconds": 0.0276
+    }
+  },
+  "samples": {
+    "flange": {
+      "merge": {
+        "status": "unchanged",
+        "eligible_edges": 0,
+        "removed_faces": 0,
+        "faces_before": {
+          "PLANE": 3,
+          "CYLINDER": 9
+        },
+        "faces_after": {
+          "PLANE": 3,
+          "CYLINDER": 9
+        },
+        "protected_faces": 0,
+        "seconds": 0.0074
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 12,
+          "edges": 27,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 71139.59345241464,
+          "surface_types": {
+            "PLANE": 3,
+            "CYLINDER": 9
+          }
+        },
+        "outcomes": {
+          "ok": 12
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 0.012551736512672449,
+            "max_sample_mm": 0.02234176317676835
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 0.012766087200031402,
+            "max_sample_mm": 0.0221802248270608
+          }
+        }
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 12,
+          "edges": 27,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 71139.59345241464,
+          "surface_types": {
+            "PLANE": 3,
+            "CYLINDER": 9
+          }
+        },
+        "outcomes": {
+          "ok": 12
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 0.012551736512672449,
+            "max_sample_mm": 0.02234176317676835
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 0.012766087200031402,
+            "max_sample_mm": 0.0221802248270608
+          }
+        }
+      }
+    },
+    "flange_smooth_stage": {
+      "merge": {
+        "status": "unchanged",
+        "eligible_edges": 0,
+        "removed_faces": 0,
+        "faces_before": {
+          "BSPLINE": 1069,
+          "PLANE": 5,
+          "CYLINDER": 23
+        },
+        "faces_after": {
+          "BSPLINE": 1069,
+          "PLANE": 5,
+          "CYLINDER": 23
+        },
+        "protected_faces": 1069,
+        "seconds": 0.5944
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1097,
+          "edges": 2222,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 67214.34166854214,
+          "surface_types": {
+            "BSPLINE": 1069,
+            "PLANE": 5,
+            "CYLINDER": 23
+          }
+        },
+        "outcomes": {
+          "parameter_error": 2,
+          "missing": 8,
+          "extra": 24,
+          "ok": 2
+        },
+        "surface": null
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1097,
+          "edges": 2222,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 67214.34166854214,
+          "surface_types": {
+            "BSPLINE": 1069,
+            "PLANE": 5,
+            "CYLINDER": 23
+          }
+        },
+        "outcomes": {
+          "parameter_error": 2,
+          "missing": 8,
+          "extra": 24,
+          "ok": 2
+        },
+        "surface": null
+      },
+      "r45": {
+        "faces": 16,
+        "edges_between_r45_faces": 0
+      }
+    },
+    "bushing": {
+      "merge": {
+        "status": "unchanged",
+        "eligible_edges": 0,
+        "removed_faces": 0,
+        "faces_before": {
+          "PLANE": 15,
+          "CYLINDER": 3
+        },
+        "faces_after": {
+          "PLANE": 15,
+          "CYLINDER": 3
+        },
+        "protected_faces": 0,
+        "seconds": 0.0248
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 18,
+          "edges": 45,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 27207.850769564535,
+          "surface_types": {
+            "PLANE": 15,
+            "CYLINDER": 3
+          }
+        },
+        "outcomes": {
+          "ok": 10,
+          "parameter_error": 1,
+          "extra": 7
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 0.010921270407783217,
+            "max_sample_mm": 0.07191126698760868
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 0.01093549183443284,
+            "max_sample_mm": 0.06350713950762879
+          }
+        }
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 18,
+          "edges": 45,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 27207.850769564535,
+          "surface_types": {
+            "PLANE": 15,
+            "CYLINDER": 3
+          }
+        },
+        "outcomes": {
+          "ok": 10,
+          "parameter_error": 1,
+          "extra": 7
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 0.010921270407783217,
+            "max_sample_mm": 0.07191126698760868
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 0.01093549183443284,
+            "max_sample_mm": 0.06350713950762879
+          }
+        }
+      }
+    },
+    "bracket": {
+      "merge": {
+        "status": "unchanged",
+        "eligible_edges": 0,
+        "removed_faces": 0,
+        "faces_before": {
+          "PLANE": 83,
+          "CYLINDER": 25
+        },
+        "faces_after": {
+          "PLANE": 83,
+          "CYLINDER": 25
+        },
+        "protected_faces": 0,
+        "seconds": 0.0692
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 108,
+          "edges": 312,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 38283.46729053671,
+          "surface_types": {
+            "PLANE": 83,
+            "CYLINDER": 25
+          }
+        },
+        "outcomes": {
+          "ok": 17,
+          "parameter_error": 4,
+          "extra": 87,
+          "missing": 3
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 0.99225,
+            "p95_mm": 0.09828937181444436,
+            "max_sample_mm": 0.8384714606655085
+          },
+          "model_to_reference": {
+            "within_share": 0.987,
+            "p95_mm": 0.1075177337118048,
+            "max_sample_mm": 1.125845456544376
+          }
+        }
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 108,
+          "edges": 312,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 38283.46729053671,
+          "surface_types": {
+            "PLANE": 83,
+            "CYLINDER": 25
+          }
+        },
+        "outcomes": {
+          "ok": 17,
+          "parameter_error": 4,
+          "extra": 87,
+          "missing": 3
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 0.99225,
+            "p95_mm": 0.09828937181444436,
+            "max_sample_mm": 0.8384714606655085
+          },
+          "model_to_reference": {
+            "within_share": 0.987,
+            "p95_mm": 0.1075177337118048,
+            "max_sample_mm": 1.125845456544376
+          }
+        }
+      },
+      "tolerance_sweep": {
+        "0.005": {
+          "status": "unchanged",
+          "eligible_edges": 1,
+          "removed_faces": 0,
+          "faces_before": {
+            "PLANE": 83,
+            "CYLINDER": 25
+          },
+          "faces_after": {
+            "PLANE": 83,
+            "CYLINDER": 25
+          },
+          "protected_faces": 0,
+          "reason": "no_face_reduction",
+          "seconds": 0.0996
+        },
+        "0.01": {
+          "status": "unchanged",
+          "eligible_edges": 1,
+          "removed_faces": 0,
+          "faces_before": {
+            "PLANE": 83,
+            "CYLINDER": 25
+          },
+          "faces_after": {
+            "PLANE": 83,
+            "CYLINDER": 25
+          },
+          "protected_faces": 0,
+          "reason": "no_face_reduction",
+          "seconds": 0.095
+        },
+        "0.02": {
+          "status": "rollback",
+          "eligible_edges": 5,
+          "removed_faces": 0,
+          "faces_before": {
+            "PLANE": 83,
+            "CYLINDER": 25
+          },
+          "faces_after": {
+            "PLANE": 83,
+            "CYLINDER": 25
+          },
+          "protected_faces": 0,
+          "reason": "output_not_closed_valid_solid",
+          "seconds": 0.1866
+        },
+        "0.05": {
+          "status": "rollback",
+          "eligible_edges": 7,
+          "removed_faces": 0,
+          "faces_before": {
+            "PLANE": 83,
+            "CYLINDER": 25
+          },
+          "faces_after": {
+            "PLANE": 83,
+            "CYLINDER": 25
+          },
+          "protected_faces": 0,
+          "reason": "output_not_closed_valid_solid",
+          "seconds": 0.1739
+        },
+        "0.1": {
+          "status": "unchanged",
+          "eligible_edges": 10,
+          "removed_faces": 0,
+          "faces_before": {
+            "PLANE": 83,
+            "CYLINDER": 25
+          },
+          "faces_after": {
+            "PLANE": 83,
+            "CYLINDER": 25
+          },
+          "protected_faces": 0,
+          "reason": "no_face_reduction",
+          "seconds": 0.0989
+        }
+      }
+    }
+  },
+  "synthetic": {
+    "rounded_shell": {
+      "merge": {
+        "status": "merged",
+        "eligible_edges": 16,
+        "removed_faces": 16,
+        "faces_before": {
+          "CYLINDER": 32,
+          "SPHERE": 16,
+          "PLANE": 20
+        },
+        "faces_after": {
+          "SPHERE": 16,
+          "CYLINDER": 24,
+          "PLANE": 12
+        },
+        "protected_faces": 0,
+        "max_relative_volume_change": 1.065470017245915e-15,
+        "seconds": 0.1272
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 2,
+          "closed_shells": 2,
+          "faces": 68,
+          "edges": 128,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 11950.524762521012,
+          "surface_types": {
+            "CYLINDER": 32,
+            "SPHERE": 16,
+            "PLANE": 20
+          }
+        },
+        "outcomes": {
+          "ok": 51,
+          "parameter_error": 1
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 1.1988970288037452e-11,
+            "max_sample_mm": 3.377958965843641e-10
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 1.3091538270088772e-11,
+            "max_sample_mm": 3.2139985602628487e-10
+          }
+        }
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 2,
+          "closed_shells": 2,
+          "faces": 52,
+          "edges": 112,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 11950.524762521933,
+          "surface_types": {
+            "CYLINDER": 24,
+            "SPHERE": 16,
+            "PLANE": 12
+          }
+        },
+        "outcomes": {
+          "ok": 51,
+          "parameter_error": 1
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 1.1797168595623599e-11,
+            "max_sample_mm": 3.377958965843641e-10
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 1.2889290362445282e-11,
+            "max_sample_mm": 3.110153128898588e-10
+          }
+        }
+      }
+    },
+    "ribbed_housing": {
+      "merge": {
+        "status": "merged",
+        "eligible_edges": 3,
+        "removed_faces": 3,
+        "faces_before": {
+          "PLANE": 19,
+          "CYLINDER": 9
+        },
+        "faces_after": {
+          "CYLINDER": 6,
+          "PLANE": 19
+        },
+        "protected_faces": 0,
+        "max_relative_volume_change": 2.19707901238367e-16,
+        "seconds": 0.0511
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 28,
+          "edges": 60,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 16558.25205459849,
+          "surface_types": {
+            "PLANE": 19,
+            "CYLINDER": 9
+          }
+        },
+        "outcomes": {
+          "ok": 25
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 1.24736958018728e-13,
+            "max_sample_mm": 4.899224808666642e-11
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 2.4782196135863603e-13,
+            "max_sample_mm": 1.1916964898643487e-10
+          }
+        }
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 25,
+          "edges": 57,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 16558.252054597964,
+          "surface_types": {
+            "PLANE": 19,
+            "CYLINDER": 6
+          }
+        },
+        "outcomes": {
+          "ok": 25
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 2.4371634859930353e-13,
+            "max_sample_mm": 4.899224808666642e-11
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 2.656887912628336e-13,
+            "max_sample_mm": 1.1916964898643487e-10
+          }
+        }
+      }
+    },
+    "tapered_bushing": {
+      "merge": {
+        "status": "merged",
+        "eligible_edges": 2,
+        "removed_faces": 2,
+        "faces_before": {
+          "CONE": 4,
+          "PLANE": 2
+        },
+        "faces_after": {
+          "PLANE": 2,
+          "CONE": 2
+        },
+        "protected_faces": 0,
+        "max_relative_volume_change": 3.0635042857811664e-16,
+        "seconds": 0.023
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 6,
+          "edges": 10,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 23750.44046112089,
+          "surface_types": {
+            "CONE": 4,
+            "PLANE": 2
+          }
+        },
+        "outcomes": {
+          "ok": 4
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 0.007686786446968746,
+            "max_sample_mm": 0.019953574589420087
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 0.006985636896770117,
+            "max_sample_mm": 0.0198494028567827
+          }
+        }
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 4,
+          "edges": 8,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 23750.44046112108,
+          "surface_types": {
+            "CONE": 2,
+            "PLANE": 2
+          }
+        },
+        "outcomes": {
+          "ok": 4
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 3.9292497928541635e-14,
+            "max_sample_mm": 0.007263985250668431
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 4.305102890930254e-14,
+            "max_sample_mm": 0.011116659070792704
+          }
+        }
+      }
+    },
+    "spherical_end": {
+      "merge": {
+        "status": "merged",
+        "eligible_edges": 2,
+        "removed_faces": 2,
+        "faces_before": {
+          "SPHERE": 2,
+          "CYLINDER": 2,
+          "PLANE": 1
+        },
+        "faces_after": {
+          "CYLINDER": 1,
+          "SPHERE": 1,
+          "PLANE": 1
+        },
+        "protected_faces": 0,
+        "max_relative_volume_change": 1.387765849543971e-15,
+        "seconds": 0.0216
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 5,
+          "edges": 9,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 18350.250986512052,
+          "surface_types": {
+            "SPHERE": 2,
+            "CYLINDER": 2,
+            "PLANE": 1
+          }
+        },
+        "outcomes": {
+          "ok": 3
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 0.008951793918325153,
+            "max_sample_mm": 0.01570520585158012
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 0.009166049645725946,
+            "max_sample_mm": 0.017042904716994357
+          }
+        }
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 3,
+          "edges": 7,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 18350.250986512307,
+          "surface_types": {
+            "SPHERE": 1,
+            "CYLINDER": 1,
+            "PLANE": 1
+          }
+        },
+        "outcomes": {
+          "ok": 3
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 5.104043511171867e-13,
+            "max_sample_mm": 0.005609319145186039
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 5.827028632537149e-13,
+            "max_sample_mm": 0.0043394642703920554
+          }
+        }
+      }
+    },
+    "curved_cover": {
+      "merge": {
+        "status": "unchanged",
+        "eligible_edges": 0,
+        "removed_faces": 0,
+        "faces_before": {
+          "REVOLUTION": 5
+        },
+        "faces_after": {
+          "REVOLUTION": 5
+        },
+        "protected_faces": 5,
+        "seconds": 0.0007
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 5,
+          "edges": 9,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 7646.096675407592,
+          "surface_types": {
+            "REVOLUTION": 5
+          }
+        },
+        "outcomes": {},
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 0.03444498648069814,
+            "max_sample_mm": 0.048151981152407444
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 0.03520841502389196,
+            "max_sample_mm": 0.048307619526434475
+          }
+        }
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 5,
+          "edges": 9,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 7646.096675407592,
+          "surface_types": {
+            "REVOLUTION": 5
+          }
+        },
+        "outcomes": {},
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 0.03444498648069814,
+            "max_sample_mm": 0.048151981152407444
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 0.03520841502389196,
+            "max_sample_mm": 0.048307619526434475
+          }
+        }
+      }
+    },
+    "drilled_plate": {
+      "merge": {
+        "status": "merged",
+        "eligible_edges": 14,
+        "removed_faces": 11,
+        "faces_before": {
+          "PLANE": 10,
+          "CYLINDER": 11
+        },
+        "faces_after": {
+          "CYLINDER": 4,
+          "PLANE": 6
+        },
+        "protected_faces": 0,
+        "max_relative_volume_change": 6.0141119054494605e-15,
+        "seconds": 0.0512
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 21,
+          "edges": 50,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 42343.494850115894,
+          "surface_types": {
+            "PLANE": 10,
+            "CYLINDER": 11
+          }
+        },
+        "outcomes": {
+          "ok": 10
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 3.2459543705706853e-12,
+            "max_sample_mm": 0.0010191205970099405
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 3.1370954759741532e-12,
+            "max_sample_mm": 0.0009004706090047112
+          }
+        }
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 10,
+          "edges": 37,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 42343.49485011543,
+          "surface_types": {
+            "PLANE": 6,
+            "CYLINDER": 4
+          }
+        },
+        "outcomes": {
+          "ok": 10
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 6.3297633630097575e-12,
+            "max_sample_mm": 0.001110056641657942
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 5.689392174151111e-12,
+            "max_sample_mm": 0.0011037776875327913
+          }
+        }
+      }
+    },
+    "toroidal_ring": {
+      "merge": {
+        "status": "unchanged",
+        "eligible_edges": 0,
+        "removed_faces": 0,
+        "faces_before": {
+          "TORUS": 2
+        },
+        "faces_after": {
+          "TORUS": 2
+        },
+        "protected_faces": 2,
+        "seconds": 0.0006
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 2,
+          "edges": 4,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 19897.122472596144,
+          "surface_types": {
+            "TORUS": 2
+          }
+        },
+        "outcomes": {
+          "ok": 1
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 5.068262347813025e-15,
+            "max_sample_mm": 1.0063912989458497e-14
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 4.351167857633658e-15,
+            "max_sample_mm": 1.4226566960573337e-14
+          }
+        }
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 2,
+          "edges": 4,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 19897.122472596144,
+          "surface_types": {
+            "TORUS": 2
+          }
+        },
+        "outcomes": {
+          "ok": 1
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 5.068262347813025e-15,
+            "max_sample_mm": 1.0063912989458497e-14
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 4.351167857633658e-15,
+            "max_sample_mm": 1.4226566960573337e-14
+          }
+        }
+      }
+    },
+    "slotted_block": {
+      "merge": {
+        "status": "merged",
+        "eligible_edges": 8,
+        "removed_faces": 8,
+        "faces_before": {
+          "PLANE": 14,
+          "CYLINDER": 4
+        },
+        "faces_after": {
+          "CYLINDER": 2,
+          "PLANE": 8
+        },
+        "protected_faces": 0,
+        "max_relative_volume_change": 2.6764089943188455e-16,
+        "seconds": 0.0448
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 18,
+          "edges": 40,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 27185.52220392302,
+          "surface_types": {
+            "PLANE": 14,
+            "CYLINDER": 4
+          }
+        },
+        "outcomes": {
+          "ok": 10
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 8.918566602034854e-14,
+            "max_sample_mm": 3.365717155472409e-11
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 6.268287966140013e-14,
+            "max_sample_mm": 1.624635076576538e-11
+          }
+        }
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 10,
+          "edges": 32,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 27185.522203923014,
+          "surface_types": {
+            "PLANE": 8,
+            "CYLINDER": 2
+          }
+        },
+        "outcomes": {
+          "ok": 10
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 1.2067211840341164e-13,
+            "max_sample_mm": 3.365717155472409e-11
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 3.328433369154879e-14,
+            "max_sample_mm": 1.4229753687360875e-11
+          }
+        }
+      }
+    },
+    "counterbored_plate": {
+      "merge": {
+        "status": "merged",
+        "eligible_edges": 6,
+        "removed_faces": 6,
+        "faces_before": {
+          "PLANE": 12,
+          "CYLINDER": 6
+        },
+        "faces_after": {
+          "PLANE": 8,
+          "CYLINDER": 4
+        },
+        "protected_faces": 0,
+        "max_relative_volume_change": 2.715577590055164e-16,
+        "seconds": 0.0405
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 18,
+          "edges": 36,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 26793.40719568842,
+          "surface_types": {
+            "PLANE": 12,
+            "CYLINDER": 6
+          }
+        },
+        "outcomes": {
+          "ok": 12
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 2.5410245588117777e-13,
+            "max_sample_mm": 7.820502050200695e-11
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 1.0575850740145937e-13,
+            "max_sample_mm": 4.396661396547686e-11
+          }
+        }
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 12,
+          "edges": 30,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 26793.40719568841,
+          "surface_types": {
+            "PLANE": 8,
+            "CYLINDER": 4
+          }
+        },
+        "outcomes": {
+          "ok": 12
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 2.5410245588117777e-13,
+            "max_sample_mm": 7.820502050200695e-11
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 1.1464525912128043e-13,
+            "max_sample_mm": 8.803553133258889e-11
+          }
+        }
+      }
+    },
+    "filleted_step": {
+      "merge": {
+        "status": "merged",
+        "eligible_edges": 4,
+        "removed_faces": 4,
+        "faces_before": {
+          "PLANE": 15,
+          "CYLINDER": 4
+        },
+        "faces_after": {
+          "PLANE": 11,
+          "CYLINDER": 4
+        },
+        "protected_faces": 0,
+        "max_relative_volume_change": 1.7310359292120497e-16,
+        "seconds": 0.0409
+      },
+      "before": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 19,
+          "edges": 44,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 21016.19467105853,
+          "surface_types": {
+            "PLANE": 15,
+            "CYLINDER": 4
+          }
+        },
+        "outcomes": {
+          "ok": 15
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 1.3528330643921842e-14,
+            "max_sample_mm": 1.5561314280974145e-12
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 1.3528330643921842e-14,
+            "max_sample_mm": 7.608326553627971e-13
+          }
+        }
+      },
+      "after": {
+        "model_topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 15,
+          "edges": 40,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 21016.194671058594,
+          "surface_types": {
+            "PLANE": 11,
+            "CYLINDER": 4
+          }
+        },
+        "outcomes": {
+          "ok": 15
+        },
+        "surface": {
+          "reference_to_model": {
+            "within_share": 1.0,
+            "p95_mm": 1.3528330643921842e-14,
+            "max_sample_mm": 1.5561314280974145e-12
+          },
+          "model_to_reference": {
+            "within_share": 1.0,
+            "p95_mm": 1.3562456847485664e-14,
+            "max_sample_mm": 7.608326553627971e-13
+          }
+        }
+      }
+    }
+  }
+}

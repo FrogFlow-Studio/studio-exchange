@@ -1,0 +1,1329 @@
+{
+  "runtime": {
+    "platform": "Windows",
+    "python": "3.12.10",
+    "cadquery": "2.8.0",
+    "cad_jobs": 1
+  },
+  "description": "Stage-only 0k cases. Baseline and candidate inspected after STEP reload. Positive cases rerun sequentially.",
+  "private_studio_scan_tested": false,
+  "cases": {
+    "ribbed_housing": {
+      "case": "ribbed_housing",
+      "specs": 3,
+      "supported_spans": 3,
+      "stage": {
+        "seconds": 43.608928000000105,
+        "faces": 1088,
+        "built": true,
+        "source": "task15",
+        "source_commit": "9d0ea7305d8435038bff2fbff221534d742ac63f",
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1088,
+          "edges": 2221,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 16317.834204039165,
+          "surface_types": {
+            "BSPLINE": 1068,
+            "PLANE": 14,
+            "CYLINDER": 6
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.9455,
+          "body_to_scan": 0.95975,
+          "clean_to_body": 0.999
+        },
+        "detected_exact": 0,
+        "walls": [
+          null,
+          null,
+          null
+        ],
+        "signed_mesh_volume_mm3": 16315.230180257522,
+        "reference_exact": 0,
+        "reference_bands": 3
+      },
+      "face_cap": 1196,
+      "baseline": {
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1088,
+          "edges": 2221,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 16317.865614812981,
+          "surface_types": {
+            "BSPLINE": 1068,
+            "PLANE": 14,
+            "CYLINDER": 6
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.9455,
+          "body_to_scan": 0.95975,
+          "clean_to_body": 0.999
+        },
+        "detected_exact": 0,
+        "walls": [
+          null,
+          null,
+          null
+        ],
+        "signed_mesh_volume_mm3": 16315.230180257522,
+        "reference_exact": 0,
+        "reference_bands": 3,
+        "seconds": 44.85024649999832
+      },
+      "local": {
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 971,
+          "edges": 2083,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 16323.02990246467,
+          "surface_types": {
+            "BSPLINE": 948,
+            "PLANE": 14,
+            "CYLINDER": 9
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.94975,
+          "body_to_scan": 0.96325,
+          "clean_to_body": 0.999
+        },
+        "detected_exact": 3,
+        "walls": [
+          {
+            "radius_mm": 5.002219233616,
+            "span_mm": [
+              -7.991725768483172,
+              5.052144248147831
+            ]
+          },
+          {
+            "radius_mm": 4.000086743764,
+            "span_mm": [
+              -7.939209406455331,
+              5.019092281767674
+            ]
+          },
+          {
+            "radius_mm": 3.00046671139,
+            "span_mm": [
+              -7.845105064857765,
+              4.9905567543605995
+            ]
+          }
+        ],
+        "signed_mesh_volume_mm3": 16321.537733515894,
+        "reference_exact": 3,
+        "reference_bands": 3,
+        "seconds": 34.23756069999945
+      },
+      "repair": {
+        "before_faces": 1088,
+        "face_cap": 1196,
+        "bores": [
+          {
+            "status": "accepted",
+            "trials": [],
+            "center_mm": [
+              17.011433598122814,
+              3.994192897288917,
+              2.7212598830629204
+            ],
+            "radius_mm": 5.002219233616289,
+            "observed_span_mm": [
+              -8.276752852226853,
+              5.223247147773179
+            ],
+            "batch_index": 0
+          },
+          {
+            "status": "accepted",
+            "trials": [],
+            "center_mm": [
+              0.0030897960973121936,
+              4.000554741868212,
+              2.7916152201580036
+            ],
+            "radius_mm": 4.000086743763522,
+            "observed_span_mm": [
+              -8.334972799108733,
+              5.315027200891299
+            ],
+            "batch_index": 1
+          },
+          {
+            "status": "accepted",
+            "trials": [],
+            "center_mm": [
+              -17.998095070903673,
+              4.001765037044347,
+              2.866073841413152
+            ],
+            "radius_mm": 3.0004667113900396,
+            "observed_span_mm": [
+              -8.26378947896727,
+              5.386210521032762
+            ],
+            "batch_index": 2
+          }
+        ],
+        "accepted": 3,
+        "batch": {
+          "patches": [
+            {
+              "removed": 25,
+              "rim_edges": [
+                19,
+                27
+              ],
+              "span_mm": [
+                -7.991725768482831,
+                5.052144248147935
+              ]
+            },
+            {
+              "removed": 92,
+              "rim_edges": [
+                28,
+                32
+              ],
+              "span_mm": [
+                -7.939209406454854,
+                5.019092281767873
+              ]
+            },
+            {
+              "removed": 189,
+              "rim_edges": [
+                31,
+                49
+              ],
+              "span_mm": [
+                -7.845105064857587,
+                4.9905567543606315
+              ]
+            }
+          ],
+          "sewing_seconds": 0.8038092000024335,
+          "faces": 971,
+          "before": {
+            "scan_to_body": 0.9455,
+            "body_to_scan": 0.95975,
+            "clean_to_body": 0.999
+          },
+          "after": {
+            "scan_to_body": 0.94975,
+            "body_to_scan": 0.9645,
+            "clean_to_body": 0.999
+          },
+          "exact_walls": [
+            {
+              "radius_mm": 5.002219233616289,
+              "span_mm": [
+                -7.991725768482832,
+                5.052144248147935
+              ]
+            },
+            {
+              "radius_mm": 4.000086743763522,
+              "span_mm": [
+                -7.939209406454855,
+                5.019092281767873
+              ]
+            },
+            {
+              "radius_mm": 3.0004667113900396,
+              "span_mm": [
+                -7.845105064857588,
+                4.9905567543606315
+              ]
+            }
+          ],
+          "coverage_seconds": 30.08886429999984,
+          "reason": "accepted"
+        },
+        "after_faces": 971,
+        "seconds": 34.23756069999945
+      },
+      "checks": {
+        "more_exact": true,
+        "minimum_exact": true,
+        "faces": true,
+        "topology": true,
+        "coverage": true,
+        "time": true
+      }
+    },
+    "drilled_plate": {
+      "case": "drilled_plate",
+      "specs": 4,
+      "supported_spans": 4,
+      "stage": {
+        "seconds": 60.84622820000004,
+        "search_seconds": 6.866863799999919,
+        "faces": 1125,
+        "built": true,
+        "uniform": true,
+        "scan_triangles": 31264,
+        "edge_lengths_mm_p10_p50_p90": [
+          0.8649185948230501,
+          0.9896384316045999,
+          1.0992340107256213
+        ],
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1125,
+          "edges": 2250,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 42414.4465507478,
+          "surface_types": {
+            "BSPLINE": 1125
+          }
+        },
+        "coverage": {
+          "scan_to_body": 1.0,
+          "body_to_scan": 1.0,
+          "clean_to_body": 1.0
+        },
+        "detected_exact": 0,
+        "walls": [
+          null,
+          null,
+          null,
+          null
+        ],
+        "signed_mesh_volume_mm3": 42417.95055131868,
+        "reference_exact": 0,
+        "reference_bands": 4
+      },
+      "face_cap": 1237,
+      "baseline": {
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1110,
+          "edges": 2239,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 42413.78680322539,
+          "surface_types": {
+            "BSPLINE": 1105,
+            "CYLINDER": 3,
+            "PLANE": 2
+          }
+        },
+        "coverage": {
+          "scan_to_body": 1.0,
+          "body_to_scan": 1.0,
+          "clean_to_body": 1.0
+        },
+        "detected_exact": 0,
+        "walls": [
+          null,
+          null,
+          null,
+          null
+        ],
+        "signed_mesh_volume_mm3": 42417.18227636094,
+        "reference_exact": 0,
+        "reference_bands": 4,
+        "seconds": 45.412519900000916
+      },
+      "local": {
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 873,
+          "edges": 1809,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 42424.958233581,
+          "surface_types": {
+            "BSPLINE": 869,
+            "CYLINDER": 4
+          }
+        },
+        "coverage": {
+          "scan_to_body": 1.0,
+          "body_to_scan": 1.0,
+          "clean_to_body": 1.0
+        },
+        "detected_exact": 4,
+        "walls": [
+          {
+            "radius_mm": 4.68907820441,
+            "span_mm": [
+              0.29328289715079325,
+              9.194081010833402
+            ]
+          },
+          {
+            "radius_mm": 3.390923852125,
+            "span_mm": [
+              0.29826633446458684,
+              9.315819689018047
+            ]
+          },
+          {
+            "radius_mm": 3.793052716776,
+            "span_mm": [
+              0.2848644175315339,
+              9.306146167391534
+            ]
+          },
+          {
+            "radius_mm": 4.29529128694,
+            "span_mm": [
+              0.27817473004209575,
+              9.307931868520095
+            ]
+          }
+        ],
+        "signed_mesh_volume_mm3": 42429.748882534775,
+        "reference_exact": 4,
+        "reference_bands": 4,
+        "seconds": 13.681120299999748
+      },
+      "repair": {
+        "before_faces": 1125,
+        "face_cap": 1237,
+        "bores": [
+          {
+            "status": "accepted",
+            "trials": [],
+            "center_mm": [
+              -7.304850500004963,
+              -1.3421523463209506,
+              8.23874403202516
+            ],
+            "radius_mm": 4.689078204409875,
+            "observed_span_mm": [
+              0.20418184159900443,
+              9.354181841599006
+            ],
+            "batch_index": 0
+          },
+          {
+            "status": "accepted",
+            "trials": [],
+            "center_mm": [
+              -23.845564531850833,
+              -2.0939736763232313,
+              15.297390185585753
+            ],
+            "radius_mm": 3.3909238521249088,
+            "observed_span_mm": [
+              0.22540762472806838,
+              9.37540762472807
+            ],
+            "batch_index": 1
+          },
+          {
+            "status": "accepted",
+            "trials": [],
+            "center_mm": [
+              12.91056955014433,
+              -0.4523695926985676,
+              -0.39445447645474163
+            ],
+            "radius_mm": 3.793052716775715,
+            "observed_span_mm": [
+              0.22481431027279783,
+              9.374814310272798
+            ],
+            "batch_index": 2
+          },
+          {
+            "status": "accepted",
+            "trials": [],
+            "center_mm": [
+              28.536313098607433,
+              0.21110602207025586,
+              -7.072930144278207
+            ],
+            "radius_mm": 4.29529128693992,
+            "observed_span_mm": [
+              0.18928465688210594,
+              9.339284656882109
+            ],
+            "batch_index": 3
+          }
+        ],
+        "accepted": 4,
+        "batch": {
+          "patches": [
+            {
+              "removed": 103,
+              "rim_edges": [
+                17,
+                17
+              ],
+              "span_mm": [
+                0.2932828971520824,
+                9.19408101083325
+              ]
+            },
+            {
+              "removed": 83,
+              "rim_edges": [
+                12,
+                14
+              ],
+              "span_mm": [
+                0.29826633446839923,
+                9.315819689019309
+              ]
+            },
+            {
+              "removed": 90,
+              "rim_edges": [
+                15,
+                15
+              ],
+              "span_mm": [
+                0.2848644175320729,
+                9.306146167392052
+              ]
+            },
+            {
+              "removed": 98,
+              "rim_edges": [
+                13,
+                15
+              ],
+              "span_mm": [
+                0.2781747300425741,
+                9.3079318685208
+              ]
+            }
+          ],
+          "sewing_seconds": 0.9440428000016254,
+          "faces": 873,
+          "before": {
+            "scan_to_body": 1.0,
+            "body_to_scan": 1.0,
+            "clean_to_body": 1.0
+          },
+          "after": {
+            "scan_to_body": 1.0,
+            "body_to_scan": 1.0,
+            "clean_to_body": 1.0
+          },
+          "exact_walls": [
+            {
+              "radius_mm": 4.689078204409875,
+              "span_mm": [
+                0.2932828971520823,
+                9.19408101083325
+              ]
+            },
+            {
+              "radius_mm": 3.3909238521249088,
+              "span_mm": [
+                0.2982663344684001,
+                9.31581968901931
+              ]
+            },
+            {
+              "radius_mm": 3.793052716775715,
+              "span_mm": [
+                0.2848644175320735,
+                9.30614616739205
+              ]
+            },
+            {
+              "radius_mm": 4.29529128693992,
+              "span_mm": [
+                0.2781747300425754,
+                9.307931868520804
+              ]
+            }
+          ],
+          "coverage_seconds": 9.175678499999776,
+          "reason": "accepted"
+        },
+        "after_faces": 873,
+        "seconds": 13.681120299999748
+      },
+      "checks": {
+        "more_exact": true,
+        "minimum_exact": true,
+        "faces": true,
+        "topology": true,
+        "coverage": true,
+        "time": true
+      }
+    },
+    "counterbored_plate": {
+      "case": "counterbored_plate",
+      "specs": 2,
+      "supported_spans": 2,
+      "stage": {
+        "seconds": 51.73032030000013,
+        "search_seconds": 3.718622100000175,
+        "faces": 1125,
+        "built": true,
+        "uniform": true,
+        "scan_triangles": 19590,
+        "edge_lengths_mm_p10_p50_p90": [
+          0.8704781825905654,
+          0.9954002032281889,
+          1.1064521006828358
+        ],
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1125,
+          "edges": 2250,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 26839.95487023407,
+          "surface_types": {
+            "BSPLINE": 1125
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.99975,
+          "body_to_scan": 1.0,
+          "clean_to_body": 1.0
+        },
+        "detected_exact": 0,
+        "walls": [
+          null,
+          null
+        ],
+        "signed_mesh_volume_mm3": 26842.061842453306,
+        "reference_exact": 0,
+        "reference_bands": 4
+      },
+      "face_cap": 1237,
+      "baseline": {
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1125,
+          "edges": 2250,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 26839.95487023407,
+          "surface_types": {
+            "BSPLINE": 1125
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.99975,
+          "body_to_scan": 1.0,
+          "clean_to_body": 1.0
+        },
+        "detected_exact": 0,
+        "walls": [
+          null,
+          null
+        ],
+        "signed_mesh_volume_mm3": 26842.061842453306,
+        "reference_exact": 0,
+        "reference_bands": 4,
+        "seconds": 8.416630499999883
+      },
+      "local": {
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1042,
+          "edges": 2114,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 26844.14479104892,
+          "surface_types": {
+            "BSPLINE": 1040,
+            "CYLINDER": 2
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.99975,
+          "body_to_scan": 1.0,
+          "clean_to_body": 1.0
+        },
+        "detected_exact": 2,
+        "walls": [
+          {
+            "radius_mm": 3.494413416429,
+            "span_mm": [
+              0.29687903473566074,
+              6.244325545393023
+            ]
+          },
+          {
+            "radius_mm": 3.487037962813,
+            "span_mm": [
+              0.2783650687817805,
+              6.30731324216078
+            ]
+          }
+        ],
+        "signed_mesh_volume_mm3": 26846.651171856036,
+        "reference_exact": 2,
+        "reference_bands": 4,
+        "seconds": 10.684197599999607
+      },
+      "repair": {
+        "before_faces": 1125,
+        "face_cap": 1237,
+        "bores": [
+          {
+            "status": "accepted",
+            "trials": [],
+            "center_mm": [
+              -14.036641475957662,
+              -0.011827251897491798,
+              -5.309073785211949
+            ],
+            "radius_mm": 3.494413416429429,
+            "observed_span_mm": [
+              0.2203250276935134,
+              6.370325027693513
+            ],
+            "batch_index": 0
+          },
+          {
+            "status": "accepted",
+            "trials": [],
+            "center_mm": [
+              13.982426728028667,
+              0.004151645363508103,
+              -5.290027182398584
+            ],
+            "radius_mm": 3.4870379628128756,
+            "observed_span_mm": [
+              0.2187460327187689,
+              6.36874603271877
+            ],
+            "batch_index": 1
+          }
+        ],
+        "accepted": 2,
+        "batch": {
+          "patches": [
+            {
+              "removed": 71,
+              "rim_edges": [
+                13,
+                13
+              ],
+              "span_mm": [
+                0.2968790347353125,
+                6.244325545392476
+              ]
+            },
+            {
+              "removed": 70,
+              "rim_edges": [
+                15,
+                15
+              ],
+              "span_mm": [
+                0.2783650687817921,
+                6.307313242160566
+              ]
+            }
+          ],
+          "sewing_seconds": 0.9906040000023495,
+          "faces": 1042,
+          "before": {
+            "scan_to_body": 0.99975,
+            "body_to_scan": 1.0,
+            "clean_to_body": 1.0
+          },
+          "after": {
+            "scan_to_body": 0.99975,
+            "body_to_scan": 1.0,
+            "clean_to_body": 1.0
+          },
+          "exact_walls": [
+            {
+              "radius_mm": 3.494413416429429,
+              "span_mm": [
+                0.29687903473531246,
+                6.244325545392476
+              ]
+            },
+            {
+              "radius_mm": 3.4870379628128756,
+              "span_mm": [
+                0.2783650687817928,
+                6.307313242160567
+              ]
+            }
+          ],
+          "coverage_seconds": 6.9988696000000346,
+          "reason": "accepted"
+        },
+        "after_faces": 1042,
+        "seconds": 10.684197599999607
+      },
+      "checks": {
+        "more_exact": true,
+        "minimum_exact": true,
+        "faces": true,
+        "topology": true,
+        "coverage": true,
+        "time": false
+      }
+    },
+    "slotted_block": {
+      "case": "slotted_block",
+      "specs": 1,
+      "supported_spans": 0,
+      "stage": {
+        "seconds": 50.964684300000044,
+        "faces": 1125,
+        "built": true,
+        "source": "task15",
+        "source_commit": "9d0ea7305d8435038bff2fbff221534d742ac63f",
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1125,
+          "edges": 2250,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 27119.127758524395,
+          "surface_types": {
+            "BSPLINE": 1120,
+            "PLANE": 5
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.98025,
+          "body_to_scan": 0.97175,
+          "clean_to_body": 0.9995
+        },
+        "detected_exact": 0,
+        "walls": [],
+        "signed_mesh_volume_mm3": 27118.426631823284,
+        "reference_exact": 0,
+        "reference_bands": 0
+      },
+      "face_cap": 1237,
+      "baseline": {
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1125,
+          "edges": 2250,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 27119.127758524395,
+          "surface_types": {
+            "BSPLINE": 1120,
+            "PLANE": 5
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.98025,
+          "body_to_scan": 0.97175,
+          "clean_to_body": 0.9995
+        },
+        "detected_exact": 0,
+        "walls": [],
+        "signed_mesh_volume_mm3": 27118.426631823284,
+        "reference_exact": 0,
+        "reference_bands": 0,
+        "seconds": 9.671936499998992
+      },
+      "local": {
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1125,
+          "edges": 2250,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 27119.127758524395,
+          "surface_types": {
+            "BSPLINE": 1120,
+            "PLANE": 5
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.98025,
+          "body_to_scan": 0.97175,
+          "clean_to_body": 0.9995
+        },
+        "detected_exact": 0,
+        "walls": [],
+        "signed_mesh_volume_mm3": 27118.426631823284,
+        "reference_exact": 0,
+        "reference_bands": 0,
+        "seconds": 9.759949499999493
+      },
+      "repair": {
+        "before_faces": 1125,
+        "face_cap": 1237,
+        "bores": [
+          {
+            "status": "rejected",
+            "trials": [],
+            "reason": "no_circular_wall_evidence"
+          }
+        ],
+        "accepted": 0,
+        "after_faces": 1125,
+        "seconds": 0.08801300000050105
+      },
+      "fallback_reuses_baseline_measurement": true,
+      "checks": {
+        "more_exact": false,
+        "minimum_exact": false,
+        "faces": true,
+        "topology": true,
+        "coverage": true,
+        "time": false
+      }
+    },
+    "spherical_end": {
+      "case": "spherical_end",
+      "specs": 0,
+      "supported_spans": 0,
+      "stage": {
+        "seconds": 32.67120249999971,
+        "faces": 744,
+        "built": true,
+        "source": "task15",
+        "source_commit": "9d0ea7305d8435038bff2fbff221534d742ac63f",
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 744,
+          "edges": 1494,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 18232.2735966602,
+          "surface_types": {
+            "BSPLINE": 736,
+            "PLANE": 8
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.9575,
+          "body_to_scan": 0.98475,
+          "clean_to_body": 1.0
+        },
+        "detected_exact": 0,
+        "walls": [],
+        "signed_mesh_volume_mm3": 18226.690495626324,
+        "reference_exact": 0,
+        "reference_bands": 1
+      },
+      "face_cap": 818,
+      "baseline": {
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 744,
+          "edges": 1494,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 18232.2735966602,
+          "surface_types": {
+            "BSPLINE": 736,
+            "PLANE": 8
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.9575,
+          "body_to_scan": 0.98475,
+          "clean_to_body": 1.0
+        },
+        "detected_exact": 0,
+        "walls": [],
+        "signed_mesh_volume_mm3": 18226.690495626324,
+        "reference_exact": 0,
+        "reference_bands": 1,
+        "seconds": 0.0011699999995471444
+      },
+      "local": {
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 744,
+          "edges": 1494,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 18232.2735966602,
+          "surface_types": {
+            "BSPLINE": 736,
+            "PLANE": 8
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.9575,
+          "body_to_scan": 0.98475,
+          "clean_to_body": 1.0
+        },
+        "detected_exact": 0,
+        "walls": [],
+        "signed_mesh_volume_mm3": 18226.690495626324,
+        "reference_exact": 0,
+        "reference_bands": 1,
+        "seconds": 0.022540400001162197
+      },
+      "repair": {
+        "before_faces": 744,
+        "face_cap": 818,
+        "bores": [],
+        "accepted": 0,
+        "after_faces": 744,
+        "seconds": 0.021370400001615053
+      },
+      "fallback_reuses_baseline_measurement": true,
+      "checks": {
+        "more_exact": false,
+        "minimum_exact": false,
+        "faces": true,
+        "topology": true,
+        "coverage": true,
+        "time": false
+      }
+    },
+    "bracket": {
+      "case": "bracket",
+      "specs": 4,
+      "supported_spans": 4,
+      "stage": {
+        "seconds": 64.5855348999994,
+        "faces": 1114,
+        "built": true,
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1114,
+          "edges": 2244,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 35748.987590285,
+          "surface_types": {
+            "BSPLINE": 1099,
+            "PLANE": 15
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.7925,
+          "body_to_scan": 0.79825,
+          "clean_to_body": 0.99775
+        },
+        "detected_exact": 0,
+        "walls": [
+          null,
+          null,
+          null,
+          null
+        ],
+        "signed_mesh_volume_mm3": 35750.34951702203,
+        "reference_exact": 0,
+        "reference_bands": 5
+      },
+      "face_cap": 1225,
+      "baseline": {
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1114,
+          "edges": 2244,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 35748.987590285,
+          "surface_types": {
+            "BSPLINE": 1099,
+            "PLANE": 15
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.7925,
+          "body_to_scan": 0.79825,
+          "clean_to_body": 0.99775
+        },
+        "detected_exact": 0,
+        "walls": [
+          null,
+          null,
+          null,
+          null
+        ],
+        "signed_mesh_volume_mm3": 35750.34951702203,
+        "reference_exact": 0,
+        "reference_bands": 5,
+        "seconds": 69.57948589999796
+      },
+      "local": {
+        "topology": {
+          "valid": true,
+          "closed": true,
+          "connected_solid": true,
+          "solids": 1,
+          "shells": 1,
+          "closed_shells": 1,
+          "faces": 1114,
+          "edges": 2244,
+          "faces_outside_solids": 0,
+          "edges_outside_solids": 0,
+          "vertices_outside_solids": 0,
+          "volume_mm3": 35748.987590285,
+          "surface_types": {
+            "BSPLINE": 1099,
+            "PLANE": 15
+          }
+        },
+        "coverage": {
+          "scan_to_body": 0.7925,
+          "body_to_scan": 0.79825,
+          "clean_to_body": 0.99775
+        },
+        "detected_exact": 0,
+        "walls": [
+          null,
+          null,
+          null,
+          null
+        ],
+        "signed_mesh_volume_mm3": 35750.34951702203,
+        "reference_exact": 0,
+        "reference_bands": 5,
+        "seconds": 203.4831056000039
+      },
+      "repair": {
+        "before_faces": 1114,
+        "face_cap": 1225,
+        "bores": [
+          {
+            "status": "rejected",
+            "trials": [],
+            "center_mm": [
+              32.00114039199664,
+              -17.00100305263489,
+              -0.29762013199253184
+            ],
+            "radius_mm": 3.2454562817039814,
+            "observed_span_mm": [
+              0.1959757153563692,
+              8.445975715356367
+            ],
+            "batch_index": 0,
+            "reason": "budget"
+          },
+          {
+            "status": "rejected",
+            "trials": [],
+            "center_mm": [
+              -31.99847365980084,
+              -17.006775221637266,
+              -0.2844754145999692
+            ],
+            "radius_mm": 3.2537022874781862,
+            "observed_span_mm": [
+              0.20198807767291777,
+              8.301988077672915
+            ],
+            "reason": "budget"
+          },
+          {
+            "status": "rejected",
+            "trials": [],
+            "center_mm": [
+              -2.7394489264378824e-06,
+              0.0014333678089070289,
+              -0.29826118805400104
+            ],
+            "radius_mm": 6.000135607392012,
+            "observed_span_mm": [
+              0.2036459740037329,
+              26.30364597400373
+            ],
+            "batch_index": 1,
+            "reason": "budget"
+          },
+          {
+            "status": "rejected",
+            "trials": [],
+            "center_mm": [
+              -32.00840372453956,
+              17.00010523325085,
+              -0.29889915678994683
+            ],
+            "radius_mm": 3.2478151917524074,
+            "observed_span_mm": [
+              0.20804051290718073,
+              8.308040512907182
+            ],
+            "reason": "budget"
+          }
+        ],
+        "accepted": 0,
+        "batch": {
+          "patches": [
+            {
+              "removed": 38,
+              "rim_edges": [
+                17,
+                21
+              ],
+              "span_mm": [
+                0.5734119394278971,
+                8.284157302867982
+              ]
+            },
+            {
+              "removed": 115,
+              "rim_edges": [
+                35,
+                27
+              ],
+              "span_mm": [
+                0.30146439319922624,
+                26.272219449662188
+              ]
+            }
+          ],
+          "sewing_seconds": 0.9729501000001619,
+          "faces": 1063,
+          "before": {
+            "scan_to_body": 0.7925,
+            "body_to_scan": 0.79825,
+            "clean_to_body": 0.99775
+          },
+          "after": {
+            "scan_to_body": 0.797,
+            "body_to_scan": 0.794,
+            "clean_to_body": 0.9955
+          },
+          "exact_walls": [
+            {
+              "radius_mm": 3.2454562817039814,
+              "span_mm": [
+                0.5734119394278971,
+                8.284157302867984
+              ]
+            },
+            {
+              "radius_mm": 6.000135607392012,
+              "span_mm": [
+                0.3014643931992263,
+                26.27221944966219
+              ]
+            }
+          ],
+          "coverage_seconds": 53.50589899999977,
+          "reason": "coverage_decreased"
+        },
+        "after_faces": 1114,
+        "seconds": 59.21424210000259
+      },
+      "checks": {
+        "more_exact": false,
+        "minimum_exact": false,
+        "faces": true,
+        "topology": true,
+        "coverage": true,
+        "time": false
+      }
+    }
+  }
+}

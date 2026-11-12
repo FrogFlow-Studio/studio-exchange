@@ -1,0 +1,285 @@
+diff --git a/claude/cad-demo/geo_worker.py b/claude/cad-demo/geo_worker.py
+index c3df7f9..7faccdc 100644
+--- a/claude/cad-demo/geo_worker.py
++++ b/claude/cad-demo/geo_worker.py
+@@ -382,6 +382,18 @@ def main() -> None:
+         timings["nurbs_steps"] = info["stages"]
+         if body is None:
+             raise SystemExit("гладкое тело не собралось")
++        sharp_layout = None
++        if os.environ.get("CAD_SHARP_LAYOUT", "0") == "1":
++            with measured(timings, "sharp_layout"):
++                try:
++                    from sharp_layout import choose
++
++                    body, sharp_layout = choose(body, scan, fit_mesh, noise)
++                    if sharp_layout["status"] == "accepted":
++                        info["near"] = sharp_layout["clean_to_body_0_2_mm"]
++                except Exception as error:  # an inconclusive experiment keeps the selected 0k body
++                    sharp_layout = {"status": "rollback", "reason": f"{type(error).__name__}: {error}"}
++        sharp_accepted = sharp_layout is not None and sharp_layout["status"] == "accepted"
+         fil_note = []
+         t = time.perf_counter()
+         try:  # скругления между плоскими гранями: точные цилиндры вместо сплайнов; не вышло — тело прежнее
+@@ -389,7 +401,7 @@ def main() -> None:
+
+             left = 1000 - (time.perf_counter() - t_smooth)   # у попытки 0к в demo.py предел 1200 с
+             on = __import__("os").environ.get("CAD_FILLETS", "1") != "0"   # CAD_FILLETS=0 — без точных скруглений (для сравнения)
+-            fl = fillets.find_fillets(clean) if on and left > 120 else []
++            fl = fillets.find_fillets(clean) if on and left > 120 and not sharp_accepted else []
+             if fl:
+                 body, built, _ = fillets.apply(
+                     body, fl, budget=min(240.0, left - 90), mesh=clean, volumes=volumes, timings=timings,
+@@ -401,7 +413,7 @@ def main() -> None:
+         t = time.perf_counter()
+         analytic = None
+         specs = None
+-        if os.environ.get("CAD_ANALYTIC_BORES", "0") == "1":
++        if not sharp_accepted and os.environ.get("CAD_ANALYTIC_BORES", "0") == "1":
+             with measured(timings, "holes_analytic"):
+                 try:
+                     from analytic_bores import try_analytic_bores
+@@ -413,7 +425,7 @@ def main() -> None:
+         local_bores = None
+         if analytic and analytic["status"] == "accepted":
+             cut = analytic["bores"]
+-        elif os.environ.get("CAD_BORE_STITCH", "0") == "1":
++        elif not sharp_accepted and os.environ.get("CAD_BORE_STITCH", "0") == "1":
+             with measured(timings, "holes_stitch"):
+                 try:
+                     from bore_stitch import repair_bores
+@@ -426,7 +438,9 @@ def main() -> None:
+             cut = local_bores["accepted"]
+         else:
+             cut = 0
+-        if not cut:
++        # The planar arrangement already trims slots and windows.
++        # Cylinder heuristics can mistake a rectangular window for a bore.
++        if not cut and not sharp_accepted:
+             found = specs
+             finder = hole_finder if found is None else lambda _: found
+             body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings, hole_finder=finder,
+@@ -439,10 +453,14 @@ def main() -> None:
+         kinds = __import__("collections").Counter(f.geomType() for f in body.Faces())
+         exact = ", ".join(f"{name} {kinds[t]}" for t, name in (("PLANE", "плоскостей"), ("CYLINDER", "цилиндров"),
+                                                               ("CONE", "конусов"), ("SPHERE", "сфер")) if kinds[t])
++        openings = ("прямолинейные границы построены по плоскостям" if sharp_accepted
++                    else f"отверстий построено точно {cut}")
+         meta = {"plan": f"гладкое тело: {sum(kinds.values())} граней по скану (точных: {exact or 'нет'}; остальные B-сплайн), {round(info['near'] * 100, 1)}% поверхности "
+-                        f"в пределах 0,2 мм, отверстий построено точно {cut}",
++                        f"в пределах 0,2 мм, {openings}",
+                 "restored": restored, "restored_zones": zones,
+                 "assumptions": ["форма любая: гладкие грани повторяют поверхность скана"] + fil_note}
++        if sharp_layout is not None:
++            meta["sharp_layout"] = sharp_layout
+         if analytic:
+             meta["analytic_bores"] = analytic
+         if local_bores is not None:
+diff --git a/claude/cad-demo/sharp_layout.py b/claude/cad-demo/sharp_layout.py
+new file mode 100644
+index 0000000..653c93a
+--- /dev/null
++++ b/claude/cad-demo/sharp_layout.py
+@@ -0,0 +1,202 @@
++"""Optional planar arrangement for scans with three supported orthogonal directions."""
++from __future__ import annotations
++
++import numpy as np
++import trimesh
++from scipy.sparse import csr_matrix
++from scipy.sparse.csgraph import connected_components
++
++
++def _orthogonal_frame(mesh):
++    normals = np.asarray(mesh.face_normals)
++    areas = np.asarray(mesh.area_faces)
++    seeds = normals[np.argsort(-areas)[:128]]
++    remaining = np.ones(len(normals), dtype=bool)
++    axes = []
++    for _ in range(3):
++        active = np.flatnonzero(remaining)
++        scores = np.zeros(len(seeds))
++        for start in range(0, len(active), 8192):
++            block = active[start:start + 8192]
++            votes = np.abs(normals[block] @ seeds.T) > .9
++            scores += votes.T @ areas[block]
++        seed = seeds[np.argmax(scores)]
++        oriented = normals @ seed
++        group = remaining & (np.abs(oriented) > .82)
++        if areas[group].sum() < .015 * mesh.area:
++            return None
++        axis = (areas[group] * np.sign(oriented[group])) @ normals[group]
++        axes.append(axis / np.linalg.norm(axis))
++        remaining[group] = False
++    axes = np.asarray(axes)
++    if np.abs(axes @ axes.T - np.eye(3)).max() > .24:
++        return None
++    for _ in range(4):
++        left, _, right = np.linalg.svd(axes)
++        axes = left @ right
++        dot = normals @ axes.T
++        owner = np.argmax(np.abs(dot), axis=1)
++        for axis in range(3):
++            group = (owner == axis) & (np.abs(dot[:, axis]) > .72)
++            direction = (areas[group] * np.sign(dot[group, axis])) @ normals[group]
++            if np.linalg.norm(direction) == 0:
++                return None
++            axes[axis] = direction / np.linalg.norm(direction)
++    left, _, right = np.linalg.svd(axes)
++    return left @ right
++
++
++def _planes(mesh, noise, frame, step):
++    triangles = np.asarray(mesh.faces)
++    xyz = np.asarray(mesh.vertices) @ frame.T
++    centers = xyz[triangles].mean(axis=1)
++    normal = np.asarray(mesh.face_normals) @ frame.T
++    areas = np.asarray(mesh.area_faces)
++    axis = np.argmax(np.abs(normal), axis=1)
++    orientation = 2 * axis + (normal[np.arange(len(axis)), axis] > 0)
++    left, right = mesh.face_adjacency.T
++    same = orientation[left] == orientation[right]
++    side = axis[left]
++    same &= np.abs(centers[left, side] - centers[right, side]) < max(.22, 3.5 * noise)
++    left, right = left[same], right[same]
++    graph = csr_matrix((np.ones(len(left), dtype=bool), (left, right)),
++                       shape=(len(triangles), len(triangles)))
++    _, components = connected_components(graph, directed=False)
++    order = np.argsort(components, kind="stable")
++    groups = np.split(order, np.flatnonzero(np.diff(components[order])) + 1)
++    planes = [[], [], []]
++    for group in groups:
++        area = areas[group].sum()
++        if area < .32 * step * step or len(group) < 2:
++            continue
++        direction = axis[group[0]]
++        if np.average(np.abs(normal[group, direction]), weights=areas[group]) < .68:
++            continue
++        vertices = np.unique(triangles[group])
++        points = xyz[vertices, direction]
++        offset = float(np.median(points))
++        if np.quantile(np.abs(points - offset), .8) <= max(.18, 2.5 * noise):
++            planes[direction].append((offset, float(area)))
++    return planes
++
++
++def _levels(planes, noise):
++    groups = []
++    for position, area in sorted(planes):
++        if not groups or position - groups[-1][0][0] > max(.18, 1.2 * noise):
++            groups.append([])
++        groups[-1].append((position, area))
++    return np.array([max(group, key=lambda row: row[1])[0] for group in groups])
++
++
++def _occupancy(mesh, frame, levels):
++    low = np.stack(np.meshgrid(*(level[:-1] for level in levels), indexing="ij"), axis=-1)
++    high = np.stack(np.meshgrid(*(level[1:] for level in levels), indexing="ij"), axis=-1)
++    center, half = (low + high) / 2, (high - low) / 2
++    stencil = np.vstack((np.zeros(3), .44 * np.eye(3), -.44 * np.eye(3)))
++    probes = (center[..., None, :] + half[..., None, :] * stencil).reshape(-1, 3) @ frame
++    votes = np.concatenate([mesh.contains(probes[i:i + 512]) for i in range(0, len(probes), 512)])
++    return votes.reshape(*center.shape[:-1], len(stencil)).sum(axis=-1) >= 4
++
++
++def _boundary(occupied, frame, levels):
++    coordinates, faces = {}, []
++    for cell in np.argwhere(occupied):
++        for axis in range(3):
++            u, v = (axis + 1) % 3, (axis + 2) % 3
++            for direction in (-1, 1):
++                neighbor = cell.copy()
++                neighbor[axis] += direction
++                if 0 <= neighbor[axis] < occupied.shape[axis] and occupied[tuple(neighbor)]:
++                    continue
++                square = []
++                for a, b in ((0, 0), (1, 0), (1, 1), (0, 1)):
++                    index = cell.copy()
++                    index[axis] += int(direction > 0)
++                    index[u] += a
++                    index[v] += b
++                    key = tuple(index)
++                    square.append(coordinates.setdefault(key, len(coordinates)))
++                if direction < 0:
++                    square.reverse()
++                a, b, c, d = square
++                faces.extend(((a, b, c), (a, c, d)))
++    xyz = np.array([[levels[k][index[k]] for k in range(3)] for index in coordinates]) @ frame
++    mesh = trimesh.Trimesh(xyz, faces, process=False)
++    if mesh.volume < 0:
++        mesh.invert()
++    return mesh
++
++
++def build(scan, noise_mm):
++    """Return a planar CAD candidate and diagnostics for a closed scan."""
++    import surface
++    from OCP.BRep import BRep_Tool
++
++    if len(scan.faces) < 12 or not scan.is_watertight or not scan.is_winding_consistent:
++        return None, {"status": "open_or_sparse_scan"}
++    noise = float(noise_mm)
++    if not np.isfinite(noise) or noise < 0:
++        raise ValueError("invalid scan noise")
++    frame = _orthogonal_frame(scan)
++    if frame is None:
++        return None, {"status": "no_orthogonal_frame"}
++    step = float(np.median(scan.edges_unique_length))
++    cone = np.deg2rad(20) + np.arctan2(2 * noise, step)
++    aligned = np.abs(scan.face_normals @ frame.T).max(axis=1) >= np.cos(min(np.deg2rad(35), cone))
++    share = float(scan.area_faces[aligned].sum() / scan.area)
++    report = {"orthogonal_area_share": share, "edge_step_mm": step}
++    if share < .9:
++        return None, dict(report, status="not_enough_planar_support")
++    levels = [_levels(group, noise) for group in _planes(scan, noise, frame, step)]
++    sizes = [len(group) - 1 for group in levels]
++    report["levels"] = [n + 1 for n in sizes]
++    if min(sizes) < 1 or np.prod(sizes) > 20_000:
++        return None, dict(report, status="unsupported_plane_arrangement")
++    occupied = _occupancy(scan, frame, levels)
++    if not occupied.any():
++        return None, dict(report, status="empty_arrangement")
++    boundary = _boundary(occupied, frame, levels)
++    if not boundary.is_watertight or not boundary.is_winding_consistent or boundary.volume <= 0:
++        return None, dict(report, status="invalid_arrangement_boundary")
++    shape = surface.solid_from_mesh(boundary)
++    if shape is None:
++        return None, dict(report, status="sewing_failed")
++    shape = shape.clean()
++    shells = shape.Shells()
++    if (len(shape.Solids()) != 1 or len(shells) != 1 or not BRep_Tool.IsClosed_s(shells[0].wrapped)
++            or not shape.isValid() or not np.isclose(shape.Volume(), boundary.volume, rtol=1e-5, atol=1e-5)):
++        return None, dict(report, status="invalid_cad_body")
++    return shape, dict(report, status="candidate", faces=len(shape.Faces()))
++
++
++def choose(body, scan, clean, noise_mm, tol=.3):
++    """Compare with the normal 0k candidate using the raw scan in both directions."""
++    from analytic_bores import coverage_share
++    from nurbs import body_mesh
++
++    candidate, report = build(scan, noise_mm)
++    if candidate is None:
++        return body, report
++    if len(candidate.Faces()) > int(1.15 * len(body.Faces())):
++        return body, dict(report, status="face_cap")
++    samples = 4000
++    points = trimesh.sample.sample_surface(scan, samples, seed=210121)[0]
++    candidate_mesh = body_mesh(candidate, .03)
++    baseline_mesh = body_mesh(body, .03)
++
++    def coverage(mesh, tolerance):
++        reverse = trimesh.sample.sample_surface(mesh, samples, seed=210122)[0]
++        return (coverage_share(mesh, points, tolerance), coverage_share(scan, reverse, tolerance))
++
++    measurement_tol = max(tol, 3 * noise_mm)
++    before, after = coverage(baseline_mesh, measurement_tol), coverage(candidate_mesh, measurement_tol)
++    report.update(raw_before=before, raw_after=after, coverage_tol_mm=measurement_tol)
++    if measurement_tol > tol:
++        report["raw_at_fixed_tol"] = {"tol_mm": tol, "before": coverage(baseline_mesh, tol),
++                                      "after": coverage(candidate_mesh, tol)}
++    if any(round(new * samples) + 1 < round(old * samples) for new, old in zip(after, before)):
++        return body, dict(report, status="raw_coverage_decreased")
++    clean_points = trimesh.sample.sample_surface(clean, 4000, seed=210123)[0]
++    return candidate, dict(report, status="accepted",
++                           clean_to_body_0_2_mm=coverage_share(candidate_mesh, clean_points, .2))

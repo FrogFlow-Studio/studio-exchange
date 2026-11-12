@@ -1,0 +1,185 @@
+"""Remove shared seams between coincident analytic faces on a final solid."""
+from collections import Counter, defaultdict
+from itertools import combinations
+from math import atan2, isfinite
+
+import cadquery as cq
+from OCP.BRep import BRep_Tool
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.Precision import Precision
+from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
+
+
+ANALYTIC = {
+    "PLANE": "Plane",
+    "CYLINDER": "Cylinder",
+    "CONE": "Cone",
+    "SPHERE": "Sphere",
+}
+MAX_VOLUME_CHANGE = 0.001
+
+
+def _surface(face, kind):
+    adaptor = BRepAdaptor_Surface(face.wrapped)
+    return getattr(adaptor, ANALYTIC[kind])()
+
+
+def _same_surface(kind, first, second, tol, angular):
+    if kind == "SPHERE":
+        return (first.Location().Distance(second.Location()) <= tol
+                and abs(first.Radius() - second.Radius()) <= tol)
+
+    axis = first.Axis().Direction()
+    other_axis = second.Axis().Direction()
+    if not axis.IsParallel(other_axis, angular):
+        return False
+    offset = cq.Vector(second.Location()) - cq.Vector(first.Location())
+    direction = cq.Vector(axis.XYZ())
+    if kind == "PLANE":
+        return abs(offset.dot(direction)) <= tol
+    if kind == "CYLINDER":
+        return offset.cross(direction).Length <= tol and abs(first.Radius() - second.Radius()) <= tol
+
+    # A cone's signed semi-angle changes when its axis is reversed.
+    sign = 1 if axis.Dot(other_axis) >= 0 else -1
+    return (abs(first.SemiAngle() - sign * second.SemiAngle()) <= angular
+            and first.Apex().Distance(second.Apex()) <= tol)
+
+
+def _closed_solids(shape):
+    solids = shape.Solids()
+    solid_faces = {face for solid in solids for face in solid.Faces()}
+    shells = shape.Shells()
+    if (not solids or not shells or solid_faces != set(shape.Faces()) or not shape.isValid()
+            or not all(BRep_Tool.IsClosed_s(shell.wrapped) for shell in shells)):
+        return []
+    for subshapes in (cq.Shape.Edges, cq.Shape.Vertices):
+        if set(subshapes(shape)) != {item for solid in solids for item in subshapes(solid)}:
+            return []
+    return solids
+
+
+def _successors(history, face, candidate_faces):
+    modified = [cq.Shape.cast(item) for item in history.Modified(face.wrapped)]
+    return modified or ([face] if face in candidate_faces else [])
+
+
+def merge_analytic(shape: cq.Shape, tol: float) -> tuple[cq.Shape, dict]:
+    """Merge coincident adjacent analytic faces, with rollback on failed checks.
+
+    tol is a linear tolerance in model units. The supporting axes/normals must
+    agree within the angle subtended by tol over the body's diagonal. Edges incident to unsupported surfaces
+    are protected and spline faces must survive with the same topology.
+    """
+    if not isfinite(tol) or tol <= 0:
+        raise ValueError("tol must be a positive finite linear tolerance")
+
+    report = {"status": "unchanged", "eligible_edges": 0, "removed_faces": 0}
+
+    def rollback(reason):
+        report.update(status="rollback", reason=reason)
+        return shape, report
+
+    try:
+        faces = shape.Faces()
+        kinds = {face: face.geomType() for face in faces}
+        report["faces_before"] = dict(Counter(kinds.values()))
+        report["faces_after"] = report["faces_before"].copy()
+        surfaces = {face: _surface(face, kind) for face, kind in kinds.items() if kind in ANALYTIC}
+        protected = set(faces) - surfaces.keys()
+        report["protected_faces"] = len(protected)
+        if len(surfaces) < 2:
+            return shape, report
+        incidence = defaultdict(list)
+        for face in faces:
+            for edge in face.Edges():
+                incidence[edge].append(face)
+
+        adjacent = {edge: owners for edge, owners in incidence.items()
+                    if len(owners) == 2 and all(owner in surfaces for owner in owners)
+                    and kinds[owners[0]] == kinds[owners[1]]}
+        if not adjacent:
+            return shape, report
+        diagonal = shape.BoundingBox().DiagonalLength
+        angular = max(Precision.Angular_s(), atan2(tol, max(tol, diagonal)))
+
+        def compatible(first, second):
+            kind = kinds[first]
+            return (first in surfaces and second in surfaces and kind == kinds[second]
+                    and _same_surface(kind, surfaces[first], surfaces[second], tol, angular))
+
+        eligible = {edge for edge, owners in adjacent.items() if compatible(*owners)}
+        report["eligible_edges"] = len(eligible)
+        if not eligible:
+            return shape, report
+
+        input_solids = _closed_solids(shape)
+        if not input_solids:
+            return rollback("input_not_closed_valid_solid")
+        unifier = ShapeUpgrade_UnifySameDomain(shape.wrapped, False, True, False)
+        unifier.SetSafeInputMode(True)
+        unifier.SetLinearTolerance(tol)
+        unifier.SetAngularTolerance(angular)
+        for edge, owners in incidence.items():
+            # A periodic analytic face's own seam is needed to form its merged wire.
+            if edge not in eligible and (len(owners) != 1 or owners[0] in protected):
+                unifier.KeepShape(edge.wrapped)
+        unifier.Build()
+        candidate = cq.Shape.cast(unifier.Shape())
+        output_faces = set(candidate.Faces())
+        if not protected <= output_faces:
+            return rollback("protected_face_changed")
+        if len(output_faces) >= len(faces):
+            report["reason"] = "no_face_reduction"
+            return shape, report
+
+        history = unifier.History()
+        predecessors = defaultdict(list)
+        successor_by_face = {}
+        for face in faces:
+            successors = _successors(history, face, output_faces)
+            if len(successors) != 1 or successors[0] not in output_faces:
+                return rollback("unexpected_face_history")
+            successor_by_face[face] = successors[0]
+            predecessors[successors[0]].append(face)
+        if predecessors.keys() != output_faces:
+            return rollback("unmapped_output_faces")
+        for face, sources in predecessors.items():
+            kind = face.geomType()
+            if any(kinds[source] != kind for source in sources):
+                return rollback("surface_type_changed")
+            if len(sources) > 1:
+                if any(not compatible(first, second) for first, second in combinations(sources, 2)):
+                    return rollback("merged_surfaces_outside_tolerance")
+                output_surface = _surface(face, kind)
+                if any(not _same_surface(kind, surfaces[source], output_surface, tol, angular)
+                       for source in sources):
+                    return rollback("output_surface_outside_tolerance")
+
+        output_solids = _closed_solids(candidate)
+        if len(output_solids) != len(input_solids):
+            return rollback("output_not_closed_valid_solid")
+        solid_by_face = {face: solid for solid in output_solids for face in solid.Faces()}
+        matched_solids = set()
+        volume_changes = []
+        for solid in input_solids:
+            mapped = {solid_by_face[successor_by_face[face]] for face in solid.Faces()}
+            if len(mapped) != 1:
+                return rollback("solid_mapping_changed")
+            target = mapped.pop()
+            if target in matched_solids or len(solid.Shells()) != len(target.Shells()):
+                return rollback("solid_topology_changed")
+            matched_solids.add(target)
+            before, after = solid.Volume(), target.Volume()
+            if not (isfinite(before) and isfinite(after) and before > 0 and after > 0):
+                return rollback("invalid_volume")
+            volume_changes.append(abs(after - before) / before)
+        report["max_relative_volume_change"] = max(volume_changes)
+        if report["max_relative_volume_change"] > MAX_VOLUME_CHANGE:
+            return rollback("volume_change_above_limit")
+
+        report.update(status="merged", removed_faces=len(faces) - len(output_faces),
+                      faces_after=dict(Counter(face.geomType() for face in output_faces)))
+        return candidate, report
+    except Exception as error:
+        return rollback(f"{type(error).__name__}: {error}")

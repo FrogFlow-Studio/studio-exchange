@@ -49,6 +49,12 @@ def rough_cores(mesh, rho=None, n=40000, tol=0.3):
     # оказывалось тиснение на пластике (Hyundai, полный скан: две ложные достройки глубиной 0,8 мм)
     thr = max(med + 6 * mad, tol / 10)
     rough = ok & (q > thr)
+    # у края дыры в данных скана (несшитые слои, рваная кромка) остаток квадрики велик, но это не излом:
+    # излом скола отсканирован, а дыра — нет. Такие точки не считаются шероховатыми.
+    open_e = trimesh.grouping.group_rows(mesh.edges_sorted, require_count=1)
+    if len(open_e):
+        edge_v = mesh.vertices[np.unique(mesh.edges_sorted[open_e])]
+        rough &= ~np.isfinite(cKDTree(edge_v).query(P, distance_upper_bound=rho)[0])
     tp = cKDTree(P)
     core = np.zeros(n, bool)
     for i in np.where(rough)[0]:

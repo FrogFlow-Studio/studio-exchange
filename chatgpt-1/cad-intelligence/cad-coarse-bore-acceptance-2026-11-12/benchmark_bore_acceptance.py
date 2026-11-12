@@ -26,14 +26,18 @@ def read(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def generate(work):
+def generate(work, noise_seed):
     import nurbs
     import surface
 
     body, truth = fixture()
     cq.exporters.export(body, str(work / "truth.step"))
     (work / "truth.json").write_text(json.dumps(truth), encoding="utf-8")
-    scan = mesh_step(work / "truth.step")
+    if noise_seed is None:
+        scan = mesh_step(work / "truth.step")
+    else:
+        scan = mesh_step(work / "truth.step", noise=0.)
+        scan.vertices += np.random.default_rng(noise_seed).normal(0., .05, scan.vertices.shape)
     scan.export(work / "scan.ply")
     scan = trimesh.load(work / "scan.ply", force="mesh")
     clean = surface.flatten_planes(surface.surface_mesh(scan))
@@ -87,7 +91,7 @@ def run(args):
     from coarse_bore_evidence import RadialWall
 
     if not args.scan and not args.reuse:
-        generate(args.work)
+        generate(args.work, args.noise_seed)
     path = args.scan or args.work / "scan.ply"
     scan = trimesh.load(path, force="mesh")
     clean = surface.flatten_planes(surface.surface_mesh(scan))
@@ -158,6 +162,7 @@ def main():
     parser.add_argument("--demo", required=True, type=Path)
     parser.add_argument("--work", required=True, type=Path)
     parser.add_argument("--reuse", action="store_true")
+    parser.add_argument("--noise-seed", type=int, help="Generate a synthetic variant with independent 0.05 mm noise.")
     parser.add_argument("--scan", type=Path)
     parser.add_argument("--sheet", type=Path)
     parser.add_argument("--stage-step", type=Path)
@@ -168,6 +173,8 @@ def main():
         parser.error("--scan requires --sheet")
     if not args.scan and args.stage_step:
         parser.error("--stage-step requires --scan")
+    if args.noise_seed is not None and (args.scan or args.reuse):
+        parser.error("--noise-seed requires synthetic generation")
     args.minimum_exact = args.minimum_exact or (1 if args.scan else 4)
     for key in ("demo", "work", "scan", "sheet", "stage_step"):
         if (value := getattr(args, key)) is not None:

@@ -97,6 +97,25 @@ class ScanComparison:
         return nearest ** 0.5
 
 
+def signed_distance(model: trimesh.Trimesh, pts: np.ndarray, tol: float) -> np.ndarray:
+    """>0 внутри модели, <0 снаружи — как trimesh.proximity.signed_distance.
+
+    На сетке модели в сотни тысяч треугольников (гладкое тело) проверка «внутри» лучами у trimesh
+    набирает кандидатов на каждый луч: 1,4 МБ на точку, на 12 000 точках 17 ГБ — соковыжималку
+    студии 12.11 убивало по памяти. Поэтому на крупной сетке лучами проверяются только точки дальше
+    допуска (знак решает, «не хватает» или «лишнее»), кусками по 500; у ближних точек знак берётся
+    по нормали ближайшего треугольника — он влияет только на оттенок цвета внутри допуска."""
+    if len(model.faces) <= 300_000:
+        return trimesh.proximity.signed_distance(model, pts)
+    closest, dist, tri = trimesh.proximity.closest_point(model, pts)
+    sign = np.where(((pts - closest) * model.face_normals[tri]).sum(axis=1) > 0, -1.0, 1.0)
+    far = np.flatnonzero(dist > tol)
+    for i in range(0, len(far), 500):
+        part = far[i:i + 500]
+        sign[part] = np.where(model.contains(pts[part]), 1.0, -1.0)
+    return sign * dist
+
+
 def compare(scan: trimesh.Trimesh, model: trimesh.Trimesh, tol: float = 0.3, n: int = 12000, seed: int = 0,
             *, prepared=None, timings=None, zones=None) -> dict:
     """zones — места, достроенные по симметрии (шары center, radius): точки скана на изломе там лежат
@@ -109,7 +128,7 @@ def compare(scan: trimesh.Trimesh, model: trimesh.Trimesh, tol: float = 0.3, n: 
         mp_pts, _ = trimesh.sample.sample_surface_even(model, n, seed=model_seed)
     # signed_distance: >0 внутри модели, <0 снаружи.
     with measured(timings, "compare_signed"):
-        sd = trimesh.proximity.signed_distance(model, sp_pts)
+        sd = signed_distance(model, sp_pts, tol)
     with measured(timings, "compare_reverse"):
         d_model = (prepared.distances(mp_pts) if prepared is not None
                    else trimesh.proximity.closest_point(scan, mp_pts)[1])

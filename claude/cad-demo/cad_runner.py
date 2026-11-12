@@ -88,18 +88,20 @@ try:
     # упрощается до 1 млн треугольников: на гладких гранях это сотые доли миллиметра.
     stl_tri = ((out / "model.stl").stat().st_size - 84) // 50
     if stl_tri > 1_200_000:
-        import fast_simplification
-        import trimesh
+        import subprocess
 
+        # отдельный процесс: здесь память уже занята ядром CAD (см. stl_simplify.py); если
+        # упрощение не удалось, остаётся полная сетка — модель не теряется
         with measured(timings, "stl_simplify"):
-            full = trimesh.load(out / "model.stl", force="mesh")
-            v, f = fast_simplification.simplify(full.vertices, full.faces, 1 - 1_000_000 / len(full.faces))
-            small = trimesh.Trimesh(v, f, process=True)
-            # замкнутость сетки STL из OCC и так не гарантирована (грани стыкуются с зазором в микроны);
-            # проверяется, что упрощение не изменило объём (крышка: 24 193 → 24 185 мм³, p99 0,05 мм)
-            if (small.is_watertight or not full.is_watertight) and abs(small.volume - full.volume) <= 1e-3 * abs(full.volume):
-                small.export(out / "model.stl")
-                info["stl_simplified_from"] = int(len(full.faces))
+            try:
+                done = subprocess.run([sys.executable, str(Path(__file__).with_name("stl_simplify.py")),
+                                       str(out / "model.stl")], capture_output=True, text=True, timeout=600)
+                if done.returncode == 0 and done.stdout.strip().isdigit():
+                    info["stl_simplified_from"] = int(done.stdout.strip())
+                elif done.returncode != 0:
+                    info["stl_simplify_error"] = done.stderr.strip()[-300:]
+            except subprocess.TimeoutExpired:
+                info["stl_simplify_error"] = "время вышло"
     info["ok"] = True
 except Exception as e:  # noqa: BLE001 — вся ошибка уходит обратно ИИ
     tb = traceback.format_exc()

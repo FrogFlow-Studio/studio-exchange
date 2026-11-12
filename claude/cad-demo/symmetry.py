@@ -54,7 +54,8 @@ def find_planes(mesh: trimesh.Trimesh, tol: float = 0.3, starts: int = 60, keep:
     Ps = P[rng.choice(len(P), 2000, replace=False)]
 
     def cost(n, d, cap):
-        return float(np.minimum(tree.query(_reflect(Ps, n, d))[0], cap).mean())
+        # верхняя граница поиска: далёкая от облака точка иначе обходит почти всё дерево (Hyundai: 83 с из 99)
+        return float(np.minimum(tree.query(_reflect(Ps, n, d), distance_upper_bound=cap)[0], cap).mean())
 
     k = np.arange(starts) + 0.5   # полусфера: решётка Фибоначчи
     z = k / starts
@@ -66,8 +67,9 @@ def find_planes(mesh: trimesh.Trimesh, tol: float = 0.3, starts: int = 60, keep:
     for n in dirs:
         d = float(c @ n)
         for _ in range(4):  # смещение: медиана середин пар «точка — ближайшая к отражению»
-            dist, j = tree.query(_reflect(Ps, n, d))
-            ok = dist < max(np.percentile(dist, 50), tol)
+            dist, j = tree.query(_reflect(Ps, n, d), distance_upper_bound=cap0)
+            dist = np.minimum(dist, cap0)
+            ok = (dist < max(np.percentile(dist, 50), tol)) & (j < len(P))
             d = float(np.median(((Ps[ok] + P[j[ok]]) / 2) @ n))
         coarse.append((cost(n, d, cap0), n, d))
     coarse.sort(key=lambda t: t[0])

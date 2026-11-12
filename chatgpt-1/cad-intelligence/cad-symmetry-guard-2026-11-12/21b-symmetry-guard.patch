@@ -1,0 +1,134 @@
+diff --git a/claude/cad-demo/geo_worker.py b/claude/cad-demo/geo_worker.py
+index c3df7f9..7faccdc 100644
+--- a/claude/cad-demo/geo_worker.py
++++ b/claude/cad-demo/geo_worker.py
+@@ -253,7 +253,7 @@ def _restore(clean, timings, scan, digest, answer):
+     """Достройка сколов кривой детали: сначала по симметрии, потом по излому."""
+     key = lambda name: None if digest is None else answer.parent / f"{name}-{digest}.pkl"
+     before = clean
+-    clean, rows, zones = _symmetry_restore(clean, timings, scan, key("symmetry-v1"))
++    clean, rows, zones = _symmetry_restore(clean, timings, scan, key("symmetry-v2"))
+     clean, rows2, zones2 = _chip_restore(clean, timings, scan, key("chipfill-v1"))
+     if rows or rows2:
+         _FILLED[:] = [(before, clean)]
+diff --git a/claude/cad-demo/symmetry.py b/claude/cad-demo/symmetry.py
+index 49cffc4..e6f7939 100644
+--- a/claude/cad-demo/symmetry.py
++++ b/claude/cad-demo/symmetry.py
+@@ -112,15 +112,25 @@ def _mirror(mesh: trimesh.Trimesh, plane: dict) -> trimesh.Trimesh:
+
+
+ def chips(mesh: trimesh.Trimesh, plane: dict, tol: float = 0.3, min_share: float = 0.002,
+-          source: trimesh.Trimesh | None = None) -> list[dict]:
++          source: trimesh.Trimesh | None = None, *, edge_step: float | None = None):
+     """Места, где отражению скана не хватает материала скана: кандидаты в сколы.
+     Возвращает куски отражённой поверхности: faces (грани отражения), area, depth, rough_deg
+     (разброс нормалей скана под куском) и smooth_deg (то же у отражённой, целой стороны)."""
+     n, d = plane["normal"], plane["d"]
+     B = _mirror(mesh if source is None else source, plane)
+     cen = B.triangles_center
+-    near, dist, fa = _Near(mesh)(cen, tol)
+-    outside = (dist > tol) & (np.einsum("ij,ij->i", cen - near, mesh.face_normals[fa]) > 0)
++    proximity = _Near(mesh)
++    near, dist, fa = proximity(cen, tol)
++    target_normals = mesh.face_normals[fa]
++    signed = np.einsum("ij,ij->i", cen - near, target_normals)
++    outside = (dist > tol) & (signed > 0)
++    if edge_step is None:
++        edge_step = float(np.median((mesh if source is None else source).edges_unique_length))
++    matched = (dist < tol + proximity.step) & (
++        np.einsum("ij,ij->i", B.face_normals, target_normals) >= .8)
++    residual = signed[matched]
++    paired_noise = float(1.4826 * np.median(np.abs(residual - np.median(residual)))) if len(residual) else 0.
++    min_depth = max(tol, float(np.hypot(edge_step, 3 * paired_noise)))
+     adj = B.face_adjacency
+     adj = adj[outside[adj[:, 0]] & outside[adj[:, 1]]]
+     tc = cKDTree(mesh.triangles_center)
+@@ -140,6 +150,20 @@ def chips(mesh: trimesh.Trimesh, plane: dict, tol: float = 0.3, min_share: float
+         area = float(B.area_faces[comp].sum())
+         if area < min_share * mesh.area:
+             continue
++        # Samples from the nearest-point tree overestimate distance to the mesh.
++        # Verify deeper witnesses exactly, in bounded batches, before measuring the patch.
++        witness = comp[dist[comp] > min_depth]
++        if B.area_faces[witness].sum() < .2 * area:
++            continue
++        deep_area = 0.
++        for start in range(0, len(witness), 96):
++            ids = witness[start:start + 96]
++            _, exact, _ = trimesh.proximity.closest_point(mesh, cen[ids])
++            deep_area += B.area_faces[ids[exact > min_depth]].sum()
++            if deep_area >= .2 * area:
++                break
++        if deep_area < .2 * area:
++            continue
+         out.append({"faces": comp, "scan_faces": np.unique(fa[comp]), "area": area, "depth": float(dist[comp].max()),
+                     "center": cen[comp].mean(0), "rough_deg": spread(mesh, np.unique(fa[comp]), tc, r),
+                     "smooth_deg": spread(B, comp, tb, r)})
+@@ -172,7 +196,9 @@ def restore(mesh: trimesh.Trimesh, plane: dict, chip: dict, B: trimesh.Trimesh,
+
+     def tri(m):
+         o = m.to_mesh()
+-        return trimesh.Trimesh(np.asarray(o.vert_properties)[:, :3], np.asarray(o.tri_verts), process=True)
++        # Keep the topology from Manifold. Welding close coordinates after the
++        # Boolean can merge different vertices and produce a four-face edge.
++        return trimesh.Trimesh(np.asarray(o.vert_properties)[:, :3], np.asarray(o.tri_verts), process=False)
+
+     hull = chip["hull"] if "hull" in chip else _region(mesh, chip, B, grow)
+     try:
+@@ -191,7 +217,7 @@ def restore(mesh: trimesh.Trimesh, plane: dict, chip: dict, B: trimesh.Trimesh,
+             keep = [q for q in shells if q.volume > 0]
+             if keep and len(keep) < len(shells):
+                 out = trimesh.util.concatenate(keep)
+-        return out
++        return out if out.is_watertight and out.is_winding_consistent else None
+     except Exception:  # noqa: BLE001 — сетка не замкнута или булева операция не удалась
+         return None
+
+@@ -244,10 +270,12 @@ def restore_all(mesh: trimesh.Trimesh, tol: float = 0.3, min_share: float = 0.8)
+     """Достройка всех сколов по найденным плоскостям симметрии. Скол, пересекающий одну плоскость,
+     ею не достраивается целиком (отражается сам в себя) — остаток закрывает следующая плоскость.
+     Возвращает (сетка или исходная, список достроенного: plane, area, depth, center, volume)."""
+-    planes = [p for p in find_planes(mesh, tol) if p["share"] >= min_share]
+-    if planes:
+-        planes = [p for p in planes if p["share"] >= planes[0]["share"] - 0.07]
++    candidates = [p for p in find_planes(mesh, tol) if p["share"] >= min_share]
++    planes = [p for p in candidates if p["share"] >= candidates[0]["share"] - 0.07]
++    secondary = [p for p in candidates[len(planes):]
++                 if all(abs(p["normal"] @ q["normal"]) < .25 for q in planes)]
+     N = 15_000
++    edge_step = float(np.median(mesh.edges_unique_length)) if planes else 0.
+
+     def shares(m):
+         Q = trimesh.sample.sample_surface(m, N, seed=5)[0]
+@@ -256,14 +284,14 @@ def restore_all(mesh: trimesh.Trimesh, tol: float = 0.3, min_share: float = 0.8)
+
+     cur, log = mesh, []
+     base = shares(cur) if len(planes) > 1 else None
+-    for _ in range(6 * max(1, len(planes))):
++    for _ in range(6 * max(1, len(planes) + len(secondary))):
+         # за шаг — одна достройка: та, что добавляет больше всего. Скол, пересекающий плоскость, ею
+         # достраивается лишь частично (отражается сам в себя); другая плоскость даёт его целиком.
+         best = None
+         for p in planes:
+             # отражается только измеренное (исходная сетка): достроенное второй раз не отражается,
+             # иначе неверная плоскость размножает копии выступов по кругу
+-            cs, B = chips(cur, p, tol, source=mesh)
++            cs, B = chips(cur, p, tol, source=mesh, edge_step=edge_step)
+             for c in merge_chips(cur, cs, B):
+                 r = restore(cur, p, c, B)
+                 if r is None:
+@@ -288,6 +316,13 @@ def restore_all(mesh: trimesh.Trimesh, tol: float = 0.3, min_share: float = 0.8)
+                     best = (gain, r, p, c)
+                 break
+         if best is None:
++            if not log and secondary:
++                # A chip can sit on the primary plane and reflect into itself.
++                # Check the transverse plane with the same agreement guard.
++                planes.extend(secondary)
++                secondary = []
++                base = shares(cur)
++                continue
+             break
+         gain, cur, p, c = best
+         if base is not None:

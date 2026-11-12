@@ -288,7 +288,23 @@ def check_step(step: Path) -> tuple[bool, str]:
     with open(step, encoding="latin-1") as fh:  # единицы в большом файле бывают и в конце
         mm = any("SI_UNIT(.MILLI.,.METRE.)" in ln.replace(" ", "") for ln in fh)
     solids, valid = len(shape.Solids()), bool(shape.isValid())
-    note = (f"тел {solids}, валидно: {'да' if valid else 'нет'}, единицы: {'мм' if mm else 'не мм'}, "
+    # Ориентация: ядро считает вывернутое тело валидным, но объём у него отрицательный и CAD видит
+    # «материал снаружи» (найдено стендом Севера, задача 15). Пробуем вывернуть обратно и переписать файл.
+    turned = ""
+    try:
+        if solids == 1 and valid and shape.Volume() < 0:
+            fixed = cq.Solid.makeSolid(cq.Shell(shape.Shells()[0].wrapped.Reversed()))
+            if fixed.Volume() < 0:
+                fixed = cq.Solid(fixed.wrapped.Reversed())
+            cq.exporters.export(fixed, str(step))
+            again = cq.importers.importStep(str(step)).val()
+            if again.Volume() > 0 and again.isValid() and len(again.Solids()) == 1:
+                shape, turned = again, ", тело было вывернуто — исправлено"
+            else:
+                valid, turned = False, ", тело вывернуто (объём отрицательный)"
+    except Exception:  # noqa: BLE001
+        valid, turned = False, ", ориентацию тела проверить не удалось"
+    note = (f"тел {solids}, валидно: {'да' if valid else 'нет'}{turned}, единицы: {'мм' if mm else 'не мм'}, "
             f"граней {len(shape.Faces())}, файл {step.stat().st_size / 1e6:.1f} МБ, чтение {time.time() - t:.0f} с")
     return solids == 1 and valid and mm, note
 

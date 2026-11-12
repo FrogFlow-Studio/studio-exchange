@@ -1,0 +1,156 @@
+{
+  "0.0": {
+    "cases": {
+      "2": {
+        "radius_mm": 5.0,
+        "residual_mm": 5.329070518200751e-15,
+        "radius_sigma_mm": 1.2938712744120792e-15,
+        "sense": "convex",
+        "suggested_radius_mm": 5.0,
+        "triangle_precision": 1.0,
+        "triangle_recall": 1.0
+      },
+      "4": {
+        "radius_mm": 3.0,
+        "residual_mm": 8.881784197001252e-15,
+        "radius_sigma_mm": 2.4851161785378498e-15,
+        "sense": "concave",
+        "suggested_radius_mm": 3.0,
+        "triangle_precision": 1.0,
+        "triangle_recall": 1.0
+      },
+      "1": {
+        "radius_mm": 2.0,
+        "residual_mm": 2.6645352591003757e-15,
+        "radius_sigma_mm": 0.0,
+        "sense": "convex",
+        "suggested_radius_mm": 2.0,
+        "triangle_precision": 1.0,
+        "triangle_recall": 1.0
+      },
+      "0": {
+        "radius_mm": 1.0,
+        "residual_mm": 1.1102230246251565e-15,
+        "radius_sigma_mm": 0.0,
+        "sense": "convex",
+        "suggested_radius_mm": 1.0,
+        "triangle_precision": 1.0,
+        "triangle_recall": 1.0
+      }
+    },
+    "false_fillets": 0,
+    "seconds": 0.15699640000093495,
+    "median_edge_mm": 1.4444447507435436,
+    "acceptance_passed": true,
+    "segmented": {
+      "cases": {
+        "2": {
+          "radius_mm": 4.853695577156723,
+          "residual_mm": 0.07869887862154581,
+          "radius_sigma_mm": 0.02419929241075416,
+          "sense": "convex",
+          "suggested_radius_mm": 5.0,
+          "triangle_precision": 1.0,
+          "triangle_recall": 1.0
+        },
+        "4": {
+          "radius_mm": 2.6806403377329158,
+          "residual_mm": 0.11897299780856718,
+          "radius_sigma_mm": 0.04836961399836652,
+          "sense": "concave",
+          "suggested_radius_mm": null,
+          "triangle_precision": 1.0,
+          "triangle_recall": 1.0
+        },
+        "1": {
+          "radius_mm": 1.970755852674659,
+          "residual_mm": 0.015360587922539049,
+          "radius_sigma_mm": 0.004416142161805185,
+          "sense": "convex",
+          "suggested_radius_mm": 2.0,
+          "triangle_precision": 1.0,
+          "triangle_recall": 0.8620689655172413
+        }
+      },
+      "false_fillets": 0,
+      "acceptance_passed": true
+    }
+  },
+  "0.1": {
+    "cases": {
+      "2": {
+        "radius_mm": 5.028267984143313,
+        "residual_mm": 0.19966418554134913,
+        "radius_sigma_mm": 0.1398567751721786,
+        "sense": "convex",
+        "suggested_radius_mm": null,
+        "triangle_precision": 1.0,
+        "triangle_recall": 1.0
+      },
+      "4": {
+        "radius_mm": 3.0680016327966606,
+        "residual_mm": 0.1948882862977892,
+        "radius_sigma_mm": 0.1759145887080723,
+        "sense": "concave",
+        "suggested_radius_mm": null,
+        "triangle_precision": 1.0,
+        "triangle_recall": 1.0
+      },
+      "1": {
+        "radius_mm": 1.9795602344949732,
+        "residual_mm": 0.18262483129271154,
+        "radius_sigma_mm": 0.23141544934358094,
+        "sense": "convex",
+        "suggested_radius_mm": null,
+        "triangle_precision": 1.0,
+        "triangle_recall": 1.0
+      },
+      "0": {
+        "radius_mm": 0.9806106728722093,
+        "residual_mm": 0.18444766979773836,
+        "radius_sigma_mm": 0.24213794900134655,
+        "sense": "convex",
+        "suggested_radius_mm": null,
+        "triangle_precision": 1.0,
+        "triangle_recall": 1.0
+      }
+    },
+    "false_fillets": 0,
+    "seconds": 0.13063900000270223,
+    "median_edge_mm": 1.4515765268289083,
+    "acceptance_passed": true,
+    "segmented": {
+      "cases": {
+        "2": {
+          "radius_mm": 4.9598757648531215,
+          "residual_mm": 0.17713765044341762,
+          "radius_sigma_mm": 0.11248775520194412,
+          "sense": "convex",
+          "suggested_radius_mm": null,
+          "triangle_precision": 1.0,
+          "triangle_recall": 0.6352459016393442
+        },
+        "4": {
+          "radius_mm": 2.8798363550768955,
+          "residual_mm": 0.2017868410304402,
+          "radius_sigma_mm": 0.13899460703952546,
+          "sense": "concave",
+          "suggested_radius_mm": null,
+          "triangle_precision": 1.0,
+          "triangle_recall": 0.48717948717948717
+        },
+        "1": {
+          "radius_mm": 1.8553470317859755,
+          "residual_mm": 0.18208203340373216,
+          "radius_sigma_mm": 0.0968337430090819,
+          "sense": "convex",
+          "suggested_radius_mm": null,
+          "triangle_precision": 1.0,
+          "triangle_recall": 0.3706896551724138
+        }
+      },
+      "false_fillets": 0,
+      "acceptance_passed": true
+    }
+  }
+}

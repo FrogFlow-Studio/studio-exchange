@@ -1,0 +1,109 @@
+{
+  "0.0": {
+    "matched_rib_sides": 6,
+    "expected_rib_sides": 6,
+    "candidate_planes": 6,
+    "falsely_planar_cylinder_triangles": 0,
+    "face_counts": [
+      172,
+      172,
+      172,
+      172,
+      172,
+      172
+    ],
+    "seconds": 0.07848879999801284,
+    "median_edge_mm": 1.489591579159041,
+    "acceptance_passed": true,
+    "segmented": {
+      "matched_rib_sides": 6,
+      "expected_rib_sides": 6,
+      "candidate_planes": 0,
+      "falsely_planar_cylinder_triangles": 0,
+      "face_counts": [],
+      "rib_sides_already_labelled": 6,
+      "acceptance_passed": true
+    }
+  },
+  "0.05": {
+    "matched_rib_sides": 5,
+    "expected_rib_sides": 6,
+    "candidate_planes": 5,
+    "falsely_planar_cylinder_triangles": 0,
+    "face_counts": [
+      172,
+      172,
+      172,
+      172,
+      172
+    ],
+    "seconds": 0.06672009999601869,
+    "median_edge_mm": 1.469216664362366,
+    "acceptance_passed": true,
+    "segmented": {
+      "matched_rib_sides": 6,
+      "expected_rib_sides": 6,
+      "candidate_planes": 0,
+      "falsely_planar_cylinder_triangles": 0,
+      "face_counts": [],
+      "rib_sides_already_labelled": 6,
+      "acceptance_passed": true
+    }
+  },
+  "0.2": {
+    "matched_rib_sides": 5,
+    "expected_rib_sides": 6,
+    "candidate_planes": 11,
+    "falsely_planar_cylinder_triangles": 0,
+    "face_counts": [
+      147,
+      142,
+      138,
+      99,
+      91,
+      26,
+      15,
+      11,
+      10,
+      13,
+      10
+    ],
+    "seconds": 0.3642547999988892,
+    "median_edge_mm": 1.4954191437996012,
+    "acceptance_passed": true,
+    "segmented": {
+      "matched_rib_sides": 6,
+      "expected_rib_sides": 6,
+      "candidate_planes": 24,
+      "falsely_planar_cylinder_triangles": 0,
+      "face_counts": [
+        94,
+        82,
+        62,
+        34,
+        22,
+        21,
+        20,
+        22,
+        16,
+        16,
+        12,
+        10,
+        11,
+        10,
+        11,
+        9,
+        9,
+        8,
+        12,
+        10,
+        9,
+        8,
+        8,
+        10
+      ],
+      "rib_sides_already_labelled": 4,
+      "acceptance_passed": true
+    }
+  }
+}

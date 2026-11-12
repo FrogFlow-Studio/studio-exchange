@@ -1,0 +1,857 @@
+{
+  "cadquery_clean": {
+    "faces": 11,
+    "area_mm2": 3890.743338823101,
+    "surface_area_shares": {
+      "plane": 0.9192546929980664,
+      "cylinder": 0.08074530700193373,
+      "cone": 0.0,
+      "sphere": 0.0,
+      "torus": 0.0,
+      "bspline": 0.0,
+      "small_planar_triangle": 0.0
+    },
+    "small_faces": {
+      "count": 0,
+      "count_share": 0.0,
+      "area_share": 0.0,
+      "threshold_mm2": 3.890743338823101
+    },
+    "edges": {
+      "count": 27,
+      "length_mm": 400.8318530717958,
+      "two_face_length_mm": 390.8318530717958,
+      "sampled_length_mm": 390.8318530717956,
+      "normal_angle_length_shares": {
+        "below_1": 0.20469160681564008,
+        "1_to_15": 0.0,
+        "above_15": 0.7953083931843606
+      },
+      "line_or_circle_length_share": 1.0
+    },
+    "dimensions": {
+      "axes": [
+        [
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -1.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "planes": 6,
+      "aligned_planes": 6,
+      "cylinder_faces": 5,
+      "round_radius_step_mm": 0.1,
+      "round_radius_epsilon_mm": 0.005,
+      "round_radius_faces": 5
+    },
+    "scan_edge_median_mm": null,
+    "tol_mm": 0.3,
+    "score": 100.0,
+    "score_components": {
+      "surface": 1.0000000000000002,
+      "large_face_area": 1.0,
+      "edge_normals": 1.0,
+      "edge_curves": 1.0
+    },
+    "score_weights": {
+      "surface": 0.5,
+      "large_face_area": 0.1,
+      "edge_normals": 0.25,
+      "edge_curves": 0.15
+    },
+    "score_scope": "Compare variants of the same part with the same inputs. Coverage is separate.",
+    "seconds": 0.012645499999052845,
+    "total_seconds": 0.026301499994588085
+  },
+  "stress_compound": {
+    "faces": 5570,
+    "area_mm2": 61809.05660964529,
+    "surface_area_shares": {
+      "plane": 0.07299386535705366,
+      "cylinder": 0.0,
+      "cone": 0.0,
+      "sphere": 0.0,
+      "torus": 0.0,
+      "bspline": 0.9270061346429478,
+      "small_planar_triangle": 0.0
+    },
+    "small_faces": {
+      "count": 4585,
+      "count_share": 0.8231597845601436,
+      "area_share": 0.2341925668383232,
+      "threshold_mm2": 11.077445186871678
+    },
+    "edges": {
+      "count": 11220,
+      "length_mm": 52488.251783893575,
+      "two_face_length_mm": 52488.251783893575,
+      "sampled_length_mm": 52488.251783893604,
+      "normal_angle_length_shares": {
+        "below_1": 0.2685071369323403,
+        "1_to_15": 0.11637365727447267,
+        "above_15": 0.6151192057931769
+      },
+      "line_or_circle_length_share": 0.0
+    },
+    "dimensions": {
+      "axes": [
+        [
+          0.00030366029812659896,
+          0.00015077721487864913,
+          0.9999999425283258
+        ],
+        [
+          0.001675991112651679,
+          -0.9999985842356454,
+          0.00015026807808887549
+        ],
+        [
+          0.9999985494210548,
+          0.0016759453858802723,
+          -0.0003039125694872999
+        ]
+      ],
+      "planes": 75,
+      "aligned_planes": 60,
+      "cylinder_faces": 0,
+      "round_radius_step_mm": 0.1,
+      "round_radius_epsilon_mm": 0.005,
+      "round_radius_faces": 0
+    },
+    "scan_edge_median_mm": 1.664139806842538,
+    "tol_mm": 0.3,
+    "score": 33.4,
+    "score_components": {
+      "surface": 0.07299386535705366,
+      "large_face_area": 0.7658074331616768,
+      "edge_normals": 0.8836263427255273,
+      "edge_curves": 0.0
+    },
+    "score_weights": {
+      "surface": 0.5,
+      "large_face_area": 0.1,
+      "edge_normals": 0.25,
+      "edge_curves": 0.15
+    },
+    "score_scope": "Compare variants of the same part with the same inputs. Coverage is separate.",
+    "seconds": 33.351000900001964,
+    "total_seconds": 42.24886879999394
+  },
+  "flange_reference": {
+    "faces": 12,
+    "area_mm2": 19510.861175119964,
+    "surface_area_shares": {
+      "plane": 0.5708880122373239,
+      "cylinder": 0.42911198776267606,
+      "cone": 0.0,
+      "sphere": 0.0,
+      "torus": 0.0,
+      "bspline": 0.0,
+      "small_planar_triangle": 0.0
+    },
+    "small_faces": {
+      "count": 0,
+      "count_share": 0.0,
+      "area_share": 0.0,
+      "threshold_mm2": 10.513191552803786
+    },
+    "edges": {
+      "count": 27,
+      "length_mm": 1410.6193585861745,
+      "two_face_length_mm": 1300.6193585861745,
+      "sampled_length_mm": 1300.6193585861763,
+      "normal_angle_length_shares": {
+        "below_1": 0.0,
+        "1_to_15": 0.0,
+        "above_15": 1.0
+      },
+      "line_or_circle_length_share": 1.0
+    },
+    "dimensions": {
+      "axes": [
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "planes": 3,
+      "aligned_planes": 3,
+      "cylinder_faces": 9,
+      "round_radius_step_mm": 0.1,
+      "round_radius_epsilon_mm": 0.005,
+      "round_radius_faces": 9
+    },
+    "scan_edge_median_mm": 1.621202605537305,
+    "tol_mm": 0.3,
+    "score": 100.0,
+    "score_components": {
+      "surface": 1.0,
+      "large_face_area": 1.0,
+      "edge_normals": 1.0,
+      "edge_curves": 1.0
+    },
+    "score_weights": {
+      "surface": 0.5,
+      "large_face_area": 0.1,
+      "edge_normals": 0.25,
+      "edge_curves": 0.15
+    },
+    "score_scope": "Compare variants of the same part with the same inputs. Coverage is separate.",
+    "seconds": 0.015703899996879045,
+    "total_seconds": 0.06435849999979837
+  },
+  "flange_0j": {
+    "faces": 12,
+    "area_mm2": 19548.164025314625,
+    "surface_area_shares": {
+      "plane": 0.5696414365854526,
+      "cylinder": 0.43035856341454726,
+      "cone": 0.0,
+      "sphere": 0.0,
+      "torus": 0.0,
+      "bspline": 0.0,
+      "small_planar_triangle": 0.0
+    },
+    "small_faces": {
+      "count": 0,
+      "count_share": 0.0,
+      "area_share": 0.0,
+      "threshold_mm2": 10.513191552803786
+    },
+    "edges": {
+      "count": 27,
+      "length_mm": 1410.9933585861738,
+      "two_face_length_mm": 1300.619358586174,
+      "sampled_length_mm": 1300.6193585861738,
+      "normal_angle_length_shares": {
+        "below_1": 0.0,
+        "1_to_15": 0.0,
+        "above_15": 1.0
+      },
+      "line_or_circle_length_share": 1.0
+    },
+    "dimensions": {
+      "axes": [
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "planes": 3,
+      "aligned_planes": 3,
+      "cylinder_faces": 9,
+      "round_radius_step_mm": 0.1,
+      "round_radius_epsilon_mm": 0.005,
+      "round_radius_faces": 8
+    },
+    "scan_edge_median_mm": 1.621202605537305,
+    "tol_mm": 0.3,
+    "score": 100.0,
+    "score_components": {
+      "surface": 1.0,
+      "large_face_area": 1.0,
+      "edge_normals": 1.0,
+      "edge_curves": 1.0
+    },
+    "score_weights": {
+      "surface": 0.5,
+      "large_face_area": 0.1,
+      "edge_normals": 0.25,
+      "edge_curves": 0.15
+    },
+    "score_scope": "Compare variants of the same part with the same inputs. Coverage is separate.",
+    "seconds": 0.01602189999539405,
+    "total_seconds": 0.028343400001176633
+  },
+  "bushing_reference": {
+    "faces": 12,
+    "area_mm2": 10285.388558364148,
+    "surface_area_shares": {
+      "plane": 0.4013331080205948,
+      "cylinder": 0.5986668919794053,
+      "cone": 0.0,
+      "sphere": 0.0,
+      "torus": 0.0,
+      "bspline": 0.0,
+      "small_planar_triangle": 0.0
+    },
+    "small_faces": {
+      "count": 0,
+      "count_share": 0.0,
+      "area_share": 0.0,
+      "threshold_mm2": 17.804092485181172
+    },
+    "edges": {
+      "count": 26,
+      "length_mm": 914.7857894892403,
+      "two_face_length_mm": 834.7857894892402,
+      "sampled_length_mm": 834.785789489241,
+      "normal_angle_length_shares": {
+        "below_1": 0.047916484089258124,
+        "1_to_15": 0.0,
+        "above_15": 0.9520835159107417
+      },
+      "line_or_circle_length_share": 1.0
+    },
+    "dimensions": {
+      "axes": [
+        [
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          -0.0
+        ]
+      ],
+      "planes": 8,
+      "aligned_planes": 8,
+      "cylinder_faces": 4,
+      "round_radius_step_mm": 0.1,
+      "round_radius_epsilon_mm": 0.005,
+      "round_radius_faces": 4
+    },
+    "scan_edge_median_mm": 2.1097448000398753,
+    "tol_mm": 0.3,
+    "score": 100.0,
+    "score_components": {
+      "surface": 1.0000000000000002,
+      "large_face_area": 1.0,
+      "edge_normals": 1.0,
+      "edge_curves": 1.0
+    },
+    "score_weights": {
+      "surface": 0.5,
+      "large_face_area": 0.1,
+      "edge_normals": 0.25,
+      "edge_curves": 0.15
+    },
+    "score_scope": "Compare variants of the same part with the same inputs. Coverage is separate.",
+    "seconds": 0.014154999997117557,
+    "total_seconds": 0.023933900003612507
+  },
+  "bushing_0j": {
+    "faces": 18,
+    "area_mm2": 10283.2109631098,
+    "surface_area_shares": {
+      "plane": 0.4011708653425415,
+      "cylinder": 0.19550490963345984,
+      "cone": 0.09164295849754017,
+      "sphere": 0.0,
+      "torus": 0.0,
+      "bspline": 0.0,
+      "small_planar_triangle": 3.0478209776832117e-06,
+      "revolution": 0.31167821870548074
+    },
+    "small_faces": {
+      "count": 6,
+      "count_share": 0.3333333333333333,
+      "area_share": 0.0033904173080138216,
+      "threshold_mm2": 17.804092485181172
+    },
+    "edges": {
+      "count": 45,
+      "length_mm": 906.4784310709421,
+      "two_face_length_mm": 826.4764286199728,
+      "sampled_length_mm": 826.4764286199721,
+      "normal_angle_length_shares": {
+        "below_1": 0.00016939382074545909,
+        "1_to_15": 0.0,
+        "above_15": 0.9998306061792545
+      },
+      "line_or_circle_length_share": 1.0
+    },
+    "dimensions": {
+      "axes": [
+        [
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          -0.04163054471219465,
+          -0.9991330730923514,
+          0.0
+        ],
+        [
+          0.9991330730923514,
+          -0.04163054471219465,
+          0.0
+        ]
+      ],
+      "planes": 14,
+      "aligned_planes": 14,
+      "cylinder_faces": 1,
+      "round_radius_step_mm": 0.1,
+      "round_radius_epsilon_mm": 0.005,
+      "round_radius_faces": 1
+    },
+    "scan_edge_median_mm": 2.1097448000398753,
+    "tol_mm": 0.3,
+    "score": 84.38,
+    "score_components": {
+      "surface": 0.6883187334735416,
+      "large_face_area": 0.9966095826919862,
+      "edge_normals": 1.0,
+      "edge_curves": 1.0
+    },
+    "score_weights": {
+      "surface": 0.5,
+      "large_face_area": 0.1,
+      "edge_normals": 0.25,
+      "edge_curves": 0.15
+    },
+    "score_scope": "Compare variants of the same part with the same inputs. Coverage is separate.",
+    "seconds": 0.024333400004252326,
+    "total_seconds": 0.04158599999936996
+  },
+  "bracket_reference": {
+    "faces": 24,
+    "area_mm2": 12779.294641833929,
+    "surface_area_shares": {
+      "plane": 0.74804719428047,
+      "cylinder": 0.25195280571952994,
+      "cone": 0.0,
+      "sphere": 0.0,
+      "torus": 0.0,
+      "bspline": 0.0,
+      "small_planar_triangle": 0.0
+    },
+    "small_faces": {
+      "count": 0,
+      "count_share": 0.0,
+      "area_share": 0.0,
+      "threshold_mm2": 11.077445186871678
+    },
+    "edges": {
+      "count": 62,
+      "length_mm": 1207.287884195281,
+      "two_face_length_mm": 1131.2878841952809,
+      "sampled_length_mm": 1131.2878841952825,
+      "normal_angle_length_shares": {
+        "below_1": 0.05657269108430792,
+        "1_to_15": 0.0,
+        "above_15": 0.9434273089156922
+      },
+      "line_or_circle_length_share": 0.9898940663011132
+    },
+    "dimensions": {
+      "axes": [
+        [
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -1.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "planes": 14,
+      "aligned_planes": 14,
+      "cylinder_faces": 10,
+      "round_radius_step_mm": 0.1,
+      "round_radius_epsilon_mm": 0.005,
+      "round_radius_faces": 6
+    },
+    "scan_edge_median_mm": 1.664139806842538,
+    "tol_mm": 0.3,
+    "score": 99.85,
+    "score_components": {
+      "surface": 0.9999999999999999,
+      "large_face_area": 1.0,
+      "edge_normals": 1.0,
+      "edge_curves": 0.9898940663011132
+    },
+    "score_weights": {
+      "surface": 0.5,
+      "large_face_area": 0.1,
+      "edge_normals": 0.25,
+      "edge_curves": 0.15
+    },
+    "score_scope": "Compare variants of the same part with the same inputs. Coverage is separate.",
+    "seconds": 0.02738369999860879,
+    "total_seconds": 0.049472300001070835
+  },
+  "bracket_0j": {
+    "faces": 277,
+    "area_mm2": 12911.062041529445,
+    "surface_area_shares": {
+      "plane": 0.822489381293653,
+      "cylinder": 0.17691572394084634,
+      "cone": 0.0,
+      "sphere": 0.0,
+      "torus": 0.0,
+      "bspline": 0.0,
+      "small_planar_triangle": 0.0005948947655011763
+    },
+    "small_faces": {
+      "count": 227,
+      "count_share": 0.8194945848375451,
+      "area_share": 0.0638709186748852,
+      "threshold_mm2": 11.077445186871678
+    },
+    "edges": {
+      "count": 822,
+      "length_mm": 2421.6107019834376,
+      "two_face_length_mm": 2355.6797019834376,
+      "sampled_length_mm": 2355.679701983458,
+      "normal_angle_length_shares": {
+        "below_1": 0.0004049786561376502,
+        "1_to_15": 0.019627880632952024,
+        "above_15": 0.9799671407109113
+      },
+      "line_or_circle_length_share": 1.0
+    },
+    "dimensions": {
+      "axes": [
+        [
+          -0.0,
+          -0.0,
+          -1.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          -1.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "planes": 204,
+      "aligned_planes": 204,
+      "cylinder_faces": 6,
+      "round_radius_step_mm": 0.1,
+      "round_radius_epsilon_mm": 0.005,
+      "round_radius_faces": 2
+    },
+    "scan_edge_median_mm": 1.664139806842538,
+    "tol_mm": 0.3,
+    "score": 98.84,
+    "score_components": {
+      "surface": 0.9994051052344992,
+      "large_face_area": 0.9361290813251149,
+      "edge_normals": 0.9803721193670479,
+      "edge_curves": 1.0
+    },
+    "score_weights": {
+      "surface": 0.5,
+      "large_face_area": 0.1,
+      "edge_normals": 0.25,
+      "edge_curves": 0.15
+    },
+    "score_scope": "Compare variants of the same part with the same inputs. Coverage is separate.",
+    "seconds": 0.35672579999663867,
+    "total_seconds": 0.5635511000000406
+  },
+  "flange_0k": {
+    "faces": 1097,
+    "area_mm2": 18519.050717435694,
+    "surface_area_shares": {
+      "plane": 0.013933729146837166,
+      "cylinder": 0.11654655750432225,
+      "cone": 0.0,
+      "sphere": 0.0,
+      "torus": 0.0,
+      "bspline": 0.8695197133488403,
+      "small_planar_triangle": 0.0
+    },
+    "small_faces": {
+      "count": 706,
+      "count_share": 0.6435733819507748,
+      "area_share": 0.18661510404860088,
+      "threshold_mm2": 10.513191552803786
+    },
+    "edges": {
+      "count": 2222,
+      "length_mm": 10755.790596797648,
+      "two_face_length_mm": 10755.790596797648,
+      "sampled_length_mm": 10755.790596797562,
+      "normal_angle_length_shares": {
+        "below_1": 0.16613719813061167,
+        "1_to_15": 0.2777390728454079,
+        "above_15": 0.5561237290239855
+      },
+      "line_or_circle_length_share": 0.0
+    },
+    "dimensions": {
+      "axes": [
+        [
+          -0.00043437020144061164,
+          0.0001764068693464235,
+          0.9999998901015663
+        ],
+        [
+          0.33083055061318145,
+          0.9436901749316263,
+          -2.2770498982552912e-05
+        ],
+        [
+          -0.9436900752384266,
+          0.33083050436459593,
+          -0.0004682716731004014
+        ]
+      ],
+      "planes": 5,
+      "aligned_planes": 5,
+      "cylinder_faces": 23,
+      "round_radius_step_mm": 0.1,
+      "round_radius_epsilon_mm": 0.005,
+      "round_radius_faces": 23
+    },
+    "scan_edge_median_mm": 1.621202605537305,
+    "tol_mm": 0.3,
+    "score": 32.71,
+    "score_components": {
+      "surface": 0.1304802866511594,
+      "large_face_area": 0.8133848959513992,
+      "edge_normals": 0.7222609271545921,
+      "edge_curves": 0.0
+    },
+    "score_weights": {
+      "surface": 0.5,
+      "large_face_area": 0.1,
+      "edge_normals": 0.25,
+      "edge_curves": 0.15
+    },
+    "score_scope": "Compare variants of the same part with the same inputs. Coverage is separate.",
+    "seconds": 6.6015094999966095,
+    "total_seconds": 8.280316600001242
+  },
+  "bracket_0k": {
+    "faces": 1114,
+    "area_mm2": 12361.811321929574,
+    "surface_area_shares": {
+      "plane": 0.07299386535697353,
+      "cylinder": 0.0,
+      "cone": 0.0,
+      "sphere": 0.0,
+      "torus": 0.0,
+      "bspline": 0.9270061346430268,
+      "small_planar_triangle": 0.0
+    },
+    "small_faces": {
+      "count": 917,
+      "count_share": 0.8231597845601436,
+      "area_share": 0.23419256683847386,
+      "threshold_mm2": 11.077445186871678
+    },
+    "edges": {
+      "count": 2244,
+      "length_mm": 10497.650356782546,
+      "two_face_length_mm": 10497.650356782546,
+      "sampled_length_mm": 10497.65035678261,
+      "normal_angle_length_shares": {
+        "below_1": 0.268507136932281,
+        "1_to_15": 0.11637365727444682,
+        "above_15": 0.6151192057932622
+      },
+      "line_or_circle_length_share": 0.0
+    },
+    "dimensions": {
+      "axes": [
+        [
+          0.00030366029812649894,
+          0.00015077721487864913,
+          0.9999999425283258
+        ],
+        [
+          0.001675991112651679,
+          -0.9999985842356454,
+          0.0001502680780888757
+        ],
+        [
+          0.9999985494210548,
+          0.0016759453858802723,
+          -0.0003039125694871999
+        ]
+      ],
+      "planes": 15,
+      "aligned_planes": 12,
+      "cylinder_faces": 0,
+      "round_radius_step_mm": 0.1,
+      "round_radius_epsilon_mm": 0.005,
+      "round_radius_faces": 0
+    },
+    "scan_edge_median_mm": 1.664139806842538,
+    "tol_mm": 0.3,
+    "score": 33.4,
+    "score_components": {
+      "surface": 0.07299386535697353,
+      "large_face_area": 0.7658074331615261,
+      "edge_normals": 0.8836263427255532,
+      "edge_curves": 0.0
+    },
+    "score_weights": {
+      "surface": 0.5,
+      "large_face_area": 0.1,
+      "edge_normals": 0.25,
+      "edge_curves": 0.15
+    },
+    "score_scope": "Compare variants of the same part with the same inputs. Coverage is separate.",
+    "seconds": 6.719270900000993,
+    "total_seconds": 8.360035199999402
+  },
+  "stress_single": {
+    "faces": 5000,
+    "area_mm2": 6320893.492969141,
+    "surface_area_shares": {
+      "plane": 1.0,
+      "cylinder": 0.0,
+      "cone": 0.0,
+      "sphere": 0.0,
+      "torus": 0.0,
+      "bspline": 0.0,
+      "small_planar_triangle": 0.0
+    },
+    "small_faces": {
+      "count": 4998,
+      "count_share": 0.9996,
+      "area_share": 0.0059659037503489,
+      "threshold_mm2": 6320.893492969141
+    },
+    "edges": {
+      "count": 14994,
+      "length_mm": 42557.947398419994,
+      "two_face_length_mm": 42557.947398419994,
+      "sampled_length_mm": 42557.94739841325,
+      "normal_angle_length_shares": {
+        "below_1": 0.0,
+        "1_to_15": 0.70463924679625,
+        "above_15": 0.29536075320419736
+      },
+      "line_or_circle_length_share": 1.0
+    },
+    "dimensions": {
+      "axes": [
+        [
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.4786452178680248,
+          -0.8780084028140455,
+          0.0
+        ],
+        [
+          0.8780084028140455,
+          0.4786452178680248,
+          -0.0
+        ]
+      ],
+      "planes": 5000,
+      "aligned_planes": 5000,
+      "cylinder_faces": 0,
+      "round_radius_step_mm": 0.1,
+      "round_radius_epsilon_mm": 0.005,
+      "round_radius_faces": 0
+    },
+    "scan_edge_median_mm": null,
+    "tol_mm": 0.3,
+    "score": 82.32,
+    "score_components": {
+      "surface": 1.0,
+      "large_face_area": 0.9940340962496511,
+      "edge_normals": 0.29536075320375,
+      "edge_curves": 1.0
+    },
+    "score_weights": {
+      "surface": 0.5,
+      "large_face_area": 0.1,
+      "edge_normals": 0.25,
+      "edge_curves": 0.15
+    },
+    "score_scope": "Compare variants of the same part with the same inputs. Coverage is separate.",
+    "seconds": 5.468236900000193,
+    "total_seconds": 133.10901179999928,
+    "solids": 1
+  },
+  "stress_grid": {
+    "faces": 5000,
+    "area_mm2": 4600.000000000476,
+    "surface_area_shares": {
+      "plane": 0.0,
+      "cylinder": 0.0,
+      "cone": 0.0,
+      "sphere": 0.0,
+      "torus": 0.0,
+      "bspline": 0.0,
+      "small_planar_triangle": 1.000000000000006
+    },
+    "small_faces": {
+      "count": 5000,
+      "count_share": 1.0,
+      "area_share": 1.000000000000006,
+      "threshold_mm2": 4.600000000000476
+    },
+    "edges": {
+      "count": 7500,
+      "length_mm": 13718.727568471691,
+      "two_face_length_mm": 13718.727568471691,
+      "sampled_length_mm": 13718.727568472244,
+      "normal_angle_length_shares": {
+        "below_1": 0.9737584992337432,
+        "1_to_15": 0.0,
+        "above_15": 0.02624150076624713
+      },
+      "line_or_circle_length_share": 1.0
+    },
+    "dimensions": {
+      "axes": [],
+      "planes": 0,
+      "aligned_planes": 0,
+      "cylinder_faces": 0,
+      "round_radius_step_mm": 0.1,
+      "round_radius_epsilon_mm": 0.005,
+      "round_radius_faces": 0
+    },
+    "scan_edge_median_mm": null,
+    "tol_mm": 0.3,
+    "score": 40.0,
+    "score_components": {
+      "surface": 0.0,
+      "large_face_area": -5.995204332975845e-15,
+      "edge_normals": 1.0,
+      "edge_curves": 1.0
+    },
+    "score_weights": {
+      "surface": 0.5,
+      "large_face_area": 0.1,
+      "edge_normals": 0.25,
+      "edge_curves": 0.15
+    },
+    "score_scope": "Compare variants of the same part with the same inputs. Coverage is separate.",
+    "seconds": 4.38381830000435,
+    "total_seconds": 6.6119730999998865,
+    "solids": 1
+  }
+}

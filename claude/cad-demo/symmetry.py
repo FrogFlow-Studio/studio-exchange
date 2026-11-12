@@ -81,14 +81,20 @@ def find_planes(mesh: trimesh.Trimesh, tol: float = 0.3, starts: int = 60, keep:
     return out
 
 
-def chips(mesh: trimesh.Trimesh, plane: dict, tol: float = 0.3, min_share: float = 0.002) -> list[dict]:
+def _mirror(mesh: trimesh.Trimesh, plane: dict) -> trimesh.Trimesh:
+    B = mesh.copy()
+    B.vertices = _reflect(B.vertices, plane["normal"], plane["d"])
+    B.invert()
+    return B
+
+
+def chips(mesh: trimesh.Trimesh, plane: dict, tol: float = 0.3, min_share: float = 0.002,
+          source: trimesh.Trimesh | None = None) -> list[dict]:
     """Места, где отражению скана не хватает материала скана: кандидаты в сколы.
     Возвращает куски отражённой поверхности: faces (грани отражения), area, depth, rough_deg
     (разброс нормалей скана под куском) и smooth_deg (то же у отражённой, целой стороны)."""
     n, d = plane["normal"], plane["d"]
-    B = mesh.copy()
-    B.vertices = _reflect(B.vertices, n, d)
-    B.invert()
+    B = _mirror(mesh if source is None else source, plane)
     cen = B.triangles_center
     near, dist, fa = trimesh.proximity.closest_point(mesh, cen)
     outside = (dist > tol) & (np.einsum("ij,ij->i", cen - near, mesh.face_normals[fa]) > 0)
@@ -145,7 +151,7 @@ def restore(mesh: trimesh.Trimesh, plane: dict, chip: dict, B: trimesh.Trimesh, 
         o = m.to_mesh()
         return trimesh.Trimesh(np.asarray(o.vert_properties)[:, :3], np.asarray(o.tri_verts), process=True)
 
-    hull = _region(mesh, chip, B, grow)
+    hull = chip["hull"] if "hull" in chip else _region(mesh, chip, B, grow)
     try:
         a, b, h = man(mesh), man(B), man(hull)
         if a.is_empty() or b.is_empty() or h.is_empty():
@@ -224,7 +230,9 @@ def restore_all(mesh: trimesh.Trimesh, tol: float = 0.3, min_share: float = 0.8)
         # достраивается лишь частично (отражается сам в себя); другая плоскость даёт его целиком.
         best = None
         for p in planes:
-            cs, B = chips(cur, p, tol)
+            # отражается только измеренное (исходная сетка): достроенное второй раз не отражается,
+            # иначе неверная плоскость размножает копии выступов по кругу
+            cs, B = chips(cur, p, tol, source=mesh)
             for c in merge_chips(cur, cs, B):
                 r = restore(cur, p, c, B)
                 if r is None:
@@ -235,11 +243,39 @@ def restore_all(mesh: trimesh.Trimesh, tol: float = 0.3, min_share: float = 0.8)
                 if gain < 0.08 * c["area"] * c["depth"]:
                     continue
                 if best is None or gain > best[0]:
+                    V = B.vertices[np.unique(B.faces[c["faces"]])]
+                    c = dict(c, radius=float(np.linalg.norm(V - c["center"], axis=1).max()) + 1.0,
+                             hull=_region(cur, c, B, 1.0))
                     best = (gain, r, p, c)
                 break
         if best is None:
             break
         gain, cur, p, c = best
         log.append({"normal": p["normal"], "d": p["d"], "area": c["area"], "depth": c["depth"],
-                    "center": c["center"], "volume": gain})
+                    "center": c["center"], "radius": c["radius"], "hull": c["hull"], "volume": gain})
     return cur, log, planes
+
+
+def describe(entry: dict) -> str:
+    """Строка для отчёта «Достроено (этого нет в скане)»."""
+    c, n = np.round(entry["center"], 1), np.round(entry["normal"], 2)
+    return (f"скол у точки ({c[0]:g}, {c[1]:g}, {c[2]:g}) мм достроен отражением целой стороны по плоскости "
+            f"симметрии (нормаль {n[0]:g}, {n[1]:g}, {n[2]:g}): площадь {entry['area']:.0f} мм², глубина "
+            f"{entry['depth']:.1f} мм, добавлено {entry['volume']:.0f} мм³")
+
+
+def zone(entry: dict) -> dict:
+    """Шар, внутри которого точки скана на изломе не считаются ошибкой модели (там скол, модель достроена)."""
+    return {"center": [float(x) for x in entry["center"]], "radius": float(entry["radius"])}
+
+
+def apply_to(mesh: trimesh.Trimesh, log: list[dict]) -> trimesh.Trimesh:
+    """Те же достройки (плоскость и область из restore_all по сырому скану) на другой сетке той же
+    детали — на очищенной поверхности. Отражается сама сетка, в пределах области. Не вышло — как было."""
+    src = mesh
+    for e in log:
+        p = {"normal": e["normal"], "d": e["d"]}
+        r = restore(mesh, p, {"hull": e["hull"]}, _mirror(src, p))
+        if r is not None and r.volume > mesh.volume:
+            mesh = r
+    return mesh

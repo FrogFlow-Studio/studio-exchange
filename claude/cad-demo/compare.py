@@ -98,7 +98,9 @@ class ScanComparison:
 
 
 def compare(scan: trimesh.Trimesh, model: trimesh.Trimesh, tol: float = 0.3, n: int = 12000, seed: int = 0,
-            *, prepared=None, timings=None) -> dict:
+            *, prepared=None, timings=None, zones=None) -> dict:
+    """zones — места, достроенные по симметрии (шары center, radius): точки скана на изломе там лежат
+    внутри модели и в допуск не попадают, но это не ошибка модели; поверхность модели там не «лишняя»."""
     rng = np.random.default_rng(seed)
     scan_seed, model_seed = (int(rng.integers(1 << 30)) for _ in range(2))
     with measured(timings, "compare_sample"):
@@ -116,7 +118,16 @@ def compare(scan: trimesh.Trimesh, model: trimesh.Trimesh, tol: float = 0.3, n: 
         outside = sd < -tol
         inside = sd > tol
         added = d_model > tol
-        within = float((ad <= tol).mean())
+        ok = ad <= tol
+        restored = np.zeros(len(sp_pts), bool)
+        for z in zones or ():
+            zc, zr = np.asarray(z["center"], float), float(z["radius"])
+            restored |= inside & (np.linalg.norm(sp_pts - zc, axis=1) <= zr)
+            added &= np.linalg.norm(mp_pts - zc, axis=1) > zr
+        inside = inside & ~restored
+        within = float((ok | restored).mean())
+        if restored.any():   # отклонения — по измеренному: излом под достройкой не «ошибка 2 мм»
+            ad = ad[~restored]
         # Шаг связи областей остаётся привязан к площади и прежнему размеру выборки.
         link = max(2.0, 2.5 * float(np.sqrt(scan.area / n)))
         return {
@@ -129,6 +140,7 @@ def compare(scan: trimesh.Trimesh, model: trimesh.Trimesh, tol: float = 0.3, n: 
             "max_abs_dev_mm": round(float(ad.max()), 3),
             "outside_share": round(float(outside.mean()), 4),
             "inside_share": round(float(inside.mean()), 4),
+            "restored_share": round(float(restored.mean()), 4),
             "added_surface_share": round(float(added.mean()), 4),
             "clusters_outside": clusters(sp_pts[outside], sd[outside], link=link, min_pts=8),
             "clusters_inside": clusters(sp_pts[inside], sd[inside], link=link, min_pts=8),

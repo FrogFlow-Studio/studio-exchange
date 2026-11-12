@@ -713,7 +713,7 @@ def main() -> None:
 
     prepared_scans = {}
 
-    def compare_models(a_mesh, b_mesh):
+    def compare_models(a_mesh, b_mesh, zones=None):
         prepared = None
         if os.environ.get("CAD_COMPARE_CACHE", "1") != "0":
             key = id(a_mesh)
@@ -721,7 +721,7 @@ def main() -> None:
                 prepared_scans[key] = cmpmod.ScanComparison(a_mesh)
             prepared = prepared_scans[key]
         with measured(stages, "сравнение"):
-            return cmpmod.compare(a_mesh, b_mesh, tol=a.tol, prepared=prepared, timings=stages)
+            return cmpmod.compare(a_mesh, b_mesh, tol=a.tol, prepared=prepared, timings=stages, zones=zones)
 
     def load_stl(path):
         with measured(stages, "stl_load"):
@@ -748,7 +748,9 @@ def main() -> None:
             model = load_stl(it_dir / "model.stl")
             log(f"    тело валидно: {run.get('valid')}, объём {run.get('volume_mm3')} мм³")
             log("4/4 сравниваю со сканом…")
-            cmp = compare_models(scan, model)
+            cmp = compare_models(scan, model, (meta or {}).get("restored_zones"))
+            if cmp.get("restored_share"):
+                log(f"    на достроенных сколах {cmp['restored_share']*100:.1f}% точек скана: излом внутри модели, так задумано")
             log(f"    в допуске {cmp['within_tol_share']*100:.1f}%, не хватает материала {cmp['outside_share']*100:.2f}%, "
                 f"скол/лишнее {cmp['inside_share']*100:.2f}%, 95% ближе {cmp['p95_abs_dev_mm']} мм")
             with measured(stages, "compare_render"):

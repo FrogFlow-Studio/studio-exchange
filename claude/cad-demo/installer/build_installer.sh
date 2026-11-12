@@ -39,6 +39,9 @@ if [ -n "$(git -C "$REPO" status --porcelain -- claude/cad-demo)" ]; then
 fi
 echo "$REV" > "$STAGE/app/claude/cad-demo/VERSION"
 rm -rf "$STAGE/app/claude/cad-demo/installer" "$STAGE/app/claude/cad-demo/bench_chips"
+# makensis на Linux падает (Segmentation fault) на файлах с русскими именами: в установщик идут только
+# файлы с латинскими именами (это документы, программе они не нужны)
+find "$STAGE/app" -depth -name '*[! -~]*' -print -exec rm -rf {} +
 
 echo "[4/5] Картинки"
 python3 "$HERE/make_art.py" "$STAGE/art"

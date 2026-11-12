@@ -43,14 +43,14 @@ VIAddVersionKey /LANG=1049 "LegalCopyright" "${COMPANY}"
 !include "LogicLib.nsh"
 !include "x64.nsh"
 
-!define MUI_ICON "${STAGE}\art\icon.ico"
-!define MUI_UNICON "${STAGE}\art\icon.ico"
-!define MUI_WELCOMEFINISHPAGE_BITMAP "${STAGE}\art\welcome.bmp"
-!define MUI_UNWELCOMEFINISHPAGE_BITMAP "${STAGE}\art\welcome.bmp"
+!define MUI_ICON "${STAGE}/art/icon.ico"
+!define MUI_UNICON "${STAGE}/art/icon.ico"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "${STAGE}/art/welcome.bmp"
+!define MUI_UNWELCOMEFINISHPAGE_BITMAP "${STAGE}/art/welcome.bmp"
 !define MUI_HEADERIMAGE
 !define MUI_HEADERIMAGE_RIGHT
-!define MUI_HEADERIMAGE_BITMAP "${STAGE}\art\header.bmp"
-!define MUI_HEADERIMAGE_UNBITMAP "${STAGE}\art\header.bmp"
+!define MUI_HEADERIMAGE_BITMAP "${STAGE}/art/header.bmp"
+!define MUI_HEADERIMAGE_UNBITMAP "${STAGE}/art/header.bmp"
 !define MUI_ABORTWARNING
 !define MUI_ABORTWARNING_TEXT "Прервать установку ${APP}?"
 
@@ -104,11 +104,15 @@ Section "Программа" SecMain
   SetOutPath "$INSTDIR"
   ; старая копия программы удаляется целиком (данные расчётов лежат отдельно и остаются)
   RMDir /r "$INSTDIR\app"
+  ; «File /r папка» ищет это имя по всему дереву, поэтому копируется содержимое через *.*
   DetailPrint "Копирую Python и библиотеки…"
-  File /r "${STAGE}\python"
+  SetOutPath "$INSTDIR\python"
+  File /r "${STAGE}/python/*.*"
   DetailPrint "Копирую программу…"
-  File /r "${STAGE}\app"
-  File "${STAGE}\art\icon.ico"
+  SetOutPath "$INSTDIR\app"
+  File /r "${STAGE}/app/*.*"
+  SetOutPath "$INSTDIR"
+  File "${STAGE}/art/icon.ico"
 
   DetailPrint "Готовлю библиотеки к быстрому запуску (до двух минут)…"
   nsExec::ExecToLog '"$INSTDIR\python\python.exe" -m compileall -q -j 0 "$INSTDIR\python\Lib" "$INSTDIR\app"'

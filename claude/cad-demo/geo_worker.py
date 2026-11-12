@@ -191,6 +191,11 @@ def _symmetry_restore(clean, timings, scan=None, cache=None):
                                lambda s, v: pickle.dump(v, s))
         log, planes = found["log"], found["planes"]
         out = symmetry.apply_to(clean, log)
+        if out is not clean and clean.is_watertight and not (out.is_watertight and np.isfinite(out.volume)
+                                                             and out.volume >= clean.volume * 0.999):
+            # достройка добавляет материал: замкнутая сетка должна остаться замкнутой и не похудеть
+            print("    достроенная сетка испорчена (не замкнута или объём меньше): тело по скану как есть", flush=True)
+            return clean, [], []
         if log and out is clean:
             print("    достройка на очищенной поверхности не удалась: тело по скану как есть", flush=True)
             return clean, [], []
@@ -319,8 +324,18 @@ def main() -> None:
         t = time.perf_counter()
         clean = _clean_surface(scan, scan_path, answer, digest=digest)
         timings["cleanup"] = time.perf_counter() - t
+        plain = clean
         clean, restored, zones = _restore(clean, timings, scan, digest, answer)
-        body, info = surface.surface_body(scan, prepared=clean, timings=timings, hole_finder=hole_finder)
+        try:
+            body, info = surface.surface_body(scan, prepared=clean, timings=timings, hole_finder=hole_finder)
+        except Exception as error:  # noqa: BLE001
+            if clean is plain:
+                raise
+            # достроенная сетка не сшилась (кнопка студии 12.11: ложный «скол», объём NaN) — тело по скану как есть
+            print(f"    тело с достройкой не сшилось ({type(error).__name__}): строю без достройки", flush=True)
+            clean, restored, zones = plain, [], []
+            _FILLED[:] = []
+            body, info = surface.surface_body(scan, prepared=clean, timings=timings, hole_finder=hole_finder)
         step = Path(sys.argv[4]).with_suffix(".step")
         with measured(timings, "step_write"):
             cq.exporters.export(body, str(step))
@@ -347,10 +362,22 @@ def main() -> None:
         clean = _clean_surface(scan, scan_path, answer, digest=digest)
         t = time.perf_counter()
         timings["cleanup"] = t - t_smooth
+        plain = clean
         clean, restored, zones = _restore(clean, timings, scan, digest, answer)
         t = time.perf_counter()
-        fit_mesh = surface.flatten_planes(clean)
-        body, info = nurbs.smooth_body(fit_mesh, scan, tol=tol)
+        try:
+            fit_mesh = surface.flatten_planes(clean)
+            body, info = nurbs.smooth_body(fit_mesh, scan, tol=tol)
+        except Exception:  # noqa: BLE001
+            if clean is plain:
+                raise
+            body = None
+        if body is None and clean is not plain:
+            print("    гладкое тело с достройкой не собралось: строю без достройки", flush=True)
+            clean, restored, zones = plain, [], []
+            _FILLED[:] = []
+            fit_mesh = surface.flatten_planes(clean)
+            body, info = nurbs.smooth_body(fit_mesh, scan, tol=tol)
         timings["smooth"] = time.perf_counter() - t
         timings["nurbs_steps"] = info["stages"]
         if body is None:

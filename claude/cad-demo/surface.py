@@ -437,3 +437,72 @@ if __name__ == "__main__":
     cq.exporters.export(s, str(out / "model.step"))
     cq.exporters.export(s, str(out / "model.stl"))
     print(info, "valid", s.isValid(), "solids", len(s.Solids()), "sec", round(time.time() - t, 1))
+
+
+def plug_holes(mesh: trimesh.Trimesh, specs, pad: float = 0.6, why=None):
+    """Круглые отверстия в чистой поверхности закрываются заподлицо: грани стенки (и дна) убираются,
+    края затягиваются веером. Гладкое тело по такой сетке проходит над отверстием простой гранью, и
+    точный цилиндр потом режет её поперёк — без почти совпадающих стенок, на которых булева операция
+    даёт невалидное тело. Каждое отверстие закрывается отдельно: не замкнулось — остаётся как было.
+    Возвращает (сетка, список закрытых отверстий из specs)."""
+    done = []
+    for spec in specs:
+        out, reason = _plug_one(mesh, spec, pad)
+        if why is not None:
+            why.append(reason)
+        if out is not None:
+            mesh = out
+            done.append(spec)
+    return mesh, done
+
+
+def _plug_one(mesh, spec, pad):
+    c, d, r, h = spec
+    c, d = np.asarray(c, float), np.asarray(d, float)
+    d = d / np.linalg.norm(d)
+    v = mesh.triangles_center - c
+    ax = v @ d
+    rad = np.linalg.norm(v - np.outer(ax, d), axis=1)
+    drop = (rad < r + pad) & (ax > -1.0) & (ax < h + 1.0)
+    if not drop.any():
+        return None, "нет граней"
+    for _ in range(6):   # вершина, где сходятся две петли края: её грани тоже убираются, край становится простым
+        faces = mesh.faces[~drop]
+        e = np.vstack([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+        key = np.sort(e, axis=1)
+        _, inv, cnt = np.unique(key, axis=0, return_inverse=True, return_counts=True)
+        be = e[cnt[inv.ravel()] == 1]   # граничные рёбра в направлении своей грани
+        starts, many = np.unique(be[:, 0], return_counts=True)
+        pinch = starts[many > 1]
+        if not len(pinch):
+            break
+        drop |= np.isin(mesh.faces, pinch).any(axis=1)
+    else:
+        return None, "вершина на двух петлях"
+    nxt = {int(a): int(b) for a, b in be}
+    verts = [mesh.vertices]
+    new = []
+    n = len(mesh.vertices)
+    seen = set()
+    for start in list(nxt):
+        if start in seen:
+            continue
+        loop, cur = [], start
+        while cur not in seen:
+            seen.add(cur)
+            loop.append(cur)
+            cur = nxt.get(cur)
+            if cur is None:
+                return None, "петля не замкнута"
+        if cur != start or len(loop) < 3:
+            return None, "петля не замкнута"
+        verts.append(mesh.vertices[loop].mean(0)[None])
+        new += [(loop[(i + 1) % len(loop)], loop[i], n) for i in range(len(loop))]
+        n += 1
+    out = trimesh.Trimesh(np.vstack(verts), np.vstack([faces, np.array(new, int)]), process=False)
+    out.remove_unreferenced_vertices()
+    if not out.is_watertight:
+        return None, "не замкнута"
+    if out.volume <= mesh.volume:
+        return None, f"объём не вырос ({out.volume - mesh.volume:.1f})"
+    return out, f"закрыто, петель {n - len(mesh.vertices)}, объём +{out.volume - mesh.volume:.1f}"

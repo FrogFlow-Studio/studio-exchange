@@ -1,0 +1,268 @@
+"""Sew measured prismatic plates and cylindrical bores without cutting a finished solid."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import cos, radians
+
+import cadquery as cq
+import numpy as np
+import trimesh
+from OCP.BRep import BRep_Tool
+from OCP.BRepBuilderAPI import BRepBuilderAPI_Sewing
+from OCP.BRepLib import BRepLib
+from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
+from OCP.TopoDS import TopoDS
+from shapely.geometry import Polygon
+from shapely.ops import unary_union
+
+import holes
+import walls
+
+
+@dataclass(frozen=True)
+class Profile:
+    outer: Polygon
+    radii: np.ndarray
+    centers: np.ndarray
+
+
+class Unsupported(ValueError):
+    """The scan does not support this construction."""
+
+
+def _frame(scan, specs, tol):
+    origin = np.asarray(specs[0][0], dtype=float)
+    axes = np.asarray([s[1] for s in specs], dtype=float)
+    radii = np.asarray([s[2] for s in specs], dtype=float)
+    lengths = np.linalg.norm(axes, axis=1)
+    if not np.isfinite([*origin, *axes.ravel(), *radii]).all() or min(radii.min(), lengths.min()) <= 0:
+        raise Unsupported("invalid_hole_specs")
+    axes /= lengths[:, None]
+    guess = axes[0]
+    alignment = axes @ guess
+    limit = cos(radians(2))
+    if np.any(np.abs(alignment) < limit):
+        raise Unsupported("hole_axes_are_not_parallel")
+
+    patches = [p for p in walls.planar_patches(scan) if abs(p["normal"] @ guess) >= limit]
+    if not patches:
+        raise Unsupported("no_parallel_cap_planes")
+    area = max(p["area"] for p in patches)
+    major = [p for p in patches if p["area"] >= area * 0.08]
+    bottom = min(major, key=lambda p: (p["point"] - origin) @ guess)
+    top = max(major, key=lambda p: (p["point"] - origin) @ guess)
+    if (top["normal"] @ guess < limit or bottom["normal"] @ guess > -limit
+            or (top["point"] - bottom["point"]) @ guess <= 4 * tol):
+        raise Unsupported("no_opposing_cap_planes")
+    axis = top["normal"] - bottom["normal"]
+    axis /= np.linalg.norm(axis)
+    if np.any(np.abs(axes @ axis) < limit):
+        raise Unsupported("cap_planes_do_not_match_hole_axes")
+    u, v = walls._frame(axis)
+    frame = np.vstack((u, v, axis))
+    span = np.array([(p["point"] - origin) @ axis for p in (bottom, top)])
+    measured_span = np.quantile((scan.vertices - origin) @ axis, (0.001, 0.999))
+    if np.any(np.abs(measured_span - span) > 2 * tol):
+        raise Unsupported("cap_planes_do_not_bound_the_scan")
+    centers = np.asarray([(np.asarray(s[0]) - origin) @ frame.T for s in specs])[:, :2]
+    return origin, frame, span, centers, radii
+
+
+def _profile(mesh, height, centers, seeds, tol):
+    cut = mesh.section(plane_origin=(0, 0, height), plane_normal=(0, 0, 1))
+    if cut is None:
+        raise Unsupported("missing_section")
+    transform = np.eye(4)
+    transform[2, 3] = -height
+    try:
+        path, _ = cut.to_2D(to_2D=transform)
+        pieces = unary_union([p.buffer(0) for p in path.polygons_full])
+    except (ValueError, TypeError) as error:
+        raise Unsupported("invalid_section") from error
+    if pieces.geom_type == "MultiPolygon":
+        pieces = sorted(pieces.geoms, key=lambda p: p.area, reverse=True)
+        if sum(p.area for p in pieces[1:]) > tol ** 2:
+            raise Unsupported("section_is_not_one_plate")
+        pieces = pieces[0]
+    if pieces.geom_type != "Polygon" or pieces.is_empty:
+        raise Unsupported("section_is_not_one_plate")
+    if len(pieces.interiors) != len(seeds):
+        raise Unsupported("section_openings_do_not_match_detected_holes")
+
+    radii = np.zeros(len(seeds))
+    fitted = np.zeros_like(centers)
+    for ring in pieces.interiors:
+        points = np.asarray(ring.coords)[:-1]
+        if len(points) < 8:
+            raise Unsupported("not_enough_circle_points")
+        center, radius, _ = holes._circle_robust(points)
+        radial = np.linalg.norm(points - center, axis=1)
+        distances = np.linalg.norm(centers - center, axis=1)
+        i = int(distances.argmin())
+        x, y = (points - center).T
+        angles = np.sort(np.arctan2(y, x))
+        gap = np.diff(np.r_[angles, angles[0] + 2 * np.pi])
+        if (distances[i] > tol or radius < seeds[i] - tol or radii[i]
+                or np.quantile(np.abs(radial - radius), .95) > tol * 0.5
+                or gap.max(initial=0) > radians(75)):
+            raise Unsupported("opening_is_not_a_supported_circle")
+        radii[i], fitted[i] = radius, center
+    return Profile(Polygon(pieces.exterior), radii, fitted)
+
+
+def _hole_segments(mesh, profiles, heights, span, seeds, tol):
+    centers_refined = np.median(np.array([p.centers for p in profiles]), axis=0)
+    if max(np.linalg.norm(p.centers - centers_refined, axis=1).max() for p in profiles) > tol / 2:
+        raise Unsupported("section_centers_do_not_share_an_axis")
+    result = []
+    for i, (center, seed) in enumerate(zip(centers_refined, seeds)):
+        radii = np.array([p.radii[i] for p in profiles])
+        breaks = np.flatnonzero(np.abs(np.diff(radii)) > tol / 2)
+        bands = np.split(radii, breaks + 1)
+        values = [float(np.median(band)) for band in bands]
+        measured = min(range(len(values)), key=lambda j: abs(values[j] - seed))
+        if any(np.ptp(band) > tol / 2 for band in bands) or abs(values[measured] - seed) > tol / 2:
+            raise Unsupported("section_radii_do_not_match_the_scan")
+        values[measured] = float(seed)
+        levels = [float(span[0])]
+        distance = np.linalg.norm(mesh.vertices[:, :2] - center, axis=1)
+        z = mesh.vertices[:, 2]
+        for j, k in enumerate(breaks):
+            small, large = sorted(values[j:j + 2])
+            shoulder = z[(distance > small + tol / 4) & (distance < large - tol / 4)
+                         & (z > heights[k]) & (z < heights[k + 1])]
+            if len(shoulder) < 6 or np.ptp(np.quantile(shoulder, (.1, .9))) > tol:
+                raise Unsupported("radius_change_has_no_measured_shoulder")
+            levels.append(float(np.median(shoulder)))
+        levels.append(float(span[1]))
+        if min(np.diff(levels)) <= tol:
+            raise Unsupported("cylinder_band_is_too_short")
+        result.append((center, list(zip(levels, levels[1:], values))))
+    return result
+
+
+def _body(outline, origin, frame, span, bores, sew_tol):
+    def world(x, y, z):
+        return cq.Vector(*(origin + np.array((x, y, z)) @ frame))
+
+    direction = cq.Vector(*frame[2])
+
+    def polygon(height):
+        return cq.Wire.makePolygon([world(x, y, height) for x, y in outline.exterior.coords[:-1]], close=True)
+
+    def circle(center, height, radius):
+        return cq.Wire.makeCircle(radius, world(*center, height), direction)
+
+    bottom, top = span
+    prism = BRepPrimAPI_MakePrism(polygon(bottom).wrapped, direction.multiply(top - bottom).wrapped)
+    patches = cq.Shape.cast(prism.Shape()).Faces()
+    patches.append(cq.Face.makeFromWires(polygon(bottom),
+                                        [circle(c, bottom, bands[0][2]) for c, bands in bores]))
+    patches.append(cq.Face.makeFromWires(polygon(top),
+                                        [circle(c, top, bands[-1][2]) for c, bands in bores]))
+    for center, bands in bores:
+        for low, high, radius in bands:
+            tool = cq.Solid.makeCylinder(radius, high - low, world(*center, low), direction)
+            patches.extend(f for f in tool.Faces() if f.geomType() == "CYLINDER")
+        for (_, level, before), (_, _, after) in zip(bands, bands[1:]):
+            small, large = sorted((before, after))
+            patches.append(cq.Face.makeFromWires(circle(center, level, large), [circle(center, level, small)]))
+
+    sewing = BRepBuilderAPI_Sewing(sew_tol)
+    for face in patches:
+        sewing.Add(face.wrapped)
+    sewing.Perform()
+    if sewing.NbFreeEdges() or sewing.NbMultipleEdges():
+        raise Unsupported("could_not_sew_bore_boundaries")
+    shells = cq.Shape.cast(sewing.SewedShape()).Shells()
+    if len(shells) != 1 or not BRep_Tool.IsClosed_s(shells[0].wrapped):
+        raise Unsupported("result_is_not_one_closed_shell")
+    shape = TopoDS.Solid_s(cq.Solid.makeSolid(shells[0]).wrapped)
+    if not BRepLib.OrientClosedSolid_s(shape):
+        raise Unsupported("could_not_orient_solid")
+    result = cq.Solid(shape)
+    if not result.isValid() or result.Volume() <= 0:
+        raise Unsupported("result_is_not_a_valid_solid")
+    if any(BRep_Tool.Tolerance_s(edge.wrapped) > 2 * sew_tol for edge in result.Edges()):
+        raise Unsupported("sewing_relaxed_edge_tolerances")
+    return result
+
+
+def build_bored_plate(scan, specs, tol=0.3):
+    """Return a candidate and a report. The caller must compare its coverage."""
+    if not specs:
+        return None, {"status": "unsupported", "reason": "no_detected_holes"}
+    if not np.isfinite(tol) or tol <= 0:
+        raise ValueError("tol must be positive and finite")
+    try:
+        origin, frame, span, centers, seeds = _frame(scan, specs, tol)
+        local = scan.copy()
+        local.vertices = (scan.vertices - origin) @ frame.T
+        heights = np.linspace(span[0] + 2 * tol, span[1] - 2 * tol, 13)
+        profiles = [_profile(local, z, centers, seeds, tol) for z in heights]
+        distances = np.array([[p.outer.hausdorff_distance(q.outer) for q in profiles] for p in profiles])
+        outline = profiles[int(distances.sum(axis=1).argmin())].outer.simplify(tol / 4)
+        if distances.max() > 2 * tol:
+            raise Unsupported("outer_profile_varies_with_depth")
+        bores = _hole_segments(local, profiles, heights, span, seeds, tol)
+        body = _body(outline, origin, frame, span, bores, min(0.003, tol / 100))
+        return body, {"status": "built", "bores": len(bores),
+                      "cylindrical_bands": sum(len(bands) for _, bands in bores),
+                      "radii_mm": [[radius for _, _, radius in bands] for _, bands in bores]}
+    except Unsupported as error:
+        return None, {"status": "unsupported", "reason": str(error)}
+    except (ValueError, RuntimeError, TypeError) as error:
+        return None, {"status": "unsupported", "reason": f"{type(error).__name__}: {error}"}
+
+
+def coverage_share(mesh, points, tol):
+    """Fraction of points within tol of the triangle surface."""
+    tree = mesh.triangles_tree
+    triangles = mesh.triangles
+    count = 0
+    for i in range(0, len(points), 256):
+        query = points[i:i + 256]
+        low, high = query - tol, query + tol
+        try:
+            indices, counts = tree.intersection_v(low, high)
+        except Exception:
+            rows = [list(tree.intersection(box)) for box in np.column_stack((low, high))]
+            indices, counts = np.concatenate(rows).astype(np.intp), list(map(len, rows))
+        if not len(indices):
+            continue
+        owners = np.repeat(np.arange(len(query)), np.asarray(counts, dtype=np.intp))
+        origins = query[owners]
+        delta = trimesh.triangles.closest_point(triangles[indices], origins) - origins
+        inside = np.einsum("ij,ij->i", delta, delta) <= tol * tol
+        count += len(np.unique(owners[inside]))
+    return count / len(points)
+
+
+def _within(source, target, tol, seed):
+    points, _ = trimesh.sample.sample_surface(source, 4000, seed=seed)
+    return coverage_share(target, points, tol)
+
+
+def try_analytic_bores(incumbent, scan, specs, tol=0.3):
+    """Return the incumbent unless a sewn candidate passes both coverage directions."""
+    candidate, report = build_bored_plate(scan, specs, tol)
+    if candidate is None:
+        return incumbent, report
+
+    from nurbs import body_mesh
+
+    seed = 19213
+    points, _ = trimesh.sample.sample_surface(scan, 4000, seed=seed)
+    model = body_mesh(candidate, tol / 10)
+    forward = coverage_share(model, points, tol)
+    reverse = _within(model, scan, tol, seed + 1)
+    report["candidate_coverage"] = [forward, reverse]
+    if min(forward, reverse) < 1:
+        baseline = body_mesh(incumbent, tol / 10)
+        before = [coverage_share(baseline, points, tol), _within(baseline, scan, tol, seed + 1)]
+        report["baseline_coverage"] = before
+        if forward < before[0] or reverse < before[1]:
+            report.update(status="rollback", reason="scan_coverage_decreased")
+            return incumbent, report
+    report["status"] = "accepted"
+    return candidate, report

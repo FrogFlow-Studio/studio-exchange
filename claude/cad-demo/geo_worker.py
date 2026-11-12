@@ -227,6 +227,17 @@ def main() -> None:
         clean = _clean_surface(scan, scan_path, answer, digest=digest)
         t = time.perf_counter()
         timings["cleanup"] = t - t_smooth
+        plugged = None
+        if os.environ.get("CAD_HOLE_PLUG", "0") == "1":   # отверстия закрыть в сетке, вырезать точно потом
+            try:
+                found_all = hole_finder(scan)
+                clean, done_plug = surface.plug_holes(clean, found_all)
+                timings["hole_plugged"] = len(done_plug)
+                if done_plug:   # закрытые режем первыми: у них простая грань поперёк цилиндра
+                    plugged = done_plug + [q for q in found_all if q not in done_plug]
+                    print(f"    отверстий закрыто в сетке перед гладким телом: {len(done_plug)} из {len(found_all)}", flush=True)
+            except Exception:  # noqa: BLE001
+                plugged = None
         body, info = nurbs.smooth_body(surface.flatten_planes(clean), scan, tol=tol)
         timings["smooth"] = time.perf_counter() - t
         timings["nurbs_steps"] = info["stages"]
@@ -249,8 +260,24 @@ def main() -> None:
             fil_note = []
         timings["fillets"] = time.perf_counter() - t
         t = time.perf_counter()
-        body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings, hole_finder=hole_finder,
-                                       limit_time=True)
+        analytic = None
+        specs = None
+        if os.environ.get("CAD_ANALYTIC_BORES", "0") == "1":
+            with measured(timings, "holes_analytic"):
+                try:
+                    from analytic_bores import try_analytic_bores
+
+                    specs = hole_finder(scan)
+                    body, analytic = try_analytic_bores(body, scan, specs, tol=0.3)
+                except Exception as error:  # an inconclusive trial keeps the existing route
+                    analytic = {"status": "rollback", "reason": f"{type(error).__name__}: {error}"}
+        if analytic and analytic["status"] == "accepted":
+            cut = analytic["bores"]
+        else:
+            found = specs if specs is not None else plugged
+            finder = hole_finder if found is None else lambda _: found
+            body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings, hole_finder=finder,
+                                           limit_time=True)
         timings["holes"] = time.perf_counter() - t
         step = Path(sys.argv[4]).with_suffix(".step")
         with measured(timings, "step_write"):
@@ -260,8 +287,10 @@ def main() -> None:
         exact = ", ".join(f"{name} {kinds[t]}" for t, name in (("PLANE", "плоскостей"), ("CYLINDER", "цилиндров"),
                                                               ("CONE", "конусов"), ("SPHERE", "сфер")) if kinds[t])
         meta = {"plan": f"гладкое тело: {sum(kinds.values())} граней по скану (точных: {exact or 'нет'}; остальные B-сплайн), {round(info['near'] * 100, 1)}% поверхности "
-                        f"в пределах 0,2 мм, отверстий вырезано точно {cut}",
+                        f"в пределах 0,2 мм, отверстий построено точно {cut}",
                 "restored": [], "assumptions": ["форма любая: гладкие грани повторяют поверхность скана"] + fil_note}
+        if analytic:
+            meta["analytic_bores"] = analytic
     else:
         code, meta = geometric.build(scan, sheet, restore=sys.argv[3] == "1")
     timings["total"] = time.perf_counter() - started

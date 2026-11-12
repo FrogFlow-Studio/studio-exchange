@@ -31,7 +31,7 @@ def find_planes(mesh: trimesh.Trimesh, tol: float = 0.3, starts: int = 60, keep:
     c = P.mean(0)
     size = float(np.linalg.norm(P - c, axis=1).max())
     rng = np.random.default_rng(0)
-    Ps = P[rng.choice(len(P), 4000, replace=False)]
+    Ps = P[rng.choice(len(P), 2000, replace=False)]
 
     def cost(n, d, cap):
         return float(np.minimum(tree.query(_reflect(Ps, n, d))[0], cap).mean())
@@ -52,7 +52,7 @@ def find_planes(mesh: trimesh.Trimesh, tol: float = 0.3, starts: int = 60, keep:
         coarse.append((cost(n, d, cap0), n, d))
     coarse.sort(key=lambda t: t[0])
     out = []
-    for _, n0, d0 in coarse[: 3 * keep]:
+    for _, n0, d0 in coarse[: 2 * keep]:
         e1 = np.cross(n0, [1.0, 0, 0] if abs(n0[0]) < 0.9 else [0, 1.0, 0])
         e1 /= np.linalg.norm(e1)
         e2 = np.cross(n0, e1)
@@ -66,7 +66,7 @@ def find_planes(mesh: trimesh.Trimesh, tol: float = 0.3, starts: int = 60, keep:
         for cap in (cap0, 0.01 * size, max(1.0, 3 * tol), tol):  # грубо → точно
             simplex = np.array([x, x + [0.03, 0, 0], x + [0, 0.03, 0], x + [0, 0, 0.01 * size]])
             x = minimize(lambda v: cost(*plane(v), cap), x, method="Nelder-Mead",
-                         options={"xatol": 1e-5, "fatol": 1e-7, "maxiter": 600, "initial_simplex": simplex}).x
+                         options={"xatol": 1e-4, "fatol": 1e-6, "maxiter": 250, "initial_simplex": simplex}).x
         n, d = plane(x)
         if any(abs(n @ o["normal"]) > np.cos(np.radians(2)) and abs(abs(d) - abs(o["d"])) < tol for o in out):
             continue
@@ -111,7 +111,7 @@ def chips(mesh: trimesh.Trimesh, plane: dict, tol: float = 0.3, min_share: float
         area = float(B.area_faces[comp].sum())
         if area < min_share * mesh.area:
             continue
-        out.append({"faces": comp, "area": area, "depth": float(dist[comp].max()),
+        out.append({"faces": comp, "scan_faces": np.unique(fa[comp]), "area": area, "depth": float(dist[comp].max()),
                     "center": cen[comp].mean(0), "rough_deg": spread(mesh, np.unique(fa[comp]), tc, r),
                     "smooth_deg": spread(B, comp, tb, r)})
     out.sort(key=lambda o: -o["area"])
@@ -145,10 +145,7 @@ def restore(mesh: trimesh.Trimesh, plane: dict, chip: dict, B: trimesh.Trimesh, 
         o = m.to_mesh()
         return trimesh.Trimesh(np.asarray(o.vert_properties)[:, :3], np.asarray(o.tri_verts), process=True)
 
-    V = B.vertices[np.unique(B.faces[chip["faces"]])]
-    hull = trimesh.convex.convex_hull(V)
-    c = hull.centroid
-    hull.vertices = c + (hull.vertices - c) * (1 + grow / max(1e-6, np.linalg.norm(hull.vertices - c, axis=1).mean()))
+    hull = _region(mesh, chip, B, grow)
     try:
         a, b, h = man(mesh), man(B), man(hull)
         if a.is_empty() or b.is_empty() or h.is_empty():
@@ -159,12 +156,62 @@ def restore(mesh: trimesh.Trimesh, plane: dict, chip: dict, B: trimesh.Trimesh, 
             u = max(parts, key=lambda p: p.volume())
         if u.volume() < a.volume():
             return None
-        return tri(u)
+        out = tri(u)
+        shells = out.split(only_watertight=False)
+        if len(shells) > 1:  # замкнутая полость внутри тела: у скана их не бывает (сканер видит только снаружи)
+            keep = [q for q in shells if q.volume > 0]
+            if keep and len(keep) < len(shells):
+                out = trimesh.util.concatenate(keep)
+        return out
     except Exception:  # noqa: BLE001 — сетка не замкнута или булева операция не удалась
         return None
 
 
-def restore_all(mesh: trimesh.Trimesh, tol: float = 0.3, min_share: float = 0.8, passes: int = 2):
+def _region(mesh, chip, B, grow):
+    """Область скола: выпуклая оболочка куска отражённой поверхности и дна излома в скане, раздутая на grow."""
+    V = B.vertices[np.unique(B.faces[chip["faces"]])]
+    if len(chip.get("scan_faces", ())):  # дно излома в скане: иначе под достроенной коркой остаётся полость
+        V = np.vstack([V, mesh.vertices[np.unique(mesh.faces[chip["scan_faces"]])]])
+    hull = trimesh.convex.convex_hull(V)
+    c = hull.centroid
+    hull.vertices = c + (hull.vertices - c) * (1 + grow / max(1e-6, np.linalg.norm(hull.vertices - c, axis=1).mean()))
+    return hull
+
+
+def merge_chips(mesh, cs, B, grow: float = 1.0):
+    """Куски одного скола (сквозной излом выходит на две стороны детали) — один кандидат:
+    сливаются те, чьи области пересекаются."""
+    import manifold3d as m3
+
+    if len(cs) < 2:
+        return cs
+    hulls = []
+    for c in cs:
+        h = _region(mesh, c, B, grow)
+        hulls.append(m3.Manifold(m3.Mesh(np.asarray(h.vertices, np.float32), np.asarray(h.faces, np.uint32))))
+    group = list(range(len(cs)))
+    for i in range(len(cs)):
+        for j in range(i + 1, len(cs)):
+            if group[i] != group[j] and not (hulls[i] ^ hulls[j]).is_empty():
+                gi, gj = group[i], group[j]
+                group = [gi if g == gj else g for g in group]
+    out = []
+    for g in sorted(set(group)):
+        m = [c for c, q in zip(cs, group) if q == g]
+        if len(m) == 1:
+            out.append(m[0])
+            continue
+        w = np.array([c["area"] for c in m])
+        out.append({"faces": np.concatenate([c["faces"] for c in m]),
+                    "scan_faces": np.unique(np.concatenate([c["scan_faces"] for c in m])),
+                    "area": float(w.sum()), "depth": max(c["depth"] for c in m),
+                    "center": (np.array([c["center"] for c in m]) * w[:, None]).sum(0) / w.sum(),
+                    "rough_deg": max(c["rough_deg"] for c in m), "smooth_deg": max(c["smooth_deg"] for c in m)})
+    out.sort(key=lambda o: -o["area"])
+    return out
+
+
+def restore_all(mesh: trimesh.Trimesh, tol: float = 0.3, min_share: float = 0.8):
     """Достройка всех сколов по найденным плоскостям симметрии. Скол, пересекающий одну плоскость,
     ею не достраивается целиком (отражается сам в себя) — остаток закрывает следующая плоскость.
     Возвращает (сетка или исходная, список достроенного: plane, area, depth, center, volume)."""
@@ -172,27 +219,27 @@ def restore_all(mesh: trimesh.Trimesh, tol: float = 0.3, min_share: float = 0.8,
     if planes:
         planes = [p for p in planes if p["share"] >= planes[0]["share"] - 0.07]
     cur, log = mesh, []
-    for _ in range(passes):
-        changed = False
+    for _ in range(6 * max(1, len(planes))):
+        # за шаг — одна достройка: та, что добавляет больше всего. Скол, пересекающий плоскость, ею
+        # достраивается лишь частично (отражается сам в себя); другая плоскость даёт его целиком.
+        best = None
         for p in planes:
-            for _ in range(6):  # после каждой достройки отражение пересчитывается
-                cs, B = chips(cur, p, tol)
-                done = False
-                for c in cs:
-                    r = restore(cur, p, c, B)
-                    if r is None:
-                        continue
-                    gain = float(r.volume - cur.volume)
-                    # полнота: у скола объём сравним с площадью × глубину (образцы: 0,13–0,32); тонкая
-                    # плёнка от неточного совпадения отражения (над отверстием: 0,035) — не скол
-                    if gain < 0.08 * c["area"] * c["depth"]:
-                        continue
-                    log.append({"normal": p["normal"], "d": p["d"], "area": c["area"], "depth": c["depth"],
-                                "center": c["center"], "volume": gain})
-                    cur, done, changed = r, True, True
-                    break
-                if not done:
-                    break
-        if not changed:
+            cs, B = chips(cur, p, tol)
+            for c in merge_chips(cur, cs, B):
+                r = restore(cur, p, c, B)
+                if r is None:
+                    continue
+                gain = float(r.volume - cur.volume)
+                # полнота: у скола объём сравним с площадью × глубину (образцы: 0,13–0,32); тонкая
+                # плёнка от неточного совпадения отражения (над отверстием: 0,035) — не скол
+                if gain < 0.08 * c["area"] * c["depth"]:
+                    continue
+                if best is None or gain > best[0]:
+                    best = (gain, r, p, c)
+                break
+        if best is None:
             break
+        gain, cur, p, c = best
+        log.append({"normal": p["normal"], "d": p["d"], "area": c["area"], "depth": c["depth"],
+                    "center": c["center"], "volume": gain})
     return cur, log, planes

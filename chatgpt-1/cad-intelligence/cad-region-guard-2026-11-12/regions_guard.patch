@@ -1,0 +1,552 @@
+diff --git a/claude/cad-demo/nurbs.py b/claude/cad-demo/nurbs.py
+index 64495af..8b59dac 100644
+--- a/claude/cad-demo/nurbs.py
++++ b/claude/cad-demo/nurbs.py
+@@ -376,7 +376,7 @@ def _cyl_face(entry, wires, group):
+     return pf
+
+
+-def _merge_planes(sewn, faces, tag, fit):
++def _merge_planes(sewn, faces, tag, fit, *, accept_group=None, audit=None):
+     """Связные группы лоскутов одной плоскости → одна плоская грань (контур из свободных
+     границ группы). Группа, где грань выходит невалидной, остаётся как есть."""
+     import cadquery as cq
+@@ -396,7 +396,13 @@ def _merge_planes(sewn, faces, tag, fit):
+
+     fmap = TopTools_IndexedMapOfShape()
+     TopExp.MapShapes_s(sewn, TopAbs_FACE, fmap)
+-    idx_of = {fmap.FindIndex(f): i for i, f in enumerate(faces)}
++    mapped = [fmap.FindIndex(f) for f in faces]
++    if audit is not None:
++        audit["patch_correspondence"] = {"missing": mapped.count(0),
++                                         "duplicate": len(mapped) - len(set(mapped))}
++    if accept_group is not None and (0 in mapped or len(set(mapped)) != len(mapped)):
++        return sewn, 0
++    idx_of = {index: i for i, index in enumerate(mapped) if index}
+     e2f = TopTools_IndexedDataMapOfShapeListOfShape()
+     TopExp.MapShapesAndAncestors_s(sewn, TopAbs_EDGE, TopAbs_FACE, e2f)
+     g = nx.Graph()
+@@ -412,6 +418,10 @@ def _merge_planes(sewn, faces, tag, fit):
+     merged = 0
+     for grp in (sorted(c) for c in nx.connected_components(g) if len(c) >= (1 if single else 2)):
+         entry = fit[int(tag[grp[0]])]
++        event = {"patches": grp, "region_tag": int(tag[grp[0]]),
++                 "kind": "CYLINDER" if len(entry) == 4 else "PLANE"}
++        if audit is not None:
++            audit.setdefault("replacement_groups", []).append(event)
+         if len(entry) != 4:
+             c0, nn = entry
+         comp = TopoDS_Compound()
+@@ -421,12 +431,22 @@ def _merge_planes(sewn, faces, tag, fit):
+             bb.Add(comp, faces[i])
+         fb = ShapeAnalysis_FreeBounds(comp, 1e-3, False, False)
+         wires = cq.Shape.cast(fb.GetClosedWires()).Wires()
+-        if not wires or cq.Shape.cast(fb.GetOpenWires()).Wires():
++        open_wires = cq.Shape.cast(fb.GetOpenWires()).Wires()
++        if not wires or open_wires:
++            event.update(reason="open_or_missing_group_boundary", open_wires=len(open_wires))
+             continue
+         wires.sort(key=lambda x: -x.Length())  # внешний контур самый длинный, остальные — отверстия
++        if audit is not None:
++            source_edges = [edge for wire in wires for edge in wire.Edges()]
++            source_tol = [BRep_Tool.Tolerance_s(edge.wrapped) for edge in source_edges]
+         if len(entry) == 4:
+             pf = _cyl_face(entry, wires, [faces[i] for i in grp])
+             if pf is None:
++                event["reason"] = "invalid_cylinder_or_area"
++                if audit is not None:
++                    event["source_edges_with_raised_tolerance"] = sum(
++                        BRep_Tool.Tolerance_s(edge.wrapped) > value
++                        for edge, value in zip(source_edges, source_tol))
+                 continue
+         else:
+             pl = Geom_Plane(gp_Pln(gp_Pnt(*map(float, c0)), gp_Dir(*map(float, nn))))
+@@ -434,16 +454,31 @@ def _merge_planes(sewn, faces, tag, fit):
+             for hole in wires[1:]:
+                 mk.Add(hole.wrapped)
+             if not mk.IsDone():
++                event["reason"] = "could_not_trim_plane"
+                 continue
+             sff = ShapeFix_Face(mk.Face())
+             sff.Perform()
+             pf = TopoDS.Face_s(sff.Face())
+             if not BRepCheck_Analyzer(pf).IsValid():
++                event["reason"] = "invalid_trimmed_plane"
+                 continue
++        if audit is not None:
++            event["source_edges_with_raised_tolerance"] = sum(
++                BRep_Tool.Tolerance_s(edge.wrapped) > value for edge, value in zip(source_edges, source_tol))
+         # граница группы должна лежать на точной поверхности: иначе ShapeFix «закрывает» зазор
+         # допуском ребра (на кронштейне студии до 0,89 мм), и зазор в теле не виден ни одной проверке
+-        if max((BRep_Tool.Tolerance_s(e.wrapped) for e in cq.Face(pf).Edges()), default=0.0) > 2.5 * SEW_TOL:
++        max_edge = max((BRep_Tool.Tolerance_s(e.wrapped) for e in cq.Face(pf).Edges()), default=0.0)
++        event["max_edge_tolerance_mm"] = max_edge
++        if max_edge > 2.5 * SEW_TOL:
++            event["reason"] = "edge_tolerance"
+             continue
++        if accept_group is not None:
++            decision = accept_group(comp, pf)
++            event["coverage"] = decision
++            if not decision["accepted"]:
++                event["reason"] = decision["reason"]
++                continue
++        event["reason"] = "replaced"
+         ref = cq.Face(faces[grp[0]])
+         c_ = ref.Center()
+         if ref.normalAt(c_).dot(cq.Face(pf).normalAt(c_)) < 0:
+@@ -455,7 +490,7 @@ def _merge_planes(sewn, faces, tag, fit):
+     return (rs.Apply(sewn) if merged else sewn), merged
+
+
+-def _solid(shell_shape, *, profile=None, parallel=False):
++def _solid(shell_shape, *, profile=None, parallel=False, audit=None):
+     import cadquery as cq
+     from OCP.BRepCheck import BRepCheck_Analyzer
+     from OCP.ShapeFix import ShapeFix_Solid
+@@ -463,6 +498,8 @@ def _solid(shell_shape, *, profile=None, parallel=False):
+     with measured(profile, "solid_fix"):
+         shells = cq.Shape.cast(shell_shape).Shells()
+         if len(shells) != 1:
++            if audit is not None:
++                audit["failed_solid"] = {"reason": "shell_count", "shells": len(shells)}
+             return None
+         fx = ShapeFix_Solid(cq.Solid.makeSolid(shells[0]).wrapped)
+         fx.Perform()
+@@ -472,6 +509,10 @@ def _solid(shell_shape, *, profile=None, parallel=False):
+             sol = cq.Solid(sol.wrapped.Reversed())
+     with measured(profile, "solid_validity"):
+         valid = BRepCheck_Analyzer(sol.wrapped, True, parallel).IsValid()
++    if not valid and audit is not None:
++        from regions_guard import shape_report
++
++        audit["failed_solid"] = shape_report(sol.wrapped, 2.5 * SEW_TOL)
+     return sol if valid else None
+
+
+@@ -717,7 +758,7 @@ def _tri_faces(q, na, nb, C, n, proj, coarse_side):
+
+
+ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool = True, *,
+-           profile=None, stage=None, incumbent=None):
++           profile=None, stage=None, incumbent=None, audit=None):
+     import fast_simplification as fs
+     from OCP.Approx import Approx_ParametrizationType
+     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_Sewing
+@@ -728,6 +769,7 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
+     import surface
+
+     regions_on = planes and _regions()
++    guarded = regions_on and os.environ.get("CAD_REGIONS_GUARD", "0") == "1"
+     seg = coarse = coarse_label = None
+     with measured(profile, "coarse"):
+         if regions_on:  # этап Б: грубая сетка по границам областей разметки (раскладка Севера, задача 11)
+@@ -745,20 +787,34 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
+                 def p95(c):
+                     return float(np.percentile(np.abs(trimesh.proximity.closest_point(c, probe)[1]), 95))
+
+-                limit = 1.1 * p95(plain)
++                plain_p95 = p95(plain)
++                limit = 1.1 * plain_p95
++                if audit is not None:
++                    audit.update(plain_p95_mm=plain_p95, layout_trials=[])
+                 coarse = coarse_label = None
+-                for k in (1.0, 1.5, 2.0):
++                for k in ((1.0,) if guarded else (1.0, 1.5, 2.0)):
+                     c, lab = coarsen_by_regions(mesh, seg["label"], int(k * triangles))
+-                    if c.is_watertight and len(c.faces) <= 1.3 * k * triangles and p95(c) <= limit:
++                    viable = c.is_watertight and len(c.faces) <= 1.3 * k * triangles
++                    error = p95(c) if viable else None
++                    if audit is not None:
++                        audit["layout_trials"].append({"scale": k, "triangles": len(c.faces),
++                                                       "p95_mm": error, "watertight": bool(c.is_watertight)})
++                    if viable and error <= (plain_p95 if guarded else limit):
+                         coarse, coarse_label = c, lab
+                         break
+                 if coarse_label is None:
+                     coarse = plain
+-            except Exception:  # noqa: BLE001  без раскладки — прежнее огрубление
++            except Exception as error:  # без раскладки — прежнее огрубление
++                if audit is not None:
++                    audit["layout_error"] = f"{type(error).__name__}: {error}"
+                 coarse = coarse_label = None
+         if coarse is None:
+             coarse = surface.coarsen(mesh, triangles) if len(mesh.faces) > triangles else mesh
++    if audit is not None:
++        audit.update(coarse_triangles=len(coarse.faces), labelled_layout=coarse_label is not None)
+     if not coarse.is_watertight:
++        if audit is not None:
++            audit["failure"] = "open_coarse_mesh"
+         return None, 0, None
+     s = np.linspace(0, 1, K)
+     S, T = np.meshgrid(s, s, indexing="ij")
+@@ -796,8 +852,15 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
+                 tag, fit = _plane_tags(mesh, quads, projected, proj, w)
+             if _regions():  # точные цилиндры по разметке областей (этап Б)
+                 with measured(profile, "cylinders"):
+-                    tag, fit = _cyl_tags(mesh, quads, projected, proj, w, tag, fit, seg=seg, qlabel=qlabel)
+-        except Exception:  # noqa: BLE001  плоскости — улучшение, без них тело то же
++                    before = proj.cache.copy() if guarded else None
++                    try:
++                        tag, fit = _cyl_tags(mesh, quads, projected, proj, w, tag, fit, seg=seg, qlabel=qlabel)
++                    finally:
++                        if before is not None:
++                            proj.cache = before
++        except Exception as error:  # плоскости — улучшение, без них тело то же
++            if audit is not None:
++                audit["tag_error"] = f"{type(error).__name__}: {error}"
+             tag, fit = -np.ones(len(quads), int), {}
+     faces, ftag = [], []
+
+@@ -871,7 +934,22 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
+             return None, n_faces, None
+     with measured(profile, "sewing"):
+         sew.Perform()
++    if audit is not None:
++        from regions_guard import sewing_report, shape_report
++
++        audit["sewing"] = sewing_report(sew)
++        if sew.NbFreeEdges() or sew.NbMultipleEdges():
++            from OCP.TopoDS import TopoDS
++
++            mapped = [TopoDS.Face_s(sew.Modified(f)) if sew.IsModified(f) else f for f in faces]
++            audit["open_shell"] = shape_report(sew.SewedShape(), 2.5 * SEW_TOL, mapped, tag)
+     if sew.NbFreeEdges():
++        if audit is not None:
++            audit["failure"] = "free_sewing_edges"
++        return None, n_faces, None
++    if guarded and sew.NbMultipleEdges():
++        if audit is not None:
++            audit["failure"] = "multiple_sewing_edges"
+         return None, n_faces, None
+     with measured(profile, "solid"):
+         sewn = sew.SewedShape()
+@@ -882,13 +960,60 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
+             try:
+                 from OCP.TopoDS import TopoDS
+
+-                merged_shape, merged = _merge_planes(sewn, [TopoDS.Face_s(sew.Modified(f)) for f in faces], tag, fit)
++                mapped = [TopoDS.Face_s(sew.Modified(f)) if sew.IsModified(f) else f for f in faces]
++                gate = None
++                target = sewn
++                if audit is not None:
++                    audit["before_replacement"] = shape_report(sewn, 2.5 * SEW_TOL, mapped, tag)
++                if guarded:
++                    from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
++                    from regions_guard import LocalGate
++
++                    # ShapeFix can update an edge shared with an untouched spline,
++                    # even when that candidate face is later rejected.
++                    copy = BRepBuilderAPI_Copy(sewn, True, False)
++                    target = copy.Shape()
++                    mapped = [TopoDS.Face_s(copy.ModifiedShape(f)) for f in mapped]
++                    gate = LocalGate(mesh, body_mesh, FACE_TOL)
++                options = {"accept_group": gate, "audit": audit} if gate is not None or audit is not None else {}
++                merged_shape, merged = _merge_planes(target, mapped, tag, fit, **options)
++                if audit is not None:
++                    audit["source_after_trial"] = shape_report(sewn, 2.5 * SEW_TOL)
+                 if merged:
+-                    sol = _solid(merged_shape, profile=profile, parallel=proj.fast and n_faces >= 500)
+-            except Exception:  # noqa: BLE001
++                    trial = {} if audit is not None else None
++                    if audit is not None:
++                        audit["after_replacement"] = shape_report(merged_shape, 2.5 * SEW_TOL, mapped, tag)
++                        audit["replacement_solid"] = trial
++                    if guarded:
++                        from regions_guard import max_edge_tolerance
++
++                    edge_limit = 2.5 * SEW_TOL
++                    if guarded and max_edge_tolerance(merged_shape) > edge_limit:
++                        if audit is not None:
++                            audit["replacement_rollback"] = "assembled_edge_tolerance"
++                    else:
++                        sol = _solid(merged_shape, profile=profile, parallel=proj.fast and n_faces >= 500,
++                                     audit=trial)
++                        if guarded and sol is not None and max_edge_tolerance(sol.wrapped) > edge_limit:
++                            sol = None
++                            if audit is not None:
++                                audit["replacement_rollback"] = "repaired_edge_tolerance"
++            except Exception as error:
++                if audit is not None:
++                    audit["replacement_error"] = f"{type(error).__name__}: {error}"
+                 sol = None
+         if sol is None:
+-            sol = _solid(sewn, profile=profile, parallel=proj.fast and n_faces >= 500)
++            trial = {} if audit is not None else None
++            if audit is not None:
++                audit["spline_solid"] = trial
++            sol = _solid(sewn, profile=profile, parallel=proj.fast and n_faces >= 500, audit=trial)
++    if guarded and sol is not None:
++        from OCP.BRep import BRep_Tool
++
++        if not all(BRep_Tool.IsClosed_s(shell.wrapped) for shell in sol.Shells()):
++            if audit is not None:
++                audit["failure"] = "open_solid_shell"
++            return None, n_faces, None
+     if sol is not None:
+         n_faces = len(sol.Faces())
+     return sol, n_faces, mids
+@@ -974,6 +1099,10 @@ def smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 90
+     те же ступени без разметки, берётся лучшее (кронштейн студии: с разметкой третья ступень
+     невалидна, без неё принята)."""
+     global _NO_REGIONS
++    if _regions() and os.environ.get("CAD_REGIONS_GUARD", "0") == "1":
++        from regions_guard import guarded_smooth
++
++        return guarded_smooth(sys.modules[__name__], mesh, scan, budget, tol)
+     body, info = _smooth_body(mesh, scan, budget, tol)
+     if _regions() and not any(st.get("status") == "accepted" for st in info["stages"]) \
+             and info["sec"] < budget / 2:
+@@ -991,7 +1120,8 @@ def smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 90
+     return body, info
+
+
+-def _smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 900.0, tol: float = 0.3):
++def _smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 900.0, tol: float = 0.3,
++                 *, max_step=None, accept_region=None):
+     """mesh — замкнутая чистая поверхность (из surface.py), scan — исходный скан, tol — допуск, с которым
+     модель потом сравнивается со сканом. Возвращает (тело или None, сведения)."""
+     t0 = time.time()
+@@ -1001,7 +1131,7 @@ def _smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 9
+     _SCAN = scan
+     FACE_TOL = min(tol, 0.5)  # потери по граням считаются тем же допуском, что и приёмка
+     stages = []
+-    for step, (tri, K, NP, PAIR) in enumerate(STEPS, 1):
++    for step, (tri, K, NP, PAIR) in enumerate(STEPS[:max_step], 1):
+         if time.time() - t0 > budget / 3 and best is not None:
+             break
+         proj.cache.clear()
+@@ -1033,6 +1163,10 @@ def _smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 9
+             score = min(share, cover)
+             ok = cover >= COVER
+         stage.update(near=share, score=score, status="accepted" if ok else "rejected")
++        if accept_region is not None and (not ok or not accept_region(body, stage)):
++            if ok:
++                stage["status"] = "region_guard_rejected"
++            continue
+         if best is None or score > info["score"]:
+             best, info = body, {"faces": n, "near": share, "score": score, "step": step}
+         if ok:
+diff --git a/claude/cad-demo/regions_guard.py b/claude/cad-demo/regions_guard.py
+new file mode 100644
+index 0000000..7293dd0
+--- /dev/null
++++ b/claude/cad-demo/regions_guard.py
+@@ -0,0 +1,218 @@
++"""Quality gates and opt-in diagnostics for region-aware smooth bodies."""
++from __future__ import annotations
++
++from collections import Counter, defaultdict
++
++import cadquery as cq
++import numpy as np
++from scipy.spatial import cKDTree
++import trimesh
++from OCP.BRep import BRep_Tool
++from OCP.BRepCheck import BRepCheck_Analyzer
++
++
++def bounded_distances(mesh, points, limit):
++    """Distances to triangles, saturated at limit to bound the search."""
++    values = np.full(len(points), limit, dtype=float)
++    if not len(mesh.faces):
++        return values
++    tree, triangles = mesh.triangles_tree, mesh.triangles
++    for i in range(0, len(points), 256):
++        query = points[i:i + 256]
++        low, high = query - limit, query + limit
++        try:
++            ids, counts = tree.intersection_v(low, high)
++        except Exception:
++            rows = [list(tree.intersection(box)) for box in np.column_stack((low, high))]
++            ids, counts = np.concatenate(rows).astype(np.intp), list(map(len, rows))
++        if len(ids):
++            owner = np.repeat(np.arange(len(query)), np.asarray(counts, dtype=np.intp))
++            origins = query[owner]
++            nearest = trimesh.triangles.closest_point(triangles[ids], origins)
++            np.minimum.at(values[i:i + len(query)], owner, np.linalg.norm(nearest - origins, axis=1))
++    return values
++
++
++def _samples(mesh, count, seed):
++    return trimesh.sample.sample_surface(mesh, count, seed=seed)[0]
++
++
++def _metrics(distances, tol):
++    return {"cover": float(np.mean(distances <= tol)), "p95_mm": float(np.quantile(distances, .95))}
++
++
++class LocalGate:
++    def __init__(self, mesh, body_mesh, tol):
++        self.mesh = mesh
++        self.body_mesh = body_mesh
++        self.tol = tol
++        self.limit = 2 * tol
++        self.probes = _samples(mesh, 30000, 19)
++        self.tree = cKDTree(self.probes)
++
++    def __call__(self, old_group, new_face):
++        old, new = (self.body_mesh(cq.Shape.cast(shape), self.tol / 6)
++                    for shape in (old_group, new_face))
++        if not len(old.faces) or not len(new.faces):
++            return {"accepted": False, "reason": "unmeshable_group"}
++        low, high = old.bounds
++        candidates = self.tree.query_ball_point((high + low) / 2, np.linalg.norm(high - low) / 2 + self.limit)
++        points = self.probes[candidates]
++        points = points[np.all((points >= low - self.limit) & (points <= high + self.limit), axis=1)]
++        before = bounded_distances(old, points, self.limit)
++        covered = before <= self.tol
++        if np.count_nonzero(covered) < 8:
++            return {"accepted": False, "reason": "insufficient_local_evidence"}
++        lost = int(np.count_nonzero(bounded_distances(new, points[covered], self.limit) > self.tol))
++        reverse = [_metrics(bounded_distances(self.mesh, _samples(shape, 256, 20), self.limit), self.tol)
++                   for shape in (old, new)]
++        accepted = lost == 0 and reverse[1]["cover"] >= reverse[0]["cover"]
++        return {"accepted": accepted, "reason": None if accepted else "local_coverage",
++                "lost": lost, "old_to_clean": reverse[0], "new_to_clean": reverse[1]}
++
++
++class WholeBodyGate:
++    def __init__(self, clean, scan, body_mesh, tol):
++        self.scan = scan
++        self.body_mesh = body_mesh
++        self.tol = tol
++        self.limit = 4 * tol
++        self.clean_probes = _samples(clean, 12000, 19)
++        self.scan_probes = _samples(scan, 8000, 20)
++
++    def measure(self, body):
++        return self.measure_mesh(self.body_mesh(body, min(.05, self.tol / 6)))
++
++    def measure_mesh(self, mesh):
++        if not len(mesh.faces):
++            raise ValueError("unmeshable body")
++        model_probes = _samples(mesh, 8000, 21)
++        return {key: _metrics(bounded_distances(target, points, self.limit), self.tol)
++                for key, target, points in (("clean_to_body", mesh, self.clean_probes),
++                                             ("scan_to_body", mesh, self.scan_probes),
++                                             ("body_to_scan", self.scan, model_probes))}
++
++    def regressions(self, before, after):
++        return [key for key in before if after[key]["cover"] < before[key]["cover"]
++                or after[key]["p95_mm"] > before[key]["p95_mm"]
++                or before[key]["p95_mm"] >= self.limit]
++
++
++def max_edge_tolerance(wrapped):
++    return max((BRep_Tool.Tolerance_s(e.wrapped) for e in cq.Shape.cast(wrapped).Edges()), default=0.0)
++
++
++def edge_record(edge):
++    shape = cq.Shape.cast(edge)
++    vertices = [v.toTuple() for v in shape.Vertices()]
++    return {"tolerance_mm": BRep_Tool.Tolerance_s(edge),
++            "xyz_mm": np.mean(vertices, axis=0).tolist() if vertices else None}
++
++
++def sewing_report(sew, limit=20):
++    return {"free_edges": sew.NbFreeEdges(), "multiple_edges": sew.NbMultipleEdges(),
++            "free_examples": [edge_record(sew.FreeEdge(i))
++                              for i in range(1, min(sew.NbFreeEdges(), limit) + 1)],
++            "multiple_examples": [edge_record(sew.MultipleEdge(i))
++                                  for i in range(1, min(sew.NbMultipleEdges(), limit) + 1)]}
++
++
++def _shape_report(wrapped, threshold, source_faces, tags):
++    if wrapped.IsNull():
++        return {"null_shape": True}
++    shape = cq.Shape.cast(wrapped)
++    faces = shape.Faces()
++    tag_by_face = {cq.Face(f): (i, int(t)) for i, (f, t) in enumerate(zip(source_faces, tags))}
++    analyzer = BRepCheck_Analyzer(wrapped, True)
++    edges = defaultdict(list)
++    bad = []
++    for i, face in enumerate(faces):
++        context = tag_by_face.get(face)
++        label = {"face": i, "kind": face.geomType()}
++        if context:
++            label.update(patch=context[0], region_tag=context[1])
++        for edge in face.Edges():
++            edges[edge].append(label)
++        if not analyzer.IsValid(face.wrapped):
++            status = [x.name for x in analyzer.Result(face.wrapped).Status()]
++            subshape_errors = []
++            for child in [*face.Wires(), *face.Edges()]:
++                check = analyzer.Result(child.wrapped)
++                statuses = check.StatusOnShape(face.wrapped) if check.IsStatusOnShape(face.wrapped) else check.Status()
++                errors = [x.name for x in statuses if x.name != "BRepCheck_NoError"]
++                if errors:
++                    subshape_errors.append({"kind": child.ShapeType(), "statuses": errors,
++                                            "xyz_mm": child.Center().toTuple()})
++            bad.append({**label, "statuses": status, "xyz_mm": face.Center().toTuple(),
++                        "subshape_errors": subshape_errors[:12]})
++    over = [{"edge": i, **edge_record(edge.wrapped), "owners": owners}
++            for i, (edge, owners) in enumerate(edges.items())
++            if BRep_Tool.Tolerance_s(edge.wrapped) > threshold]
++    over.sort(key=lambda row: -row["tolerance_mm"])
++    unshared = [{"edge": i, **edge_record(edge.wrapped), "owners": owners}
++                for i, (edge, owners) in enumerate(edges.items())
++                if len(owners) == 1 and not BRep_Tool.Degenerated_s(edge.wrapped)
++                and not BRep_Tool.IsClosed_s(edge.wrapped, faces[owners[0]["face"]].wrapped)]
++    return {"valid": bool(analyzer.IsValid()), "faces": len(faces), "shells": len(shape.Shells()),
++            "closed_shells": sum(BRep_Tool.IsClosed_s(s.wrapped) for s in shape.Shells()),
++            "face_types": dict(Counter(f.geomType() for f in faces)), "invalid_faces": len(bad),
++            "invalid_examples": bad[:20], "over_tolerance_edges": len(over), "over_examples": over[:20],
++            "unshared_edges": len(unshared), "unshared_examples": unshared[:20]}
++
++
++def shape_report(wrapped, threshold, source_faces=(), tags=()):
++    try:
++        return _shape_report(wrapped, threshold, source_faces, tags)
++    except (RuntimeError, TypeError, ValueError) as error:
++        return {"diagnostic_error": f"{type(error).__name__}: {error}"}
++
++
++def guarded_smooth(nurbs, mesh, scan, budget, tol):
++    """Use the unlabelled cascade as a reference and cap the regional stage."""
++    from time import perf_counter
++
++    start = perf_counter()
++    old = nurbs._NO_REGIONS
++    nurbs._NO_REGIONS = True
++    try:
++        base, info = nurbs._smooth_body(mesh, scan, budget, tol)
++    finally:
++        nurbs._NO_REGIONS = old
++    remaining = budget - (perf_counter() - start)
++    if remaining <= 0:
++        return base, dict(info, region_guard="budget_exhausted")
++    if base is None:
++        candidate, report = nurbs._smooth_body(mesh, scan, remaining, tol)
++        return candidate, dict(report, region_guard="no_unlabelled_body",
++                               stages=info["stages"] + report["stages"], sec=round(perf_counter() - start))
++    gate = WholeBodyGate(mesh, scan, nurbs.body_mesh, min(tol, .5))
++    before = None
++
++    def accept(body, stage):
++        nonlocal before
++        if stage["faces"] > info["faces"]:
++            stage["region_guard_reason"] = "more_faces"
++            return False
++        try:
++            if before is None:
++                before = gate.measure(base)
++            after = gate.measure(body)
++            regressions = gate.regressions(before, after)
++        except (RuntimeError, ValueError) as error:
++            stage["region_guard_reason"] = f"comparison_failed: {error}"
++            return False
++        stage["region_guard_comparison"] = {"baseline": before, "candidate": after, "regressions": regressions}
++        return not regressions
++
++    try:
++        candidate, report = nurbs._smooth_body(mesh, scan, remaining, tol, max_step=info["step"],
++                                               accept_region=accept)
++    except Exception as error:
++        return base, dict(info, sec=round(perf_counter() - start),
++                          region_guard="regional_trial_failed", region_guard_error=f"{type(error).__name__}: {error}")
++    result = report if candidate is not None else info
++    for stage in info["stages"]:
++        stage["region_guard_baseline"] = True
++    return (candidate if candidate is not None else base), dict(
++        result, stages=info["stages"] + report["stages"], sec=round(perf_counter() - start),
++        region_guard="accepted" if candidate is not None else "fallback_unlabelled")

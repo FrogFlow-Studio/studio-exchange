@@ -1,0 +1,255 @@
+diff --git a/claude/cad-demo/analytic_bores.py b/claude/cad-demo/analytic_bores.py
+index 14d97df..c9a29d8 100644
+--- a/claude/cad-demo/analytic_bores.py
++++ b/claude/cad-demo/analytic_bores.py
+@@ -215,11 +215,11 @@ def build_bored_plate(scan, specs, tol=0.3):
+         return None, {"status": "unsupported", "reason": f"{type(error).__name__}: {error}"}
+
+
+-def coverage_share(mesh, points, tol):
+-    """Fraction of points within tol of the triangle surface."""
++def coverage_mask(mesh, points, tol):
++    """One indicator per point within tol of the triangle surface."""
+     tree = mesh.triangles_tree
+     triangles = mesh.triangles
+-    count = 0
++    covered = np.zeros(len(points), dtype=bool)
+     for i in range(0, len(points), 256):
+         query = points[i:i + 256]
+         low, high = query - tol, query + tol
+@@ -234,8 +234,13 @@ def coverage_share(mesh, points, tol):
+         origins = query[owners]
+         delta = trimesh.triangles.closest_point(triangles[indices], origins) - origins
+         inside = np.einsum("ij,ij->i", delta, delta) <= tol * tol
+-        count += len(np.unique(owners[inside]))
+-    return count / len(points)
++        covered[i + owners[inside]] = True
++    return covered
++
++
++def coverage_share(mesh, points, tol):
++    """Fraction of points within tol of the triangle surface."""
++    return np.count_nonzero(coverage_mask(mesh, points, tol)) / len(points)
+
+
+ def _within(source, target, tol, seed):
+diff --git a/claude/cad-demo/bore_stitch.py b/claude/cad-demo/bore_stitch.py
+index 4830cb4..ef31a40 100644
+--- a/claude/cad-demo/bore_stitch.py
++++ b/claude/cad-demo/bore_stitch.py
+@@ -17,7 +17,7 @@ from OCP.BRepLib import BRepLib
+ from OCP.TopAbs import TopAbs_FORWARD
+ from OCP.TopoDS import TopoDS
+
+-from analytic_bores import coverage_share
++from analytic_bores import coverage_mask, coverage_share
+
+ SEW_TOL = .003
+ EDGE_LIMIT = .05
+@@ -329,7 +329,8 @@ def _plans(index, bore, span, tol):
+         yield Plan(bore, span, low, high, removed, a, b, removed | neighbors)
+
+
+-def repair_bores(body, scan, specs, *, clean=None, tol=.3, noise_mm=0., face_growth=.1, budget=45.):
++def repair_bores(body, scan, specs, *, clean=None, tol=.3, noise_mm=0., face_growth=.1,
++                 budget=45., coarse=False):
+     """Try local bore replacement and return the last accepted shape and audit."""
+     from nurbs import body_mesh
+
+@@ -338,14 +339,17 @@ def repair_bores(body, scan, specs, *, clean=None, tol=.3, noise_mm=0., face_gro
+     start = perf_counter()
+     cap = int(len(body.Faces()) * (1 + face_growth))
+     report = {"before_faces": len(body.Faces()), "face_cap": cap, "bores": [], "accepted": 0}
+-    gate = index = before = None
++    gate = index = before = baseline_mesh = None
+     active_walls, pending = [], []
++    radial_walls = {}
++    if coarse:
++        from coarse_bore_evidence import RadialWall, explain_losses
+
+     def available():
+         return perf_counter() - start < budget
+
+     def attempt(plans):
+-        nonlocal gate, before, body, index
++        nonlocal gate, before, body, index, baseline_mesh
+         trial = {"patches": [plan.describe() for plan in plans]}
+         began = perf_counter()
+         try:
+@@ -367,16 +371,26 @@ def repair_bores(body, scan, specs, *, clean=None, tol=.3, noise_mm=0., face_gro
+         if gate is None:
+             gate = Coverage(scan, clean, tol)
+         if before is None:
+-            before = gate.measure(body_mesh(body, tol / 10))
++            baseline_mesh = body_mesh(body, tol / 10)
++            before = gate.measure(baseline_mesh)
+         model = body_mesh(candidate, tol / 10)
+         after = gate.measure(model)
+         trial.update(before=before, after=after, exact_walls=exact,
+                      coverage_seconds=perf_counter() - began)
+         if not np.isfinite(model.volume) or model.volume <= 0:
+             return dict(trial, reason="volume_sign")
+-        if any(after[key] < value for key, value in before.items()):
++        if any(after[key] < before[key] for key in ("scan_to_body", "body_to_scan")):
+             return dict(trial, reason="coverage_decreased")
+-        body, before, index = candidate, after, None
++        if after.get("clean_to_body", 0.) < before.get("clean_to_body", 0.):
++            if not coarse:
++                return dict(trial, reason="coverage_decreased")
++            points = gate.clean_points
++            lost = coverage_mask(baseline_mesh, points, tol) & ~coverage_mask(model, points, tol)
++            trial["clean_losses"] = explain_losses(points[lost], plans, radial_walls, tol)
++            trial["coverage_seconds"] = perf_counter() - began
++            if not trial["clean_losses"] or any(not row["accepted"] for row in trial["clean_losses"]):
++                return dict(trial, reason="unexplained_clean_losses")
++        body, before, baseline_mesh, index = candidate, after, model, None
+         active_walls.extend(walls)
+         report["accepted"] += len(plans)
+         return dict(trial, reason="accepted")
+@@ -389,7 +403,8 @@ def repair_bores(body, scan, specs, *, clean=None, tol=.3, noise_mm=0., face_gro
+             continue
+         try:
+             bore = Bore.from_spec(spec)
+-            span = observed_span(scan, bore, max(tol, noise_mm))
++            wall = RadialWall(scan, bore, tol, noise_mm) if coarse else None
++            span = wall.span(tol) if wall is not None else observed_span(scan, bore, max(tol, noise_mm))
+             if span is None:
+                 row["reason"] = "no_circular_wall_evidence"
+                 continue
+@@ -399,6 +414,8 @@ def repair_bores(body, scan, specs, *, clean=None, tol=.3, noise_mm=0., face_gro
+                 active_walls.append((bore, span))
+             else:
+                 pending.append((bore, span, row))
++                if wall is not None:
++                    radial_walls[id(bore)] = wall
+         except (RuntimeError, ValueError, TypeError) as error:
+             row["reason"] = f"{type(error).__name__}: {error}"
+
+diff --git a/claude/cad-demo/coarse_bore_evidence.py b/claude/cad-demo/coarse_bore_evidence.py
+new file mode 100644
+index 0000000..8f3929c
+--- /dev/null
++++ b/claude/cad-demo/coarse_bore_evidence.py
+@@ -0,0 +1,107 @@
++"""Raw radial evidence for a coarse cylindrical wall."""
++from __future__ import annotations
++
++import numpy as np
++import trimesh
++
++
++class RadialWall:
++    def __init__(self, scan, bore, tol, noise):
++        self.bore = bore
++        self.slack = max(.6 * tol, min(tol, 2.5 * noise))
++        self.extension = max(2 * self.slack, .25 * bore.length)
++        vertices = bore.local(scan.vertices)
++        faces = np.asarray(scan.faces)
++        triangles = vertices[faces]
++        axial = triangles[..., 2]
++        relevant = ((axial.max(axis=1) > -self.extension)
++                    & (axial.min(axis=1) < bore.length + self.extension)
++                    & (np.linalg.norm(triangles[..., :2], axis=2).min(axis=1) < bore.radius + self.slack))
++        ids = np.flatnonzero(relevant)
++        normals = np.asarray(scan.face_normals)[ids] @ bore.frame.T
++        radial = triangles[ids, :, :2].mean(axis=1)
++        inward = np.einsum("ij,ij->i", normals[:, :2], radial) < -.5 * np.linalg.norm(radial, axis=1)
++        ids = ids[inward & (np.abs(normals[:, 2]) < .65)]
++        self.triangles = triangles[ids]
++        self.wall = None
++        if len(ids):
++            used, indices = np.unique(faces[ids], return_inverse=True)
++            self.wall = trimesh.Trimesh(vertices[used], indices.reshape(-1, 3), process=False)
++
++    def hits(self, directions, heights):
++        if self.wall is None:
++            return ()
++        origins = np.column_stack((np.zeros((len(heights), 2)), heights))
++        rays = np.column_stack((directions, np.zeros(len(heights))))
++        face, ray, points = self.wall.ray.intersects_id(
++            origins, rays, return_locations=True, multiple_hits=False)
++        if not len(ray):
++            return ()
++        triangle = self.triangles[face, :, :2]
++        tangent = directions[ray, ::-1] * [-1., 1.]
++        width = np.ptp(np.einsum("nij,nj->ni", triangle, tangent), axis=1)
++        r = self.bore.radius
++        half = np.minimum(width / 2, .65 * r)
++        sag = r - np.sqrt(r*r - half*half)
++        radius = np.linalg.norm(points[:, :2], axis=1)
++        vertex_error = np.max(np.abs(np.linalg.norm(triangle, axis=2) - r), axis=1)
++        return zip(ray.tolist(), radius.tolist(), sag.tolist(), vertex_error.tolist())
++
++    def span(self, tol):
++        """Require radial hits through nearly every direction on consecutive sections."""
++        angles = np.linspace(0, 2 * np.pi, 32, endpoint=False)
++        radial = np.column_stack((np.cos(angles), np.sin(angles)))
++        ext = self.extension
++        length = self.bore.length
++        heights = np.linspace(-ext, length + ext, max(17, min(128, int((length + 2*ext) / (tol/2)) + 1)))
++        hits = np.zeros((len(heights), len(radial)), dtype=bool)
++        for ray, radius, sag, _ in self.hits(np.tile(radial, (len(heights), 1)), np.repeat(heights, len(radial))):
++            r = self.bore.radius
++            if r - self.slack - sag <= radius <= r + self.slack:
++                hits.flat[ray] = True
++        supported = np.flatnonzero((hits.mean(axis=1) >= .78)
++                                   & hits.reshape(len(heights), 8, 4).any(axis=2).all(axis=1))
++        runs = np.split(supported, np.flatnonzero(np.diff(supported) != 1) + 1)
++        matches = [(float(heights[run[0]]), float(heights[run[-1]])) for run in runs if len(run) >= 3
++                   and min(length, heights[run[-1]]) - max(0, heights[run[0]]) >= .48 * length]
++        return matches[0] if len(matches) == 1 else None
++
++    def explain(self, points, low, high, tol):
++        """Match only newly lost samples on this candidate's own cylindrical band."""
++        local = self.bore.local(points)
++        r = self.bore.radius
++        radius = np.linalg.norm(local[:, :2], axis=1)
++        z = local[:, 2]
++        inside = ((z > low) & (z < high) & (radius > 0.)
++                  & (np.abs(radius - r) <= min(r / 3, 3 * tol)))
++        ids = np.flatnonzero(inside)
++        if not len(ids):
++            return {}
++        rows = {}
++        for j, hit, sag, vertex_error in self.hits(local[ids, :2] / radius[ids, None], z[ids]):
++            i = ids[j]
++            drift = abs(radius[i] - hit)
++            error = abs(radius[i] - r)
++            reason = None
++            if vertex_error <= tol and r - tol - sag <= hit <= r + tol:
++                if tol < drift <= tol + sag and abs(hit - r) <= tol:
++                    reason = "cleaning_shift"
++                elif radius[i] < r and error <= tol + sag and drift <= tol:
++                    reason = "chord_and_cleaning"
++            rows[int(i)] = {"reason": reason, "raw_r_mm": hit, "radius_mm": r, "sag_mm": sag,
++                            "clean_radius_mm": float(radius[i]), "clean_to_ray_hit_mm": float(drift),
++                            "raw_vertex_error_mm": vertex_error}
++        return rows
++
++
++
++def explain_losses(points, plans, walls, tol):
++    """Reject losses with no single supported cylindrical explanation."""
++    explanations = [[] for _ in points]
++    for index, plan in enumerate(plans):
++        wall = walls[id(plan.bore)]
++        for sample, evidence in wall.explain(points, plan.low_height, plan.high_height, tol).items():
++            if evidence["reason"] is not None:
++                explanations[sample].append(dict(evidence, patch=index))
++    return [{"point_mm": point.tolist(), "matches": matches, "accepted": len(matches) == 1}
++            for point, matches in zip(points, explanations)]
+diff --git a/claude/cad-demo/geo_worker.py b/claude/cad-demo/geo_worker.py
+index c3df7f9..0ea15ff 100644
+--- a/claude/cad-demo/geo_worker.py
++++ b/claude/cad-demo/geo_worker.py
+@@ -420,7 +420,9 @@ def main() -> None:
+
+                     if specs is None:
+                         specs = hole_finder(scan)
+-                    body, local_bores = repair_bores(body, scan, specs, clean=fit_mesh, noise_mm=noise)
++                    coarse = os.environ.get("CAD_BORE_COARSE", "0") == "1"
++                    body, local_bores = repair_bores(body, scan, specs, clean=fit_mesh,
++                                                     noise_mm=noise, coarse=coarse)
+                 except Exception as error:
+                     local_bores = {"accepted": 0, "reason": f"{type(error).__name__}: {error}"}
+             cut = local_bores["accepted"]

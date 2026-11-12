@@ -1,0 +1,997 @@
+{
+  "baseline": {
+    "topology": {
+      "valid": true,
+      "closed": true,
+      "connected_solid": true,
+      "solids": 1,
+      "shells": 1,
+      "closed_shells": 1,
+      "faces": 740,
+      "edges": 1489,
+      "faces_outside_solids": 0,
+      "edges_outside_solids": 0,
+      "vertices_outside_solids": 0,
+      "volume_mm3": 92029.14794884653,
+      "surface_types": {
+        "BSPLINE": 732,
+        "PLANE": 8
+      }
+    },
+    "coverage": {
+      "scan_to_body": 0.878,
+      "body_to_scan": 0.91675,
+      "clean_to_body": 1.0
+    },
+    "detected_exact": 0,
+    "walls": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "signed_mesh_volume_mm3": 92024.95216762407
+  },
+  "coarse": {
+    "topology": {
+      "valid": true,
+      "closed": true,
+      "connected_solid": true,
+      "solids": 1,
+      "shells": 1,
+      "closed_shells": 1,
+      "faces": 770,
+      "edges": 1600,
+      "faces_outside_solids": 0,
+      "edges_outside_solids": 0,
+      "vertices_outside_solids": 0,
+      "volume_mm3": 91955.53463210666,
+      "surface_types": {
+        "BSPLINE": 757,
+        "PLANE": 8,
+        "CYLINDER": 5
+      }
+    },
+    "coverage": {
+      "scan_to_body": 0.88575,
+      "body_to_scan": 0.921,
+      "clean_to_body": 0.99825
+    },
+    "detected_exact": 5,
+    "walls": [
+      null,
+      {
+        "radius_mm": 4.163823911007,
+        "span_mm": [
+          0.3645779577807008,
+          5.752299595051274
+        ]
+      },
+      {
+        "radius_mm": 4.28701436691,
+        "span_mm": [
+          0.13367674071069047,
+          5.994018898410267
+        ]
+      },
+      {
+        "radius_mm": 3.427126361246,
+        "span_mm": [
+          0.05979051058480541,
+          5.567272626251998
+        ]
+      },
+      {
+        "radius_mm": 5.293368947289,
+        "span_mm": [
+          0.32760284640005316,
+          1.6446241938444348
+        ]
+      },
+      {
+        "radius_mm": 8.702844473428,
+        "span_mm": [
+          0.40281454540604106,
+          4.675511054303064
+        ]
+      }
+    ],
+    "signed_mesh_volume_mm3": 91954.77914382459
+  },
+  "face_cap": 814,
+  "seconds": {
+    "coarse_holes": 14.861362799994822
+  },
+  "checks": {
+    "exact_walls": true,
+    "more_exact": true,
+    "one_valid_closed_solid": true,
+    "face_cap": true,
+    "raw_coverage": true,
+    "batch_accepted": true,
+    "slot_rejected": true,
+    "unrelated_loss_rejected": true
+  },
+  "audit": {
+    "before_faces": 740,
+    "face_cap": 814,
+    "bores": [
+      {
+        "status": "accepted",
+        "trials": [],
+        "center_mm": [
+          30.50132363879849,
+          0.004461065822795957,
+          3.402258220128345
+        ],
+        "radius_mm": 4.287014366910111,
+        "observed_span_mm": [
+          0.44999999999999996,
+          6.449999999999998
+        ],
+        "batch_index": 0
+      },
+      {
+        "status": "accepted",
+        "trials": [],
+        "center_mm": [
+          30.166443341544458,
+          55.00203238750835,
+          1.2137255475163478
+        ],
+        "radius_mm": 5.293368947289351,
+        "observed_span_mm": [
+          0.525,
+          2.025
+        ],
+        "batch_index": 1
+      },
+      {
+        "status": "rejected",
+        "trials": [],
+        "center_mm": [
+          30.16115896111714,
+          -54.99589223790787,
+          1.2813537904277157
+        ],
+        "radius_mm": 17.578163296821135,
+        "observed_span_mm": [
+          0.3391304347826085,
+          2.2173913043478253
+        ],
+        "reason": "no_two_usable_rims"
+      },
+      {
+        "status": "accepted",
+        "trials": [],
+        "center_mm": [
+          -29.61778931690768,
+          -0.12934134508887546,
+          -3.259613548802842
+        ],
+        "radius_mm": 3.42712636124566,
+        "observed_span_mm": [
+          0.3749999999999998,
+          6.074999999999999
+        ],
+        "batch_index": 2
+      },
+      {
+        "status": "accepted",
+        "trials": [],
+        "center_mm": [
+          -29.60665326980136,
+          54.90492931665105,
+          -2.7234551492961345
+        ],
+        "radius_mm": 8.702844473427525,
+        "observed_span_mm": [
+          0.5609999999999997,
+          4.997999999999998
+        ],
+        "batch_index": 3
+      },
+      {
+        "status": "accepted",
+        "trials": [],
+        "center_mm": [
+          -29.52730759616042,
+          -55.13728511840423,
+          -3.387320141257499
+        ],
+        "radius_mm": 4.163823911007245,
+        "observed_span_mm": [
+          0.44999999999999996,
+          6.449999999999998
+        ],
+        "batch_index": 4
+      }
+    ],
+    "accepted": 5,
+    "batch": {
+      "patches": [
+        {
+          "removed": 16,
+          "rim_edges": [
+            9,
+            9
+          ],
+          "span_mm": [
+            0.5661649508730735,
+            6.426639573806612
+          ]
+        },
+        {
+          "removed": 11,
+          "rim_edges": [
+            11,
+            11
+          ],
+          "span_mm": [
+            0.5373015626502132,
+            1.8543990744856742
+          ]
+        },
+        {
+          "removed": 13,
+          "rim_edges": [
+            9,
+            9
+          ],
+          "span_mm": [
+            0.3749999999999998,
+            5.882707858264678
+          ]
+        },
+        {
+          "removed": 14,
+          "rim_edges": [
+            9,
+            9
+          ],
+          "span_mm": [
+            0.6498391661922472,
+            4.9231172423083205
+          ]
+        },
+        {
+          "removed": 13,
+          "rim_edges": [
+            8,
+            8
+          ],
+          "span_mm": [
+            0.6803192402458481,
+            6.068331003803167
+          ]
+        }
+      ],
+      "sewing_seconds": 0.7688411999988602,
+      "faces": 770,
+      "before": {
+        "scan_to_body": 0.878,
+        "body_to_scan": 0.91675,
+        "clean_to_body": 1.0
+      },
+      "after": {
+        "scan_to_body": 0.88575,
+        "body_to_scan": 0.9205,
+        "clean_to_body": 0.99825
+      },
+      "exact_walls": [
+        {
+          "radius_mm": 4.287014366910111,
+          "span_mm": [
+            0.566164950873074,
+            6.4266395738066135
+          ]
+        },
+        {
+          "radius_mm": 5.293368947289351,
+          "span_mm": [
+            0.5373015626502134,
+            1.8543990744856742
+          ]
+        },
+        {
+          "radius_mm": 3.42712636124566,
+          "span_mm": [
+            0.37499999999999956,
+            5.882707858264678
+          ]
+        },
+        {
+          "radius_mm": 8.702844473427525,
+          "span_mm": [
+            0.6498391661922468,
+            4.923117242308321
+          ]
+        },
+        {
+          "radius_mm": 4.163823911007245,
+          "span_mm": [
+            0.6803192402458478,
+            6.068331003803168
+          ]
+        }
+      ],
+      "coverage_seconds": 10.21169430000009,
+      "clean_losses": [
+        {
+          "point_mm": [
+            -32.6417414471624,
+            1.3760464503635066,
+            -1.4021812237185596
+          ],
+          "matches": [
+            {
+              "reason": "chord_and_cleaning",
+              "raw_r_mm": 3.239549290158957,
+              "radius_mm": 3.42712636124566,
+              "sag_mm": 0.37514736738978316,
+              "clean_radius_mm": 3.120544516126433,
+              "clean_to_ray_hit_mm": 0.11900477403252419,
+              "raw_vertex_error_mm": 0.0955184842883825,
+              "patch": 2
+            }
+          ],
+          "accepted": true,
+          "truth": {
+            "distance_mm": 0.3940106093160604,
+            "closest_support": "CYLINDER"
+          },
+          "candidate": {
+            "distance_mm": 0.3065818451153274,
+            "closest_support": "CYLINDER"
+          }
+        },
+        {
+          "point_mm": [
+            -33.08170497010493,
+            62.469016169247865,
+            -0.5757432724322347
+          ],
+          "matches": [
+            {
+              "reason": "cleaning_shift",
+              "raw_r_mm": 8.538003026574069,
+              "radius_mm": 8.702844473427525,
+              "sag_mm": 0.2607636700844438,
+              "clean_radius_mm": 8.079711848002992,
+              "clean_to_ray_hit_mm": 0.45829117857107704,
+              "raw_vertex_error_mm": 0.0934795993047679,
+              "patch": 3
+            }
+          ],
+          "accepted": true,
+          "truth": {
+            "distance_mm": 0.6359066354781752,
+            "closest_support": "CYLINDER"
+          },
+          "candidate": {
+            "distance_mm": 0.6231326254228483,
+            "closest_support": "CYLINDER"
+          }
+        },
+        {
+          "point_mm": [
+            -29.451725969425247,
+            -58.80716561399888,
+            -0.32230534571248715
+          ],
+          "matches": [
+            {
+              "reason": "cleaning_shift",
+              "raw_r_mm": 4.147086424607235,
+              "radius_mm": 4.163823911007245,
+              "sag_mm": 0.4462678351576215,
+              "clean_radius_mm": 3.8026944721122935,
+              "clean_to_ray_hit_mm": 0.3443919524949419,
+              "raw_vertex_error_mm": 0.08249161109653258,
+              "patch": 4
+            }
+          ],
+          "accepted": true,
+          "truth": {
+            "distance_mm": 0.3955370652351373,
+            "closest_support": "CYLINDER"
+          },
+          "candidate": {
+            "distance_mm": 0.36112943888929233,
+            "closest_support": "CYLINDER"
+          }
+        },
+        {
+          "point_mm": [
+            -27.51176208115872,
+            62.96365352096126,
+            -0.31995985639162017
+          ],
+          "matches": [
+            {
+              "reason": "cleaning_shift",
+              "raw_r_mm": 8.610909429568245,
+              "radius_mm": 8.702844473427525,
+              "sag_mm": 0.24267303059179568,
+              "clean_radius_mm": 8.308282511097598,
+              "clean_to_ray_hit_mm": 0.30262691847064715,
+              "raw_vertex_error_mm": 0.0934795993047679,
+              "patch": 3
+            }
+          ],
+          "accepted": true,
+          "truth": {
+            "distance_mm": 0.39537675096794306,
+            "closest_support": "CYLINDER"
+          },
+          "candidate": {
+            "distance_mm": 0.39456196233280344,
+            "closest_support": "CYLINDER"
+          }
+        },
+        {
+          "point_mm": [
+            -22.253815774636056,
+            50.88707757776633,
+            3.016531423604293
+          ],
+          "matches": [
+            {
+              "reason": "cleaning_shift",
+              "raw_r_mm": 8.715199491926015,
+              "radius_mm": 8.702844473427525,
+              "sag_mm": 0.16545094728208376,
+              "clean_radius_mm": 9.098241971081842,
+              "clean_to_ray_hit_mm": 0.38304247915582756,
+              "raw_vertex_error_mm": 0.07946799520728653,
+              "patch": 3
+            }
+          ],
+          "accepted": true,
+          "truth": {
+            "distance_mm": 0.38093034385263347,
+            "closest_support": "CYLINDER"
+          },
+          "candidate": {
+            "distance_mm": 0.36473409750793045,
+            "closest_support": "BSPLINE"
+          }
+        },
+        {
+          "point_mm": [
+            -29.95956864643936,
+            -2.893004752700942,
+            0.3759923950184665
+          ],
+          "matches": [
+            {
+              "reason": "cleaning_shift",
+              "raw_r_mm": 3.2011796653137137,
+              "radius_mm": 3.42712636124566,
+              "sag_mm": 0.3801905773531833,
+              "clean_radius_mm": 2.8945057882186793,
+              "clean_to_ray_hit_mm": 0.30667387709503435,
+              "raw_vertex_error_mm": 0.1334941050312377,
+              "patch": 2
+            }
+          ],
+          "accepted": true,
+          "truth": {
+            "distance_mm": 0.6097719650808187,
+            "closest_support": "CYLINDER"
+          },
+          "candidate": {
+            "distance_mm": 0.5326205730277087,
+            "closest_support": "CYLINDER"
+          }
+        },
+        {
+          "point_mm": [
+            -31.402993607160436,
+            -2.637091433293435,
+            0.2547000937231001
+          ],
+          "matches": [
+            {
+              "reason": "cleaning_shift",
+              "raw_r_mm": 3.28778744664151,
+              "radius_mm": 3.42712636124566,
+              "sag_mm": 0.36476973587309525,
+              "clean_radius_mm": 2.962068019834202,
+              "clean_to_ray_hit_mm": 0.3257194268073076,
+              "raw_vertex_error_mm": 0.1334941050312377,
+              "patch": 2
+            }
+          ],
+          "accepted": true,
+          "truth": {
+            "distance_mm": 0.5341295362199524,
+            "closest_support": "CYLINDER"
+          },
+          "candidate": {
+            "distance_mm": 0.46505834140981467,
+            "closest_support": "CYLINDER"
+          }
+        }
+      ],
+      "reason": "accepted"
+    },
+    "after_faces": 770,
+    "seconds": 14.861362799994822
+  },
+  "edge_mm_p50_p90": [
+    1.9768903560811115,
+    3.883846822953737
+  ],
+  "unrepaired": [
+    {
+      "diameter_mm": 35.15632659364227,
+      "radial_span_mm": [
+        0.3391304347826085,
+        2.2173913043478253
+      ],
+      "loops": [
+        {
+          "reach_mm": 5.27344898904634,
+          "low_loops": 6,
+          "high_loops": 6,
+          "pairs": 36,
+          "disjoint": 0,
+          "valid_removed_region": 0
+        },
+        {
+          "reach_mm": 10.54689797809268,
+          "low_loops": 6,
+          "high_loops": 6,
+          "pairs": 36,
+          "disjoint": 0,
+          "valid_removed_region": 0
+        },
+        {
+          "reach_mm": 14.941438802297965,
+          "low_loops": 6,
+          "high_loops": 6,
+          "pairs": 36,
+          "disjoint": 0,
+          "valid_removed_region": 0
+        },
+        {
+          "reach_mm": 18.457071461662192,
+          "low_loops": 6,
+          "high_loops": 6,
+          "pairs": 36,
+          "disjoint": 0,
+          "valid_removed_region": 0
+        }
+      ]
+    }
+  ],
+  "negative_controls": {
+    "slot_rejected": true,
+    "unrelated_loss_rejected": true
+  },
+  "full_0k_worker": {
+    "step": {
+      "topology": {
+        "valid": true,
+        "closed": true,
+        "connected_solid": true,
+        "solids": 1,
+        "shells": 1,
+        "closed_shells": 1,
+        "faces": 770,
+        "edges": 1600,
+        "faces_outside_solids": 0,
+        "edges_outside_solids": 0,
+        "vertices_outside_solids": 0,
+        "volume_mm3": 91955.53463211258,
+        "surface_types": {
+          "BSPLINE": 757,
+          "PLANE": 8,
+          "CYLINDER": 5
+        }
+      },
+      "coverage": {
+        "scan_to_body": 0.88575,
+        "body_to_scan": 0.92125,
+        "clean_to_body": 0.99825
+      },
+      "detected_exact": 5,
+      "walls": [
+        null,
+        {
+          "radius_mm": 4.163823911007,
+          "span_mm": [
+            0.36457795778169183,
+            5.752299595053265
+          ]
+        },
+        {
+          "radius_mm": 4.28701436691,
+          "span_mm": [
+            0.1336767407113271,
+            5.994018898410267
+          ]
+        },
+        {
+          "radius_mm": 3.427126361246,
+          "span_mm": [
+            0.05979051058480541,
+            5.567272626251998
+          ]
+        },
+        {
+          "radius_mm": 5.293368947289,
+          "span_mm": [
+            0.32760284640023934,
+            1.6446241938444357
+          ]
+        },
+        {
+          "radius_mm": 8.702844473428,
+          "span_mm": [
+            0.4028145454060413,
+            4.675511054303064
+          ]
+        }
+      ],
+      "signed_mesh_volume_mm3": 91954.78198342824
+    },
+    "audit": {
+      "before_faces": 740,
+      "face_cap": 814,
+      "bores": [
+        {
+          "status": "accepted",
+          "trials": [],
+          "center_mm": [
+            30.50132363879849,
+            0.004461065822795957,
+            3.402258220128345
+          ],
+          "radius_mm": 4.287014366910111,
+          "observed_span_mm": [
+            0.44999999999999996,
+            6.449999999999998
+          ],
+          "batch_index": 0
+        },
+        {
+          "status": "accepted",
+          "trials": [],
+          "center_mm": [
+            30.166443341544458,
+            55.00203238750835,
+            1.2137255475163478
+          ],
+          "radius_mm": 5.293368947289351,
+          "observed_span_mm": [
+            0.525,
+            2.025
+          ],
+          "batch_index": 1
+        },
+        {
+          "status": "rejected",
+          "trials": [],
+          "center_mm": [
+            30.16115896111714,
+            -54.99589223790787,
+            1.2813537904277157
+          ],
+          "radius_mm": 17.578163296821135,
+          "observed_span_mm": [
+            0.3391304347826085,
+            2.2173913043478253
+          ],
+          "reason": "no_two_usable_rims"
+        },
+        {
+          "status": "accepted",
+          "trials": [],
+          "center_mm": [
+            -29.61778931690768,
+            -0.12934134508887546,
+            -3.259613548802842
+          ],
+          "radius_mm": 3.42712636124566,
+          "observed_span_mm": [
+            0.3749999999999998,
+            6.074999999999999
+          ],
+          "batch_index": 2
+        },
+        {
+          "status": "accepted",
+          "trials": [],
+          "center_mm": [
+            -29.60665326980136,
+            54.90492931665105,
+            -2.7234551492961345
+          ],
+          "radius_mm": 8.702844473427525,
+          "observed_span_mm": [
+            0.5609999999999997,
+            4.997999999999998
+          ],
+          "batch_index": 3
+        },
+        {
+          "status": "accepted",
+          "trials": [],
+          "center_mm": [
+            -29.52730759616042,
+            -55.13728511840423,
+            -3.387320141257499
+          ],
+          "radius_mm": 4.163823911007245,
+          "observed_span_mm": [
+            0.44999999999999996,
+            6.449999999999998
+          ],
+          "batch_index": 4
+        }
+      ],
+      "accepted": 5,
+      "batch": {
+        "patches": [
+          {
+            "removed": 16,
+            "rim_edges": [
+              9,
+              9
+            ],
+            "span_mm": [
+              0.5661649508733262,
+              6.426639573806653
+            ]
+          },
+          {
+            "removed": 11,
+            "rim_edges": [
+              11,
+              11
+            ],
+            "span_mm": [
+              0.5373015626501996,
+              1.8543990744854348
+            ]
+          },
+          {
+            "removed": 13,
+            "rim_edges": [
+              9,
+              9
+            ],
+            "span_mm": [
+              0.3749999999999998,
+              5.882707858265176
+            ]
+          },
+          {
+            "removed": 14,
+            "rim_edges": [
+              9,
+              9
+            ],
+            "span_mm": [
+              0.6498391661925382,
+              4.9231172423089955
+            ]
+          },
+          {
+            "removed": 13,
+            "rim_edges": [
+              8,
+              8
+            ],
+            "span_mm": [
+              0.6803192402465622,
+              6.068331003804229
+            ]
+          }
+        ],
+        "sewing_seconds": 0.7561645000023418,
+        "faces": 770,
+        "before": {
+          "scan_to_body": 0.878,
+          "body_to_scan": 0.91225,
+          "clean_to_body": 1.0
+        },
+        "after": {
+          "scan_to_body": 0.88575,
+          "body_to_scan": 0.9225,
+          "clean_to_body": 0.99825
+        },
+        "exact_walls": [
+          {
+            "radius_mm": 4.287014366910111,
+            "span_mm": [
+              0.5661649508733261,
+              6.426639573806655
+            ]
+          },
+          {
+            "radius_mm": 5.293368947289351,
+            "span_mm": [
+              0.5373015626502001,
+              1.8543990744854357
+            ]
+          },
+          {
+            "radius_mm": 3.42712636124566,
+            "span_mm": [
+              0.37499999999999956,
+              5.882707858265175
+            ]
+          },
+          {
+            "radius_mm": 8.702844473427525,
+            "span_mm": [
+              0.6498391661925388,
+              4.923117242308996
+            ]
+          },
+          {
+            "radius_mm": 4.163823911007245,
+            "span_mm": [
+              0.6803192402465617,
+              6.068331003804229
+            ]
+          }
+        ],
+        "coverage_seconds": 13.119590200003586,
+        "clean_losses": [
+          {
+            "point_mm": [
+              -32.6417414471624,
+              1.3760464503635066,
+              -1.4021812237185596
+            ],
+            "matches": [
+              {
+                "reason": "chord_and_cleaning",
+                "raw_r_mm": 3.239549290158957,
+                "radius_mm": 3.42712636124566,
+                "sag_mm": 0.37514736738978316,
+                "clean_radius_mm": 3.120544516126433,
+                "clean_to_ray_hit_mm": 0.11900477403252419,
+                "raw_vertex_error_mm": 0.0955184842883825,
+                "patch": 2
+              }
+            ],
+            "accepted": true
+          },
+          {
+            "point_mm": [
+              -33.08170497010493,
+              62.469016169247865,
+              -0.5757432724322347
+            ],
+            "matches": [
+              {
+                "reason": "cleaning_shift",
+                "raw_r_mm": 8.538003026574069,
+                "radius_mm": 8.702844473427525,
+                "sag_mm": 0.2607636700844438,
+                "clean_radius_mm": 8.079711848002992,
+                "clean_to_ray_hit_mm": 0.45829117857107704,
+                "raw_vertex_error_mm": 0.0934795993047679,
+                "patch": 3
+              }
+            ],
+            "accepted": true
+          },
+          {
+            "point_mm": [
+              -29.451725969425247,
+              -58.80716561399888,
+              -0.32230534571248715
+            ],
+            "matches": [
+              {
+                "reason": "cleaning_shift",
+                "raw_r_mm": 4.147086424607235,
+                "radius_mm": 4.163823911007245,
+                "sag_mm": 0.4462678351576215,
+                "clean_radius_mm": 3.8026944721122935,
+                "clean_to_ray_hit_mm": 0.3443919524949419,
+                "raw_vertex_error_mm": 0.08249161109653258,
+                "patch": 4
+              }
+            ],
+            "accepted": true
+          },
+          {
+            "point_mm": [
+              -27.51176208115872,
+              62.96365352096126,
+              -0.31995985639162017
+            ],
+            "matches": [
+              {
+                "reason": "cleaning_shift",
+                "raw_r_mm": 8.610909429568245,
+                "radius_mm": 8.702844473427525,
+                "sag_mm": 0.24267303059179568,
+                "clean_radius_mm": 8.308282511097598,
+                "clean_to_ray_hit_mm": 0.30262691847064715,
+                "raw_vertex_error_mm": 0.0934795993047679,
+                "patch": 3
+              }
+            ],
+            "accepted": true
+          },
+          {
+            "point_mm": [
+              -22.253815774636056,
+              50.88707757776633,
+              3.016531423604293
+            ],
+            "matches": [
+              {
+                "reason": "cleaning_shift",
+                "raw_r_mm": 8.715199491926015,
+                "radius_mm": 8.702844473427525,
+                "sag_mm": 0.16545094728208376,
+                "clean_radius_mm": 9.098241971081842,
+                "clean_to_ray_hit_mm": 0.38304247915582756,
+                "raw_vertex_error_mm": 0.07946799520728653,
+                "patch": 3
+              }
+            ],
+            "accepted": true
+          },
+          {
+            "point_mm": [
+              -29.95956864643936,
+              -2.893004752700942,
+              0.3759923950184665
+            ],
+            "matches": [
+              {
+                "reason": "cleaning_shift",
+                "raw_r_mm": 3.2011796653137137,
+                "radius_mm": 3.42712636124566,
+                "sag_mm": 0.3801905773531833,
+                "clean_radius_mm": 2.8945057882186793,
+                "clean_to_ray_hit_mm": 0.30667387709503435,
+                "raw_vertex_error_mm": 0.1334941050312377,
+                "patch": 2
+              }
+            ],
+            "accepted": true
+          },
+          {
+            "point_mm": [
+              -31.402993607160436,
+              -2.637091433293435,
+              0.2547000937231001
+            ],
+            "matches": [
+              {
+                "reason": "cleaning_shift",
+                "raw_r_mm": 3.28778744664151,
+                "radius_mm": 3.42712636124566,
+                "sag_mm": 0.36476973587309525,
+                "clean_radius_mm": 2.962068019834202,
+                "clean_to_ray_hit_mm": 0.3257194268073076,
+                "raw_vertex_error_mm": 0.1334941050312377,
+                "patch": 2
+              }
+            ],
+            "accepted": true
+          }
+        ],
+        "reason": "accepted"
+      },
+      "after_faces": 770,
+      "seconds": 18.491887400006817
+    },
+    "fillets": false,
+    "symmetry": false
+  },
+  "demo_commit": "487e6d3"
+}

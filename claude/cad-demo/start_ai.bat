@@ -10,5 +10,5 @@ rem после обновления (git pull) могли появиться н�
 set /p ANTHROPIC_API_KEY=Вставьте ключ ИИ и нажмите Enter (пусто - без ИИ): 
 if "%ANTHROPIC_API_KEY%"=="" set ANTHROPIC_API_KEY=
 cls
-%PY% app.py
+%PY% workspace\server.py
 pause

@@ -82,6 +82,24 @@ try:
         writer.ASCIIMode = False
         if not writer.Write(shape.wrapped, str(out / "model.stl")):
             raise RuntimeError("не удалось записать STL")
+    # Относительный допуск на тысячах мелких сплайновых граней даёт миллионы треугольников: крышка
+    # студии, 4287 граней — 2,4 млн, сравнение со сканом съело 13 ГБ и было убито. Более грубая
+    # тесселяция OCC мало помогает (абсолютный допуск 0,1 мм — 4 млн), поэтому готовая сетка
+    # упрощается до 1 млн треугольников: на гладких гранях это сотые доли миллиметра.
+    stl_tri = ((out / "model.stl").stat().st_size - 84) // 50
+    if stl_tri > 1_200_000:
+        import fast_simplification
+        import trimesh
+
+        with measured(timings, "stl_simplify"):
+            full = trimesh.load(out / "model.stl", force="mesh")
+            v, f = fast_simplification.simplify(full.vertices, full.faces, 1 - 1_000_000 / len(full.faces))
+            small = trimesh.Trimesh(v, f, process=True)
+            # замкнутость сетки STL из OCC и так не гарантирована (грани стыкуются с зазором в микроны);
+            # проверяется, что упрощение не изменило объём (крышка: 24 193 → 24 185 мм³, p99 0,05 мм)
+            if (small.is_watertight or not full.is_watertight) and abs(small.volume - full.volume) <= 1e-3 * abs(full.volume):
+                small.export(out / "model.stl")
+                info["stl_simplified_from"] = int(len(full.faces))
     info["ok"] = True
 except Exception as e:  # noqa: BLE001 — вся ошибка уходит обратно ИИ
     tb = traceback.format_exc()

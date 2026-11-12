@@ -121,7 +121,7 @@ def _clean_surface(scan: trimesh.Trimesh, scan_path: Path, answer: Path, *, dige
     if os.environ.get("CAD_SURFACE_CACHE", "1") == "0":
         return surface.surface_mesh(scan)
     digest = digest or _scan_digest(scan_path)
-    cache = answer.parent / f"surface-clean-{digest}-{int(surface.EDGE_KEEP)}-{surface.SMOOTH}.npz"
+    cache = answer.parent / f"surface-clean-{digest}-0-{surface.SMOOTH}.npz"
 
     def read(stream):
         with np.load(stream, allow_pickle=False) as data:
@@ -349,17 +349,6 @@ def main() -> None:
         timings["cleanup"] = t - t_smooth
         clean, restored, zones = _restore(clean, timings, scan, digest, answer)
         t = time.perf_counter()
-        plugged = None
-        if os.environ.get("CAD_HOLE_PLUG", "0") == "1":   # отверстия закрыть в сетке, вырезать точно потом
-            try:
-                found_all = hole_finder(scan)
-                clean, done_plug = surface.plug_holes(clean, found_all)
-                timings["hole_plugged"] = len(done_plug)
-                if done_plug:   # закрытые режем первыми: у них простая грань поперёк цилиндра
-                    plugged = done_plug + [q for q in found_all if q not in done_plug]
-                    print(f"    отверстий закрыто в сетке перед гладким телом: {len(done_plug)} из {len(found_all)}", flush=True)
-            except Exception:  # noqa: BLE001
-                plugged = None
         fit_mesh = surface.flatten_planes(clean)
         body, info = nurbs.smooth_body(fit_mesh, scan, tol=tol)
         timings["smooth"] = time.perf_counter() - t
@@ -397,7 +386,7 @@ def main() -> None:
         local_bores = None
         if analytic and analytic["status"] == "accepted":
             cut = analytic["bores"]
-        elif plugged is None and os.environ.get("CAD_BORE_STITCH", "0") == "1":
+        elif os.environ.get("CAD_BORE_STITCH", "0") == "1":
             with measured(timings, "holes_stitch"):
                 try:
                     from bore_stitch import repair_bores
@@ -411,7 +400,7 @@ def main() -> None:
         else:
             cut = 0
         if not cut:
-            found = specs if specs is not None else plugged
+            found = specs
             finder = hole_finder if found is None else lambda _: found
             body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings, hole_finder=finder,
                                            limit_time=True)

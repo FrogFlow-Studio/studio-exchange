@@ -155,23 +155,6 @@ def run_code(code: str, it_dir: Path, timeout: int = 90, *, step_source: Path | 
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def want_model(mode: str, name: str) -> bool:
-    """Запускать ли ИИ-модель-кандидата (stepcad, cadena): auto — при видеокарте NVIDIA и найденном коде."""
-    if mode == "off":
-        return False
-    try:
-        mod = __import__(f"{name}_worker")
-        if getattr(mod, f"{name}_dir")() is None:
-            return False
-        if mode == "on":
-            return True
-        import torch
-
-        return bool(torch.cuda.is_available())
-    except Exception:  # noqa: BLE001
-        return False
-
-
 def score(run: dict, cmp: dict | None) -> float:
     if not run.get("ok") or not run.get("valid") or cmp is None:
         return -1.0
@@ -642,20 +625,8 @@ def main() -> None:
                     help="не достраивать ничего (деталь целая); то же, если в заметке «деталь целая» или «не достраивать»")
     ap.add_argument("--geo-timeout", type=int, default=120, help="сколько секунд ждать попытку 0 (алгоритм без ИИ)")
     ap.add_argument("--no-geometric", action="store_true", help="не строить черновик без ИИ (попытка 0)")
-    ap.add_argument("--stepcad", choices=["auto", "on", "off"], default="off",
-                    help="кандидат StepCAD (экспериментально; на сканах студии пока грубый, ~15 мин): по умолчанию выключен; "
-                         "auto — только при видеокарте NVIDIA "
-                         "и найденном StepCAD (STEPCAD_DIR); on — и на процессоре (медленно, ~15 мин)")
-    ap.add_argument("--cadena", choices=["auto", "on", "off"], default="off",
-                    help="кандидат CADENA (экспериментально: редактируемая программа построения по снимкам скана): "
-                         "по умолчанию выключен; auto — только при видеокарте NVIDIA и найденной CADENA (CADENA_DIR); "
-                         "on — и на процессоре (~2–10 мин)")
     ap.add_argument("--smooth", choices=["auto", "off"], default="auto",
                     help="гладкое тело из B-сплайн граней для кривых деталей (попытка 0к)")
-    ap.add_argument("--p2s", choices=["auto", "on", "off"], default="off",
-                    help="уточнить грани лучшей модели по скану через Point2STEP (экспериментально: опыты Э1 и Э2 "
-                         "показали, что к собственной подгонке он ничего не добавляет): по умолчанию выключен; "
-                         "auto — если он установлен (POINT2STEP_DIR или папка point2step рядом / в домашней)")
     ap.add_argument("--model", help="модель ИИ (по умолчанию: claude-sonnet-5-5 / gpt-4.1)")
     ap.add_argument("--replay", help="llm_log.json для режимов replay/scripted")
     ap.add_argument("--ai-input", choices=["tools", "sheet"], default="tools",
@@ -817,18 +788,6 @@ def main() -> None:
             else:
                 log("    гладкое тело: старт отложен до проверки тела по поверхности")
 
-        models = {}  # ИИ-модели-кандидаты: имя -> (процесс, файл ответа)
-        for name, mode in (("stepcad", a.stepcad), ("cadena", a.cadena)):
-            if want_model(mode, name):
-                try:
-                    models[name] = (subprocess.Popen([sys.executable, str(HERE / f"{name}_worker.py"),
-                                                      str(out / "scan_aligned.stl"), str(out / name),
-                                                      str(out / f"{name}.json"), "900"],
-                                                     env=dict(os.environ, PYTHONIOENCODING="utf-8")),
-                                    out / f"{name}.json")
-                except Exception:  # noqa: BLE001
-                    pass
-
         def finish(proc, limit: float) -> None:
             if proc is None:
                 raise RuntimeError("процесс не запустился")
@@ -945,26 +904,6 @@ def main() -> None:
                     log(f"    гладкое тело не получилось ({type(ex).__name__})")
         if smooth_job is not None:
             close_smooth(smooth_job)
-        # ИИ-модели-кандидаты пишут программу построения; берутся, только если по сравнению лучше
-        titles = {"stepcad": ("0г", "StepCAD"), "cadena": ("0д", "CADENA")}
-        for name, (proc, ans) in models.items():
-            n, title = titles[name]
-            t0 = time.time()
-            log(f"2/4 попытка {n}: {title} (ИИ-модель, локально, бесплатно)…", 1500)
-            try:
-                if proc.wait(timeout=1500) != 0:
-                    raise RuntimeError("процесс завершился с ошибкой")
-                g = json.loads(ans.read_text(encoding="utf-8"))
-                log("    " + g["meta"]["plan"])
-                itc = evaluate(n, g["code"], g["meta"], t0, title)
-                iterations.append(itc)
-                if itc["run"].get("ok") and (best is None or rank(itc) > rank(best)):
-                    best = itc
-            except subprocess.TimeoutExpired:
-                log(f"    {title} не уложилась во время")
-            except Exception as ex:  # noqa: BLE001
-                log(f"    {title} не дала рабочей модели ({type(ex).__name__})")
-        # Point2STEP: грани лучшей модели уточняются по скану; утраченное берётся из неё же
         # Уточнение по скану: каждая грань нашей модели заново подгоняется по своим точкам скана,
         # точные размеры пишутся обратно в редактируемую программу (fitfaces.py + merge.py)
         if best is not None and best["run"].get("ok") and "importStep" not in best["code"]:
@@ -993,92 +932,7 @@ def main() -> None:
                     log("    уточнять нечего: размеры и так ближе всего к скану")
             except Exception as ex:  # noqa: BLE001
                 log(f"    уточнение по скану не удалось ({type(ex).__name__})")
-        if a.p2s == "auto":
-            from p2s_worker import p2s_dir
-
-            a.p2s = "on" if p2s_dir() else "off"
-            if a.p2s == "on":
-                log(f"    Point2STEP найден ({p2s_dir()}), включаю уточнение граней")
-        # тело по поверхности (0в, 0к) Point2STEP не улучшает: на кривых корпусах он проверен
-        # и рассыпается (накладка Hyundai: 39 мин, покрытие 14%), а на тысячах граней идёт часами
-        if a.p2s == "on" and best is not None and best["run"].get("ok") and best["n"] not in ("0в", "0к"):
-            t0 = time.time()
-            log("2/4 попытка 0е: Point2STEP уточняет грани лучшей модели по скану…", 700)
-            try:
-                pj = out / "p2s.json"
-                subprocess.run([sys.executable, str(HERE / "p2s_worker.py"), str(out / "scan_aligned.stl"),
-                                str(best["dir"] / "model.step"), str(out / "p2s"), str(pj), "600"],
-                               check=True, timeout=700, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
-                g = json.loads(pj.read_text(encoding="utf-8"))
-                base = best  # модель, которую уточняем: ниже в её программу запишутся точные размеры
-                g["meta"]["restored"] = list(best["meta"].get("restored") or []) + g["meta"]["restored"]
-                log("    " + g["meta"]["plan"])
-                itp = evaluate("0е", g["code"], g["meta"], t0, "Point2STEP")
-                iterations.append(itp)
-                # совпадение со сканом почти то же, выигрыш — в точности размеров: берём, если не хуже
-                if (itp["run"].get("ok") and rank(itp)[:2] >= rank(best)[:2]
-                        and itp["cmp"]["within_tol_share"] >= best["cmp"]["within_tol_share"] - 0.003
-                        and itp["cmp"]["outside_share"] <= best["cmp"]["outside_share"] + 0.001):
-                    best = itp
-                # Объединение: точные размеры Point2STEP — обратно в нашу редактируемую программу
-                # (только там, где новая поверхность ближе к скану, чем старая)
-                if "importStep" not in base["code"]:
-                    t0 = time.time()
-                    log("2/4 попытка 0и: объединяю — размеры от Point2STEP в нашей программе построения…", 300)
-                    mj = out / "merge.json"
-                    subprocess.run([sys.executable, str(HERE / "merge.py"), str(base["dir"] / "model.py"),
-                                    str(out / "p2s.step"), str(out / "scan_aligned.stl"), str(out / "merged.py"), str(mj)],
-                                   check=True, timeout=300, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
-                    changes = json.loads(mj.read_text(encoding="utf-8"))["changes"]
-                    for c in changes:
-                        log("    " + c)
-                    if changes:
-                        meta = dict(base["meta"])
-                        meta["plan"] = (str(meta.get("plan") or "") + f" Размеры {len(changes)} элементов уточнены по скану "
-                                        "(Point2STEP): " + "; ".join(changes))
-                        itm = evaluate("0и", (out / "merged.py").read_text(encoding="utf-8"), meta, t0,
-                                       "наш алгоритм + Point2STEP")
-                        iterations.append(itm)
-                        if (itm["run"].get("ok") and rank(itm)[:2] >= rank(best)[:2]
-                                and itm["cmp"]["within_tol_share"] >= best["cmp"]["within_tol_share"] - 0.003
-                                and itm["cmp"]["outside_share"] <= best["cmp"]["outside_share"] + 0.001):
-                            best = itm
-                    else:
-                        log("    уточнять нечего: размеры Point2STEP не ближе к скану")
-            except subprocess.TimeoutExpired:
-                log("    Point2STEP не уложился во время")
-            except Exception as ex:  # noqa: BLE001
-                log(f"    Point2STEP не дал рабочей модели ({type(ex).__name__})")
-        # Подсказки CADENA: наш алгоритм проверяет её отверстия по скану и достраивает недостающее сам
-        cad_step = out / "cadena.step"
-        if cad_step.exists() and best is not None and best["run"].get("ok") and "importStep" not in best["code"]:
-            t0 = time.time()
-            log("2/4 попытка 0з: проверяю подсказки CADENA по скану…", 300)
-            try:
-                hj = out / "hints.json"
-                subprocess.run([sys.executable, str(HERE / "hints.py"), str(best["dir"] / "model.py"),
-                                str(best["dir"] / "model.step"), str(cad_step), str(out / "scan_aligned.stl"),
-                                str(out / "hinted.py"), str(hj)],
-                               check=True, timeout=300, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
-                h = json.loads(hj.read_text(encoding="utf-8"))
-                log(f"    CADENA предложила отверстий: {h['hints']}; уже есть у нас: {h['confirmed']}; "
-                    f"достроено по скану: {len(h['added'])}; не подтверждено сканом: {len(h['unconfirmed'])}")
-                for s in h["added"] + h["unconfirmed"]:
-                    log("    " + s)
-                meta = dict(best["meta"])
-                meta["assumptions"] = list(meta.get("assumptions") or []) + [s + " — проверить" for s in h["unconfirmed"]]
-                if h["added"]:
-                    meta["restored"] = list(meta.get("restored") or []) + h["added"]
-                    ith = evaluate("0з", (out / "hinted.py").read_text(encoding="utf-8"), meta, t0,
-                                   "наш алгоритм + подсказки CADENA")
-                    iterations.append(ith)
-                    if ith["run"].get("ok") and rank(ith) >= rank(best):
-                        best = ith
-                else:
-                    best["meta"] = meta
-            except Exception as ex:  # noqa: BLE001
-                log(f"    подсказки CADENA проверить не удалось ({type(ex).__name__})")
-        for proc in [surf_proc, walls_proc] + [p for p, _ in models.values()]:
+        for proc in (surf_proc, walls_proc):
             if proc is not None and proc.poll() is None:
                 proc.kill()  # не понадобился или не уложился во время
 

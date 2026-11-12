@@ -21,28 +21,10 @@ def add_count(timings, key, count=1):
         timings[key] = timings.get(key, 0) + count
 
 
-def disjoint_tool_boxes(groups):
-    """Skip trial batching when different jobs' tools may touch one another."""
-    boxes = []
-    try:
-        for group in groups:
-            bounds = [tool.BoundingBox() for tool in group]
-            boxes.append((min(b.xmin for b in bounds), min(b.ymin for b in bounds), min(b.zmin for b in bounds),
-                          max(b.xmax for b in bounds), max(b.ymax for b in bounds), max(b.zmax for b in bounds)))
-    except Exception:
-        return False
-    for i, a in enumerate(boxes):
-        for b in boxes[:i]:
-            if all(a[axis + 3] >= b[axis] and b[axis + 3] >= a[axis] for axis in range(3)):
-                return False
-    return True
-
-
 def boolean_op(base, tools, *, fuse=False, preserve_inputs=False):
-    """Use the original flags, with optional OBB and non-destructive trial mode."""
+    """Use the original flags, with optional non-destructive trial mode."""
     legacy = base.fuse if fuse else base.cut
-    obb = os.environ.get("CAD_BOOLEAN_OBB", "0") == "1"
-    if not obb and not preserve_inputs:
+    if not preserve_inputs:
         return legacy(*tools)
 
     import cadquery as cq
@@ -58,10 +40,7 @@ def boolean_op(base, tools, *, fuse=False, preserve_inputs=False):
         op.SetArguments(args)
         op.SetTools(operands)
         op.SetRunParallel(True)
-        if obb:
-            op.SetUseOBB(True)
-        if preserve_inputs:
-            op.SetNonDestructive(True)
+        op.SetNonDestructive(True)
         op.Build()
         if op.IsDone():
             result = op.Shape()

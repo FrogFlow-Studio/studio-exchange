@@ -1,12 +1,9 @@
-"""Объединение: размеры, уточнённые Point2STEP, записываются обратно в нашу программу построения.
+"""Уточнение размеров по скану: каждое отверстие программы (`.center(x, y).circle(r)`) и каждый
+размер профиля вращения (радиусы и высоты в `polyline` перед `revolve`) сверяется с гранью, заново
+подогнанной по точкам скана (fitfaces.py), и получает её размер. На выходе — та же редактируемая
+программа с точными размерами (попытка 0ж).
 
-Наша программа (CadQuery) редактируемая и с достроенным сколом, Point2STEP точнее подгоняет видимые
-грани. Здесь каждое отверстие программы (`.center(x, y).circle(r)`) и каждый размер профиля
-вращения (радиусы и высоты в `polyline` перед `revolve`) сверяется с гранями Point2STEP и, если
-найдена та же грань, получает её размер. На выходе — одна программа с точными размерами.
-
-python merge.py model.py p2s.step скан.stl новая_model.py отчёт.json
-python merge.py model.py model.step скан.stl новая_model.py отчёт.json --fit   (без Point2STEP: fitfaces.py)
+python merge.py model.py model.step скан.stl новая_model.py отчёт.json --fit
 """
 from __future__ import annotations
 
@@ -106,7 +103,7 @@ def refine(code: str, cyl: list, pl: list, pts=None, pos_tol: float = 0.3, r_tol
 
     code = HOLE.sub(hole, code)
 
-    # достроенное отверстие (в скане его нет, Point2STEP его не видел) — того же размера, что его
+    # достроенное отверстие (в скане его нет, подгонка его не видела) — того же размера, что его
     # соседи из того же массива: берём медиану их уточнённых радиусов
     def restored(line: str) -> str:
         m = HOLE.search(line)
@@ -175,7 +172,7 @@ def main() -> None:
     if changes:
         code = code.replace("import cadquery as cq\n",
                             "import cadquery as cq\n# Размеры видимых граней уточнены по скану"
-                            + ("" if own else " (Point2STEP)") + ".\n", 1)
+                            + ".\n", 1)
     dst.write_text(code, encoding="utf-8")
     rep.write_text(json.dumps({"changes": changes}, ensure_ascii=False), encoding="utf-8")
 

@@ -23,9 +23,6 @@ sys.path.insert(0, str(HERE))
 
 
 SMOOTH = 10  # шаги сглаживания шума
-# Очистка с сохранением рёбер (denoise.py, Э10) вместо обычного сглаживания. Выключена, пока не
-# пройдены полные прогоны сканов студии с ней.
-EDGE_KEEP = os.environ.get("CAD_EDGE_KEEP", "") == "1"
 FLAT_MAX = 0.2  # мм: дальше от подогнанной плоскости вершину не двигаем
 
 
@@ -275,12 +272,7 @@ def coarsen(mesh: trimesh.Trimesh, triangles: int) -> trimesh.Trimesh:
 def surface_mesh(scan: trimesh.Trimesh, faces: int = 20000) -> trimesh.Trimesh:
     """Замкнутая чистая поверхность скана: без мусора и шума, упрощённая, с закрытыми дырами."""
     m = clean(scan.copy())
-    if EDGE_KEEP:
-        import denoise
-
-        m = denoise.bilateral(m)
-    else:
-        trimesh.smoothing.filter_taubin(m, iterations=SMOOTH)
+    trimesh.smoothing.filter_taubin(m, iterations=SMOOTH)
     if len(m.faces) > faces:
         m = m.simplify_quadric_decimation(percent=1 - faces / len(m.faces))
     m = trimesh.Trimesh(m.vertices, m.faces, process=True)
@@ -310,7 +302,7 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_find
     import cadquery as cq
     from time import perf_counter
 
-    from cad_checks import VolumeMemo, add_count, boolean_cut_limited, boolean_op, disjoint_tool_boxes, measured
+    from cad_checks import VolumeMemo, add_count, boolean_cut_limited, boolean_op, measured
     from hole_preflight import HolePreflight
 
     if volumes is None:
@@ -372,19 +364,6 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_find
         c, d, r, h = spec
         return cq.Solid.makeCylinder(r, h, cq.Vector(*c), cq.Vector(*d)), 1.05 * np.pi * r * r * h
 
-    cutters = []
-    if os.environ.get("CAD_HOLE_BATCH", "0") == "1" and len(specs) > 1:
-        try:
-            cutters = [cylinder(spec) for spec in specs]
-            if disjoint_tool_boxes((tool,) for tool, _ in cutters):
-                compound = cq.Compound.makeCompound([tool for tool, _ in cutters])
-                new = attempt(s, compound, sum(limit for _, limit in cutters) + 1,
-                              f"пакет отверстий ({len(cutters)})", trial=True)
-                if new is not None:
-                    return new, len(cutters)
-        except Exception:  # noqa: BLE001
-            pass
-
     cut = 0
     for i, spec in enumerate(specs):
         label = f"отверстие {i + 1}"
@@ -405,7 +384,7 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_find
                 note(label, f"пропуск до булевой, {reason}", started)
                 continue
         try:
-            tool, limit = cutters[i] if cutters else cylinder(spec)
+            tool, limit = cylinder(spec)
         except Exception as ex:  # noqa: BLE001
             note(label, f"инструмент: исключение {type(ex).__name__}", started)
             continue
@@ -439,70 +418,3 @@ if __name__ == "__main__":
     print(info, "valid", s.isValid(), "solids", len(s.Solids()), "sec", round(time.time() - t, 1))
 
 
-def plug_holes(mesh: trimesh.Trimesh, specs, pad: float = 0.6, why=None):
-    """Круглые отверстия в чистой поверхности закрываются заподлицо: грани стенки (и дна) убираются,
-    края затягиваются веером. Гладкое тело по такой сетке проходит над отверстием простой гранью, и
-    точный цилиндр потом режет её поперёк — без почти совпадающих стенок, на которых булева операция
-    даёт невалидное тело. Каждое отверстие закрывается отдельно: не замкнулось — остаётся как было.
-    Возвращает (сетка, список закрытых отверстий из specs)."""
-    done = []
-    for spec in specs:
-        out, reason = _plug_one(mesh, spec, pad)
-        if why is not None:
-            why.append(reason)
-        if out is not None:
-            mesh = out
-            done.append(spec)
-    return mesh, done
-
-
-def _plug_one(mesh, spec, pad):
-    c, d, r, h = spec
-    c, d = np.asarray(c, float), np.asarray(d, float)
-    d = d / np.linalg.norm(d)
-    v = mesh.triangles_center - c
-    ax = v @ d
-    rad = np.linalg.norm(v - np.outer(ax, d), axis=1)
-    drop = (rad < r + pad) & (ax > -1.0) & (ax < h + 1.0)
-    if not drop.any():
-        return None, "нет граней"
-    for _ in range(6):   # вершина, где сходятся две петли края: её грани тоже убираются, край становится простым
-        faces = mesh.faces[~drop]
-        e = np.vstack([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
-        key = np.sort(e, axis=1)
-        _, inv, cnt = np.unique(key, axis=0, return_inverse=True, return_counts=True)
-        be = e[cnt[inv.ravel()] == 1]   # граничные рёбра в направлении своей грани
-        starts, many = np.unique(be[:, 0], return_counts=True)
-        pinch = starts[many > 1]
-        if not len(pinch):
-            break
-        drop |= np.isin(mesh.faces, pinch).any(axis=1)
-    else:
-        return None, "вершина на двух петлях"
-    nxt = {int(a): int(b) for a, b in be}
-    verts = [mesh.vertices]
-    new = []
-    n = len(mesh.vertices)
-    seen = set()
-    for start in list(nxt):
-        if start in seen:
-            continue
-        loop, cur = [], start
-        while cur not in seen:
-            seen.add(cur)
-            loop.append(cur)
-            cur = nxt.get(cur)
-            if cur is None:
-                return None, "петля не замкнута"
-        if cur != start or len(loop) < 3:
-            return None, "петля не замкнута"
-        verts.append(mesh.vertices[loop].mean(0)[None])
-        new += [(loop[(i + 1) % len(loop)], loop[i], n) for i in range(len(loop))]
-        n += 1
-    out = trimesh.Trimesh(np.vstack(verts), np.vstack([faces, np.array(new, int)]), process=False)
-    out.remove_unreferenced_vertices()
-    if not out.is_watertight:
-        return None, "не замкнута"
-    if out.volume <= mesh.volume:
-        return None, f"объём не вырос ({out.volume - mesh.volume:.1f})"
-    return out, f"закрыто, петель {n - len(mesh.vertices)}, объём +{out.volume - mesh.volume:.1f}"

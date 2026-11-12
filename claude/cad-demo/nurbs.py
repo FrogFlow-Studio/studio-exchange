@@ -904,13 +904,50 @@ def near_share(pts: np.ndarray, proj: _Projector, tol: float = 0.1) -> float:
     return float((d.min(1) < tol).mean())
 
 
+def body_mesh(body, deflection: float) -> trimesh.Trimesh:
+    """Сетка тела с абсолютным допуском (мм). Допуск разбиения CadQuery относительный: у тела из тысяч
+    мелких сплайнов он дробит мелкие грани без нужды (1,5 млн треугольников на кронштейне студии,
+    24 с), а у крупных уходит от грани до 0,09 мм. Абсолютный 0,05 мм: до тела не дальше 0,035 мм,
+    7 с (замер точным расстоянием BRepExtrema до тела)."""
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.BRepTools import BRepTools
+    from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.TopoDS import TopoDS
+
+    shape = body.wrapped
+    BRepTools.Clean_s(shape)
+    BRepMesh_IncrementalMesh(shape, deflection, False, 0.5, True)
+    verts, tris, off = [], [], 0
+    ex = TopExp_Explorer(shape, TopAbs_FACE)
+    while ex.More():
+        face = TopoDS.Face_s(ex.Current())
+        loc = TopLoc_Location()
+        t = BRep_Tool.Triangulation_s(face, loc)
+        if t is not None and t.NbTriangles():
+            tr = loc.Transformation()
+            n = t.NbNodes()
+            p = np.array([(q.X(), q.Y(), q.Z()) for q in (t.Node(i).Transformed(tr) for i in range(1, n + 1))])
+            f = np.array([t.Triangle(i).Get() for i in range(1, t.NbTriangles() + 1)]) - 1 + off
+            if face.Orientation() == TopAbs_REVERSED:
+                f = f[:, ::-1]
+            verts.append(p)
+            tris.append(f)
+            off += n
+        ex.Next()
+    if not verts:
+        return trimesh.Trimesh()
+    return trimesh.Trimesh(np.vstack(verts), np.vstack(tris), process=False)
+
+
 def cover_share(body, proj: _Projector, tol: float = 0.3, n: int = 30000, *, profile=None) -> float:
     """Доля точек чистой поверхности, у которых в пределах tol мм есть поверхность модели."""
     # 0,01, а не 0,05: допуск разбиения в CadQuery относительный (доля размера грани), и у крупной
     # грани сетка при 0,05 уходила от самой грани до 0,8 мм — «потери» были ошибкой измерения (Э11)
     with measured(profile, "tessellation"):
-        v, f = body.tessellate(0.01, 0.5)
-        m = trimesh.Trimesh([(q.x, q.y, q.z) for q in v], f, process=False)
+        m = body_mesh(body, min(0.05, tol / 6))
     pts = proj.dp[np.random.default_rng(3).choice(len(proj.dp), min(n, len(proj.dp)), replace=False)]
     with measured(profile, "cover_distance"):
         if not proj.fast:

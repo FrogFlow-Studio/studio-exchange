@@ -1216,6 +1216,13 @@ def main() -> None:
         log("4/4 ищу отверстия скана и сверяю их с моделью…", 600)
         try:  # отверстия скана: на месте ли они в модели и того же ли размера
             holes_rows = holesmod.check(scan, load_stl(out / "model.stl"), tol=max(0.2, a.tol / 2))
+            # излом достроенного скола бывает похож на стенку отверстия: в модели там целый материал
+            zs = (best.get("meta") or {}).get("restored_zones") or []
+            on_chip = [r for r in holes_rows if r["d_model"] is None and any(
+                np.linalg.norm(np.asarray(r["center"]) - np.asarray(z["center"])) <= z["radius"] for z in zs)]
+            if on_chip:
+                holes_rows = [r for r in holes_rows if r not in on_chip]
+                log(f"    «отверстий» на изломе достроенного скола: {len(on_chip)}, в счёт не идут")
             log(f"отверстия: найдено {len(holes_rows)}, совпали {sum(r['ok'] for r in holes_rows)}")
         except Exception as ex:  # noqa: BLE001
             log(f"проверка отверстий не удалась: {ex}")

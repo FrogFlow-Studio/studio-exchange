@@ -207,6 +207,75 @@ def _symmetry_restore(clean, timings, scan=None, cache=None):
     return out, rows, [symmetry.zone(e) for e in log]
 
 
+def _chip_restore(clean, timings, scan, cache=None):
+    """Этап Д, способ 2 (CAD_CHIPFILL=1): скол без симметрии находится по шероховатому излому сырого
+    скана и закрывается продолжением целой поверхности вокруг него (chipfill.py).
+    Возвращает (сетка, строки «достроено», зоны для сравнения со сканом)."""
+    if os.environ.get("CAD_CHIPFILL", "0") != "1" or scan is None:
+        return clean, [], []
+    t = time.perf_counter()
+    try:
+        import chipfill
+
+        def find():
+            out, log, _ = chipfill.restore_all(scan, clean)
+            return {"vertices": np.asarray(out.vertices), "faces": np.asarray(out.faces),
+                    "log": [{k: v for k, v in e.items() if k != "detail"} for e in log]}
+
+        if cache is None:
+            found = find()
+        else:
+            import pickle
+
+            found = _run_cache(cache, "поиск сколов по излому", lambda s: pickle.load(s), find,
+                               lambda s, v: pickle.dump(v, s))
+        log = found["log"]
+        if not log:
+            return clean, [], []
+        out = trimesh.Trimesh(found["vertices"], found["faces"], process=False)
+    except Exception as error:  # noqa: BLE001 — достройка не удалась: тело по скану как есть
+        print(f"    достройка по излому не удалась: {type(error).__name__}", flush=True)
+        return clean, [], []
+    finally:
+        timings["chipfill"] = time.perf_counter() - t
+    rows = [chipfill.describe(e) for e in log]
+    for r in rows:
+        print("    " + r, flush=True)
+    return out, rows, [chipfill.zone(e) for e in log]
+
+
+def _restore(clean, timings, scan, digest, answer):
+    """Достройка сколов кривой детали: сначала по симметрии, потом по излому."""
+    key = lambda name: None if digest is None else answer.parent / f"{name}-{digest}.pkl"
+    before = clean
+    clean, rows, zones = _symmetry_restore(clean, timings, scan, key("symmetry-v1"))
+    clean, rows2, zones2 = _chip_restore(clean, timings, scan, key("chipfill-v1"))
+    if rows or rows2:
+        _FILLED[:] = [(before, clean)]
+    return clean, rows + rows2, zones + zones2
+
+
+_FILLED = []   # (поверхность до достройки, после): по ним отсеиваются «отверстия», найденные на изломе
+
+
+def _not_in_fill(specs):
+    """Излом скола бывает похож на стенку отверстия. Если середина оси такого «отверстия» до достройки
+    была в воздухе, а после оказалась в достроенном материале, это излом, а не отверстие."""
+    if not _FILLED or not specs:
+        return specs
+    before, after = _FILLED[0]
+    mid = np.array([np.asarray(c) + np.asarray(d) * h / 2 for c, d, _, h in specs])
+    try:
+        was = trimesh.proximity.signed_distance(before, mid)
+        now = trimesh.proximity.signed_distance(after, mid)
+    except Exception:  # noqa: BLE001
+        return specs
+    keep = [q for q, a, b in zip(specs, was, now) if not (a < 0 < b)]
+    if len(keep) < len(specs):
+        print(f"    «отверстий» на изломе достроенного скола отброшено: {len(specs) - len(keep)}", flush=True)
+    return keep
+
+
 def main() -> None:
     from cad_checks import measured
 
@@ -229,7 +298,7 @@ def main() -> None:
         digest = _scan_digest(scan_path)
 
     def hole_finder(mesh):
-        return _hole_specs(mesh, scan_path, answer, digest=digest)
+        return _not_in_fill(_hole_specs(mesh, scan_path, answer, digest=digest))
 
     if len(sys.argv) > 5 and sys.argv[5] == "walls":
         import walls
@@ -250,8 +319,7 @@ def main() -> None:
         t = time.perf_counter()
         clean = _clean_surface(scan, scan_path, answer, digest=digest)
         timings["cleanup"] = time.perf_counter() - t
-        clean, restored, zones = _symmetry_restore(
-            clean, timings, scan, None if digest is None else answer.parent / f"symmetry-v1-{digest}.pkl")
+        clean, restored, zones = _restore(clean, timings, scan, digest, answer)
         body, info = surface.surface_body(scan, prepared=clean, timings=timings, hole_finder=hole_finder)
         step = Path(sys.argv[4]).with_suffix(".step")
         with measured(timings, "step_write"):
@@ -279,8 +347,7 @@ def main() -> None:
         clean = _clean_surface(scan, scan_path, answer, digest=digest)
         t = time.perf_counter()
         timings["cleanup"] = t - t_smooth
-        clean, restored, zones = _symmetry_restore(
-            clean, timings, scan, None if digest is None else answer.parent / f"symmetry-v1-{digest}.pkl")
+        clean, restored, zones = _restore(clean, timings, scan, digest, answer)
         t = time.perf_counter()
         plugged = None
         if os.environ.get("CAD_HOLE_PLUG", "0") == "1":   # отверстия закрыть в сетке, вырезать точно потом

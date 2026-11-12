@@ -242,6 +242,10 @@ for part in ("bracket", "flange", "bushing"):
     t = float(m.group(1)) if m else 0.0
     check(f"{part}: алгоритм без ИИ построил модель, совпадение с целым эталоном ≥ 95% ({t}%)",
           r.returncode == 0 and "готово:" in r.stdout and t >= 95, r.stdout[-400:] + r.stderr[-400:])
+    sw = sorted((tmp / "out").glob("*/model_sw.bas"), key=lambda f: f.stat().st_mtime)
+    check(f"{part}: макрос SolidWorks с деревом построения выписан (объём повтора совпал)",
+          bool(sw) and "макрос SolidWorks" in r.stdout and "FeatureCut4" in sw[-1].read_text(encoding="utf-8-sig"),
+          r.stdout[-300:])
     r = subprocess.run([sys.executable, str(HERE / "demo.py"), str(S / f"{part}_scan.stl"), "--no-open",
                         "--mode", "scripted", "--out", str(tmp / "out")], capture_output=True, text=True, encoding="utf-8",
                        errors="replace", env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1"))

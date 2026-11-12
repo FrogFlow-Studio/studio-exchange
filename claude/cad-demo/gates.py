@@ -52,6 +52,11 @@ def check(run: dict, model: trimesh.Trimesh | None, sheet: dict, scan: trimesh.T
                 if have is None:
                     have = _holes_at(model, z)
                 c, d = np.asarray(h["center_xy"]), h["diameter"]
+                # настоящее отверстие имеет глубину: оно есть в скане и чуть выше, и чуть ниже;
+                # кольцо только в одном сечении — обрывок контура (линза: «Ø1.07» на Z 14.08)
+                if not all(any(np.linalg.norm(hc - c) < 0.5 and abs(hd - d) < 0.4 + 0.02 * d
+                               for hc, hd in _holes_at(scan, z + dz)) for dz in (-0.25, 0.25)):
+                    continue
                 if not any(np.linalg.norm(hc - c) < 0.5 and abs(hd - d) < 0.4 + 0.02 * d for hc, hd in have):
                     bad.append(f"в модели нет отверстия Ø{d} в {list(h['center_xy'])} на высоте {z} (в скане оно есть)")
     # 2) модель не выходит за габарит скана больше, чем можно объяснить достройкой скола

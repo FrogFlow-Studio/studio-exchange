@@ -14,6 +14,8 @@ import trimesh
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
+from cad_checks import measured
+
 
 def clusters(points: np.ndarray, values: np.ndarray, link: float = 2.0, min_pts: int = 15) -> list[dict]:
     if len(points) == 0:
@@ -39,38 +41,101 @@ def clusters(points: np.ndarray, values: np.ndarray, link: float = 2.0, min_pts:
     return sorted(out, key=lambda c: -c["points"])
 
 
-def compare(scan: trimesh.Trimesh, model: trimesh.Trimesh, tol: float = 0.3, n: int = 12000, seed: int = 0) -> dict:
+class ScanComparison:
+    """Reuse samples and spatial indexes for one immutable scan."""
+
+    def __init__(self, scan):
+        self.scan = scan
+        self.samples = {}
+        self.vertices = None
+
+    def sample(self, n, seed):
+        key = n, seed
+        if key not in self.samples:
+            self.samples[key] = trimesh.sample.sample_surface_even(self.scan, n, seed=seed)[0]
+        return self.samples[key]
+
+    def distances(self, points):
+        # Same candidate AABBs and tie-breaking as trimesh 5.2 closest_point.
+        # Only the distances are needed in the model-to-scan direction.
+        from trimesh.constants import tol as mesh_tol
+        from trimesh.triangles import closest_point
+        from trimesh.util import diagonal_dot
+
+        scan = self.scan
+        if self.vertices is None:
+            self.vertices = cKDTree(scan.vertices[scan.referenced_vertices])
+        radii = self.vertices.query(points)[0][:, None] + mesh_tol.merge
+        bounds = np.column_stack((points - radii, points + radii))
+        tree = scan.triangles_tree
+        try:
+            triangles, counts = tree.intersection_v(bounds[:, :3], bounds[:, 3:])
+        except Exception:
+            candidates = [list(tree.intersection(box)) for box in bounds]
+            triangles = np.concatenate(candidates).astype(int)
+            counts = np.array(list(map(len, candidates)))
+        counts = np.asarray(counts, dtype=np.intp)
+        if not len(points) or np.any(counts == 0):
+            return trimesh.proximity.closest_point(scan, points)[1]
+        starts = np.r_[0, np.cumsum(counts)[:-1]]
+        owners = np.repeat(np.arange(len(points)), counts)
+        query = points[owners]
+        vectors = query - closest_point(scan.triangles.view(np.ndarray)[triangles], query)
+        squared = diagonal_dot(vectors, vectors)
+        nearest = np.minimum.reduceat(squared, starts)
+        # Legacy considers the normal of the two closest triangles on near ties.
+        # Sorting only these groups keeps both the old tie rule and its order.
+        tied = np.add.reduceat((squared - nearest[owners] < mesh_tol.merge).astype(int), starts)
+        ambiguous = np.flatnonzero((tied >= 2) & (nearest > mesh_tol.merge))
+        if len(ambiguous):
+            best = np.array([starts[i] + squared[starts[i]:starts[i] + counts[i]].argsort()[:2]
+                             for i in ambiguous])
+            directions = vectors[best] / squared[best, None] ** 0.5
+            normals = scan.face_normals[triangles[best]]
+            choice = (normals * directions).sum(axis=2).argmax(axis=1)
+            nearest[ambiguous] = squared[best[np.arange(len(best)), choice]]
+        return nearest ** 0.5
+
+
+def compare(scan: trimesh.Trimesh, model: trimesh.Trimesh, tol: float = 0.3, n: int = 12000, seed: int = 0,
+            *, prepared=None, timings=None) -> dict:
     rng = np.random.default_rng(seed)
-    sp_pts, _ = trimesh.sample.sample_surface_even(scan, n, seed=int(rng.integers(1 << 30)))
+    scan_seed, model_seed = (int(rng.integers(1 << 30)) for _ in range(2))
+    with measured(timings, "compare_sample"):
+        sp_pts = (prepared.sample(n, scan_seed) if prepared is not None
+                  else trimesh.sample.sample_surface_even(scan, n, seed=scan_seed)[0])
+        mp_pts, _ = trimesh.sample.sample_surface_even(model, n, seed=model_seed)
     # signed_distance: >0 внутри модели, <0 снаружи.
-    sd = trimesh.proximity.signed_distance(model, sp_pts)
-    ad = np.abs(sd)
-    outside = sd < -tol
-    inside = sd > tol
-    mp_pts, _ = trimesh.sample.sample_surface_even(model, n, seed=int(rng.integers(1 << 30)))
-    _, d_model, _ = trimesh.proximity.closest_point(scan, mp_pts)
-    added = d_model > tol
-    within = float((ad <= tol).mean())
-    # шаг между точками выборки: на большой детали он больше 2 мм, и с постоянной связью
-    # промахи не собирались в области — ИИ не видел, где чинить
-    link = max(2.0, 2.5 * float(np.sqrt(scan.area / n)))
-    return {
-        "tolerance_mm": tol,
-        "scan_points": int(len(sp_pts)),
-        "within_tol_share": round(within, 4),
-        "mean_abs_dev_mm": round(float(ad.mean()), 3),
-        "median_abs_dev_mm": round(float(np.median(ad)), 3),
-        "p95_abs_dev_mm": round(float(np.percentile(ad, 95)), 3),
-        "max_abs_dev_mm": round(float(ad.max()), 3),
-        "outside_share": round(float(outside.mean()), 4),
-        "inside_share": round(float(inside.mean()), 4),
-        "added_surface_share": round(float(added.mean()), 4),
-        "clusters_outside": clusters(sp_pts[outside], sd[outside], link=link, min_pts=8),
-        "clusters_inside": clusters(sp_pts[inside], sd[inside], link=link, min_pts=8),
-        "clusters_added": clusters(mp_pts[added], d_model[added], link=link, min_pts=8),
-        # для картинок
-        "_scan_pts": sp_pts, "_scan_dev": sd, "_model_pts": mp_pts, "_model_dev": d_model,
-    }
+    with measured(timings, "compare_signed"):
+        sd = trimesh.proximity.signed_distance(model, sp_pts)
+    with measured(timings, "compare_reverse"):
+        d_model = (prepared.distances(mp_pts) if prepared is not None
+                   else trimesh.proximity.closest_point(scan, mp_pts)[1])
+    with measured(timings, "compare_metrics"):
+        ad = np.abs(sd)
+        outside = sd < -tol
+        inside = sd > tol
+        added = d_model > tol
+        within = float((ad <= tol).mean())
+        # Шаг связи областей остаётся привязан к площади и прежнему размеру выборки.
+        link = max(2.0, 2.5 * float(np.sqrt(scan.area / n)))
+        return {
+            "tolerance_mm": tol,
+            "scan_points": int(len(sp_pts)),
+            "within_tol_share": round(within, 4),
+            "mean_abs_dev_mm": round(float(ad.mean()), 3),
+            "median_abs_dev_mm": round(float(np.median(ad)), 3),
+            "p95_abs_dev_mm": round(float(np.percentile(ad, 95)), 3),
+            "max_abs_dev_mm": round(float(ad.max()), 3),
+            "outside_share": round(float(outside.mean()), 4),
+            "inside_share": round(float(inside.mean()), 4),
+            "added_surface_share": round(float(added.mean()), 4),
+            "clusters_outside": clusters(sp_pts[outside], sd[outside], link=link, min_pts=8),
+            "clusters_inside": clusters(sp_pts[inside], sd[inside], link=link, min_pts=8),
+            "clusters_added": clusters(mp_pts[added], d_model[added], link=link, min_pts=8),
+            # для картинок
+            "_scan_pts": sp_pts, "_scan_dev": sd, "_model_pts": mp_pts, "_model_dev": d_model,
+        }
 
 
 def public(rep: dict) -> dict:

@@ -235,6 +235,7 @@ def _plane_tags(mesh, quads, raw, proj, w):
 
 
 _SCAN = None  # исходный скан текущей детали (ставит smooth_body): по нему разметка уточняет области
+SEW_TOL = 0.02  # допуск сшивки лоскутов, мм
 PLN0, CYL0 = 50000, 100000  # номера плоских и цилиндрических областей разметки в метках лоскутов
 
 
@@ -380,7 +381,7 @@ def _merge_planes(sewn, faces, tag, fit):
     границ группы). Группа, где грань выходит невалидной, остаётся как есть."""
     import cadquery as cq
     import networkx as nx
-    from OCP.BRep import BRep_Builder
+    from OCP.BRep import BRep_Builder, BRep_Tool
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
     from OCP.BRepCheck import BRepCheck_Analyzer
     from OCP.BRepTools import BRepTools_ReShape
@@ -439,6 +440,10 @@ def _merge_planes(sewn, faces, tag, fit):
             pf = TopoDS.Face_s(sff.Face())
             if not BRepCheck_Analyzer(pf).IsValid():
                 continue
+        # граница группы должна лежать на точной поверхности: иначе ShapeFix «закрывает» зазор
+        # допуском ребра (на кронштейне студии до 0,89 мм), и зазор в теле не виден ни одной проверке
+        if max((BRep_Tool.Tolerance_s(e.wrapped) for e in cq.Face(pf).Edges()), default=0.0) > 2.5 * SEW_TOL:
+            continue
         ref = cq.Face(faces[grp[0]])
         c_ = ref.Center()
         if ref.normalAt(c_).dot(cq.Face(pf).normalAt(c_)) < 0:
@@ -758,7 +763,7 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
     s = np.linspace(0, 1, K)
     S, T = np.meshgrid(s, s, indexing="ij")
     w = np.stack([(1 - S) * (1 - T), S * (1 - T), S * T, (1 - S) * T], -1).reshape(-1, 4)
-    sew = BRepBuilderAPI_Sewing(0.02)
+    sew = BRepBuilderAPI_Sewing(SEW_TOL)
     n_faces = 0
     mids = []  # точки поверхности в серединах ячеек: по ним меряется точность
     cm = (np.arange(K - 1) + 0.5) / (K - 1)

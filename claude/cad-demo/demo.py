@@ -34,6 +34,7 @@ import trimesh
 
 logging.getLogger("trimesh").setLevel(logging.ERROR)
 
+from cad_checks import measured
 import compare as cmpmod
 import holes as holesmod
 import gates
@@ -134,7 +135,7 @@ class SmoothJob:
 DRAFT: dict = {}  # путь к STEP черновика, который ИИ может взять за основу (переменная draft)
 
 
-def run_code(code: str, it_dir: Path, timeout: int = 90) -> dict:
+def run_code(code: str, it_dir: Path, timeout: int = 90, *, step_source: Path | None = None) -> dict:
     (it_dir / "model.py").write_text(code, encoding="utf-8")
     try:
         # код от ИИ не должен видеть ключи и прочие секреты окружения
@@ -142,8 +143,10 @@ def run_code(code: str, it_dir: Path, timeout: int = 90) -> dict:
                if not any(t in k.upper() for t in ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"))}
         if DRAFT.get("step"):
             env["CAD_DRAFT"] = str(DRAFT["step"])
-        subprocess.run([sys.executable, str(HERE / "cad_runner.py"), str(it_dir / "model.py"), str(it_dir)],
-                       timeout=timeout, capture_output=True, text=True, env=env)
+        cmd = [sys.executable, str(HERE / "cad_runner.py"), str(it_dir / "model.py"), str(it_dir)]
+        if step_source is not None and os.environ.get("CAD_REUSE_WORKER_STEP", "1") != "0":
+            cmd.append(str(step_source))
+        subprocess.run(cmd, timeout=timeout, capture_output=True, text=True, env=env)
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"код считался дольше {timeout} с и был остановлен"}
     p = it_dir / "run.json"
@@ -580,7 +583,8 @@ a.btn{{display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:
 <p>{'<b>Модель сошлась с уцелевшей частью скана.</b> Это не доказывает, что достроенное место верно: его проверяет инженер.' if ctx['converged'] else '<b class=err>Не сошлась до цели</b>: смотреть лучшую попытку и замечания.' if best else '<b class=err>Ни одна попытка не дала тела.</b>'}
 Цель: не менее {ctx['target']*100:.0f}% точек скана в допуске и почти нет мест, где модели не хватает материала. Точки на сколе в допуск не попадают, так и должно быть.</p>
 {('<a class=btn href="model.step" download>Скачать STEP (КОМПАС-3D, SolidWorks и др.)</a><a class=btn href="model.stl" download>STL (для печати)</a><a class=btn href="model.py" download>Код модели</a>'
-  '<p class=filehint hidden>Отчёт открыт как файл, поэтому браузер может показать STEP вместо скачивания. '
+  + ('<a class=btn href="model_sw.bas" download>Макрос SolidWorks (дерево построения)</a>' if (out / "model_sw.bas").exists() else '')
+  + '<p class=filehint hidden>Отчёт открыт как файл, поэтому браузер может показать STEP вместо скачивания. '
   'Все файлы лежат в папке: <b>' + e(str(out.resolve())) + '</b> (или запускайте через start.bat — там кнопки скачивают).</p>'
   '<script>if(location.protocol==="file:")document.querySelectorAll(".filehint").forEach(function(x){x.hidden=false})</script>') if best else ''}
 </section>
@@ -691,35 +695,48 @@ def main() -> None:
     stages = {"загрузка и замеры": time.perf_counter() - load_started}
     worker_times = {}
 
+    prepared_scans = {}
+
     def compare_models(a_mesh, b_mesh):
-        t = time.perf_counter()
-        try:
-            return cmpmod.compare(a_mesh, b_mesh, tol=a.tol)
-        finally:
-            stages["сравнение"] = stages.get("сравнение", 0.0) + time.perf_counter() - t
+        prepared = None
+        if os.environ.get("CAD_COMPARE_CACHE", "1") != "0":
+            key = id(a_mesh)
+            if key not in prepared_scans:
+                prepared_scans[key] = cmpmod.ScanComparison(a_mesh)
+            prepared = prepared_scans[key]
+        with measured(stages, "сравнение"):
+            return cmpmod.compare(a_mesh, b_mesh, tol=a.tol, prepared=prepared, timings=stages)
+
+    def load_stl(path):
+        with measured(stages, "stl_load"):
+            return trimesh.load(path, force="mesh")
 
     iterations, llm_log, best, converged = [], [], None, False
 
-    def evaluate(n: int, code: str, meta: dict, t0: float, by: str) -> dict:
+    def evaluate(n: int, code: str, meta: dict, t0: float, by: str, *, step_source=None) -> dict:
         it_dir = out / f"iter{n}"
         it_dir.mkdir(exist_ok=True)
         log("3/4 строю модель…")
         # черновик из стенок собирается из сотен пластин: на крупной детали это минуты
         limit = 420 if n in ("0б", "0в", "0к") else 180
         build_started = time.perf_counter()
-        run = run_code(code, it_dir, timeout=limit) if code else {"ok": False, "error": "в ответе нет блока python"}
+        run = run_code(code, it_dir, timeout=limit, step_source=step_source) if code else {
+            "ok": False, "error": "в ответе нет блока python"}
+        for key, elapsed in run.get("timings", {}).items():
+            stages[key] = stages.get(key, 0.0) + elapsed
         if n in (0, "0в", "0к"):
             stages[f"{n}, построение/экспорт"] = time.perf_counter() - build_started
         cmp = None
         model = None
         if run.get("ok"):
-            model = trimesh.load(it_dir / "model.stl", force="mesh")
+            model = load_stl(it_dir / "model.stl")
             log(f"    тело валидно: {run.get('valid')}, объём {run.get('volume_mm3')} мм³")
             log("4/4 сравниваю со сканом…")
             cmp = compare_models(scan, model)
             log(f"    в допуске {cmp['within_tol_share']*100:.1f}%, не хватает материала {cmp['outside_share']*100:.2f}%, "
                 f"скол/лишнее {cmp['inside_share']*100:.2f}%, 95% ближе {cmp['p95_abs_dev_mm']} мм")
-            render(cmp, it_dir / "deviation.png", f"Попытка {n} ({by})")
+            with measured(stages, "compare_render"):
+                render(cmp, it_dir / "deviation.png", f"Попытка {n} ({by})")
         else:
             log(f"    ошибка: {run.get('error', '')[:200]}")
         gate_fail = gates.check(run, model, sheet, scan)
@@ -865,7 +882,8 @@ def main() -> None:
                 g = json.loads(sj.read_text(encoding="utf-8"))
                 worker_times["0в"] = g.get("timings", {})
                 log("    " + g["meta"]["plan"])
-                its = evaluate("0в", g["code"], g["meta"], t0, "поверхность, без ИИ")
+                its = evaluate("0в", g["code"], g["meta"], t0, "поверхность, без ИИ",
+                               step_source=sj.with_suffix(".step"))
                 iterations.append(its)
                 if its["run"].get("ok") and (best is None or rank(its) > rank(best)):
                     best = its
@@ -896,7 +914,8 @@ def main() -> None:
                     g = json.loads(kj.read_text(encoding="utf-8"))
                     worker_times["0к"] = g.get("timings", {})
                     log("    " + g["meta"]["plan"])
-                    itk = evaluate("0к", g["code"], g["meta"], t0, "гладкие грани, без ИИ")
+                    itk = evaluate("0к", g["code"], g["meta"], t0, "гладкие грани, без ИИ",
+                                   step_source=kj.with_suffix(".step"))
                     iterations.append(itk)
                     if itk["run"].get("ok") and not itk["gates"] and itk["cmp"] and (
                             best is None or best["cmp"] is None
@@ -1130,18 +1149,24 @@ def main() -> None:
     if best:
         for f in ("model.step", "model.stl", "model.py"):
             shutil.copy(best["dir"] / f, out / f)
+        (out / "model_sw.bas").unlink(missing_ok=True)
+        import sw_macro
+
+        sw = sw_macro.export(out / "model.py", out / "model.step", out / "model_sw.bas")
+        if sw:
+            log(f"макрос SolidWorks с деревом построения: {sw} → model_sw.bas")
         if a.truth:
             tp = Path(a.truth)
             if tp.suffix.lower() in (".step", ".stp"):
                 import cadquery as cq
 
                 cq.exporters.export(cq.importers.importStep(str(tp)), str(out / "_truth.stl"), tolerance=0.02)
-                tm = trimesh.load(out / "_truth.stl", force="mesh")
+                tm = load_stl(out / "_truth.stl")
             else:
-                tm = trimesh.load(tp, force="mesh")
+                tm = load_stl(tp) if tp.suffix.lower() == ".stl" else trimesh.load(tp, force="mesh")
             # эталон в координатах исходного скана → переводим в выровненные
             tm.apply_transform(np.array(sheet["transform_from_scan_4x4"]))
-            truth = compare_models(tm, trimesh.load(out / "model.stl", force="mesh"))
+            truth = compare_models(tm, load_stl(out / "model.stl"))
             log(f"эталон: в допуске {truth['within_tol_share']*100:.1f}% (тестовая деталь)")
             # каждая попытка против эталона: совпадение и точность диаметров отверстий
             try:
@@ -1153,7 +1178,7 @@ def main() -> None:
             for it in iterations:
                 if not it["run"].get("ok") or not (it["dir"] / "model.stl").exists():
                     continue
-                mm = trimesh.load(it["dir"] / "model.stl", force="mesh")
+                mm = load_stl(it["dir"] / "model.stl")
                 errs, miss = [], 0
                 for h, m in th:
                     r = holesmod._measure(mm, h, 0.6)
@@ -1172,7 +1197,7 @@ def main() -> None:
     if best and (out / "model.stl").exists():
         log("4/4 ищу отверстия скана и сверяю их с моделью…", 600)
         try:  # отверстия скана: на месте ли они в модели и того же ли размера
-            holes_rows = holesmod.check(scan, trimesh.load(out / "model.stl", force="mesh"), tol=max(0.2, a.tol / 2))
+            holes_rows = holesmod.check(scan, load_stl(out / "model.stl"), tol=max(0.2, a.tol / 2))
             log(f"отверстия: найдено {len(holes_rows)}, совпали {sum(r['ok'] for r in holes_rows)}")
         except Exception as ex:  # noqa: BLE001
             log(f"проверка отверстий не удалась: {ex}")
@@ -1202,13 +1227,16 @@ def main() -> None:
                          (("smooth", "гладкое тело"), ("fillets", "скругления"), ("holes", "отверстия")))
         for key, label in (("fillet_boolean", "скругления, булевы"), ("fillet_checks", "скругления, проверки"),
                            ("hole_search", "поиск отверстий/кэш"),
+                           ("hole_preflight", "предварительная проверка отверстий"),
                            ("hole_boolean", "отверстия, булевы"), ("hole_checks", "отверстия, проверки")):
             if key in worker:
                 parts.append(f"{stage}, {label} {duration(worker[key])}")
         for kind, label in (("fillet", "скругления"), ("hole", "отверстия")):
             if f"{kind}_ops" in worker:
                 ops, rolled = worker[f"{kind}_ops"], worker[f"{kind}_rolled_back_ops"]
-                parts.append(f"{stage}, {label}: булевых {ops}, отброшено {rolled}")
+                skipped = worker.get("hole_preflight_rejected", 0) if kind == "hole" else 0
+                suffix = f", пропущено до булевой {skipped}" if skipped else ""
+                parts.append(f"{stage}, {label}: булевых {ops}, отброшено {rolled}{suffix}")
     parts.extend(f"{label} {duration(stages.get(label))}" for label in ("сравнение", "перечитывание STEP"))
     phase_names = {
         "coarse": "сетка", "layout": "раскладка", "projection": "проекция",
@@ -1225,6 +1253,17 @@ def main() -> None:
         times = stage["times"]
         detail = ", ".join(f"{label} {duration(times[key])}" for key, label in phase_names.items() if key in times)
         parts.append(f"ступень 0к/{stage['step']} ({stage_names[stage['status']]}): {detail}")
+    for key, label in (
+        ("stl_load", "загрузка STL"), ("compare_sample", "выборка сравнения"),
+        ("compare_signed", "расстояния скан → модель"), ("compare_reverse", "расстояния модель → скан"),
+        ("compare_metrics", "метрики и области отклонений"), ("compare_render", "карты отклонений"),
+        ("step_import", "чтение STEP воркера"), ("step_write", "запись STEP"),
+        ("step_copy", "копирование STEP воркера"), ("stl_tessellation", "тесселяция STL"),
+        ("stl_write", "запись STL"),
+    ):
+        elapsed = stages.get(key, 0) + sum(worker.get(key, 0) for worker in worker_times.values())
+        if elapsed:
+            parts.append(f"{label} {duration(elapsed)}")
     timing_text = "время по этапам: " + ", ".join(parts) + " (фоновые этапы перекрываются)"
     log(timing_text)
     log(route_text(iterations, best))

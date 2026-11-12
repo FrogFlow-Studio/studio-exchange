@@ -159,6 +159,8 @@ def _hole_specs(scan, scan_path: Path, answer: Path, *, digest=None):
 
 
 def main() -> None:
+    from cad_checks import measured
+
     started = time.perf_counter()
     timings = {}
     _memory_guard()
@@ -201,7 +203,8 @@ def main() -> None:
         timings["cleanup"] = time.perf_counter() - t
         body, info = surface.surface_body(scan, prepared=clean, timings=timings, hole_finder=hole_finder)
         step = Path(sys.argv[4]).with_suffix(".step")
-        cq.exporters.export(body, str(step))
+        with measured(timings, "step_write"):
+            cq.exporters.export(body, str(step))
         code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
         meta = {"plan": f"тело по поверхности скана: {info['faces']} треугольников, отверстий вырезано точно {info['holes_cut']}",
                 "restored": [], "assumptions": ["форма любая: тело повторяет поверхность скана, плоские участки выпрямлены"]}
@@ -229,7 +232,6 @@ def main() -> None:
         timings["nurbs_steps"] = info["stages"]
         if body is None:
             raise SystemExit("гладкое тело не собралось")
-        planes = sum(f.geomType() == "PLANE" for f in body.Faces())
         fil_note = []
         t = time.perf_counter()
         try:  # скругления между плоскими гранями: точные цилиндры вместо сплайнов; не вышло — тело прежнее
@@ -249,9 +251,13 @@ def main() -> None:
         body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings, hole_finder=hole_finder)
         timings["holes"] = time.perf_counter() - t
         step = Path(sys.argv[4]).with_suffix(".step")
-        cq.exporters.export(body, str(step))
+        with measured(timings, "step_write"):
+            cq.exporters.export(body, str(step))
         code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
-        meta = {"plan": f"гладкое тело: {info['faces']} граней по скану (из них {planes} точных плоскостей, остальные B-сплайн), {round(info['near'] * 100, 1)}% поверхности "
+        kinds = __import__("collections").Counter(f.geomType() for f in body.Faces())
+        exact = ", ".join(f"{name} {kinds[t]}" for t, name in (("PLANE", "плоскостей"), ("CYLINDER", "цилиндров"),
+                                                              ("CONE", "конусов"), ("SPHERE", "сфер")) if kinds[t])
+        meta = {"plan": f"гладкое тело: {sum(kinds.values())} граней по скану (точных: {exact or 'нет'}; остальные B-сплайн), {round(info['near'] * 100, 1)}% поверхности "
                         f"в пределах 0,2 мм, отверстий вырезано точно {cut}",
                 "restored": [], "assumptions": ["форма любая: гладкие грани повторяют поверхность скана"] + fil_note}
     else:

@@ -303,32 +303,58 @@ def hole_parameters(scan: trimesh.Trimesh):
 def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_finder=hole_parameters):
     """Круглые отверстия вырезаются точно по диаметру из скана. Возвращает (тело, сколько)."""
     import cadquery as cq
+    from time import perf_counter
 
     from cad_checks import VolumeMemo, add_count, boolean_op, disjoint_tool_boxes, measured
+    from hole_preflight import HolePreflight
 
     if volumes is None:
         volumes = VolumeMemo()
     add_count(timings, "hole_ops", 0)
     add_count(timings, "hole_rolled_back_ops", 0)
+    add_count(timings, "hole_preflight_rejected", 0)
+    preflight = HolePreflight() if os.environ.get("CAD_HOLE_PREFLIGHT", "1") != "0" else None
     with measured(timings, "hole_search"):
         specs = hole_finder(scan)
 
-    def attempt(body, tool, limit, *, trial=False):
+    def note(label, outcome, started, boolean_s=0.0):
+        print(f"    {label}: {outcome}; булева {boolean_s:.3f} с, всего {perf_counter() - started:.3f} с",
+              flush=True)
+
+    def attempt(body, tool, limit, label, *, trial=False):
         add_count(timings, "hole_ops")
+        started = perf_counter()
+        boolean_s = 0.0
+        phase = "булева"
         try:
-            with measured(timings, "hole_boolean"):
-                res = boolean_op(body, (tool,), preserve_inputs=trial)
+            t = perf_counter()
+            try:
+                with measured(timings, "hole_boolean"):
+                    res = boolean_op(body, (tool,), preserve_inputs=trial)
+            finally:
+                boolean_s = perf_counter() - t
+            phase = "проверка"
             with measured(timings, "hole_checks"):
                 solids = res.Solids()
-                if len(solids) == 1:
+                if len(solids) != 1:
+                    reason = f"тел {len(solids)}, требуется одно"
+                else:
                     before, after = volumes.get(body), res.Volume()
+                    delta = before - after
                     solid = solids[0]
-                    if 0 <= before - after <= limit and solid.isValid():
+                    if not 0 <= delta <= limit:
+                        reason = f"изменение объёма {delta:.9g} мм³ вне [0, {limit:.9g}]"
+                    elif not solid.isValid():
+                        reason = "тело невалидно"
+                    else:
                         volumes.remember_cut(res, solid, after)
+                        note(label, f"принято, удалено {delta:.9g} мм³", started, boolean_s)
                         return solid
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as ex:  # noqa: BLE001
+            detail = " ".join(str(ex).split())[:160]
+            reason = f"{phase}: исключение {type(ex).__name__}" + (f" ({detail})" if detail else "")
         add_count(timings, "hole_rolled_back_ops")
+        note(label, f"откат, {reason}", started, boolean_s)
         return None
 
     def cylinder(spec):
@@ -341,7 +367,8 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_find
             cutters = [cylinder(spec) for spec in specs]
             if disjoint_tool_boxes((tool,) for tool, _ in cutters):
                 compound = cq.Compound.makeCompound([tool for tool, _ in cutters])
-                new = attempt(s, compound, sum(limit for _, limit in cutters) + 1, trial=True)
+                new = attempt(s, compound, sum(limit for _, limit in cutters) + 1,
+                              f"пакет отверстий ({len(cutters)})", trial=True)
                 if new is not None:
                     return new, len(cutters)
         except Exception:  # noqa: BLE001
@@ -349,11 +376,29 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_find
 
     cut = 0
     for i, spec in enumerate(specs):
+        label = f"отверстие {i + 1}"
+        started = perf_counter()
+        try:
+            c, d, r, h = spec
+            label += f", Ø{2 * r:.6g}, L={h:.17g}, R={r:.17g}, начало {list(map(float, c))}, ось {list(map(float, d))}"
+        except (ValueError, TypeError):
+            pass
+        if preflight is not None:
+            try:
+                with measured(timings, "hole_preflight"):
+                    reason = preflight.reject(s, spec)
+            except Exception:  # an inconclusive precheck keeps the original path
+                reason = None
+            if reason:
+                add_count(timings, "hole_preflight_rejected")
+                note(label, f"пропуск до булевой, {reason}", started)
+                continue
         try:
             tool, limit = cutters[i] if cutters else cylinder(spec)
-        except Exception:  # noqa: BLE001
+        except Exception as ex:  # noqa: BLE001
+            note(label, f"инструмент: исключение {type(ex).__name__}", started)
             continue
-        new = attempt(s, tool, limit + 1)
+        new = attempt(s, tool, limit + 1, label)
         if new is not None:
             s, cut = new, cut + 1
     return s, cut

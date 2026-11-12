@@ -29,8 +29,17 @@ def _section_polys(mesh: trimesh.Trimesh, z: float) -> list[Polygon]:
     return sa.best_section(mesh, z)
 
 
+def _top(mesh: trimesh.Trimesh, levels: list[float]) -> float:
+    """Верх детали: найденная горизонтальная площадка у самого верха, если она есть. Максимум
+    сетки выше её на выбросы шума (тестовый фланец: 25,19 вместо 25,00)."""
+    zmax = float(mesh.bounds[1][2])
+    near = [z for z in levels if zmax - 0.5 <= z <= zmax]
+    return max(near) if near else zmax
+
+
 def _slab_bounds(mesh: trimesh.Trimesh, levels: list[float], step: float = 2.0) -> list[tuple[float, float]]:
-    zs = sorted(set([0.0, float(mesh.bounds[1][2])] + [z for z in levels if 0.3 < z < mesh.bounds[1][2] - 0.3]))
+    top = _top(mesh, levels)
+    zs = sorted(set([0.0, top] + [z for z in levels if 0.3 < z < top - 0.3]))
     out = []
     for a, b in zip(zs, zs[1:]):
         if b - a < 0.3:
@@ -116,6 +125,183 @@ def _poly_code(p: Polygon, tol: float = 0.3) -> str:
     raw = np.round(np.asarray(q.exterior.coords)[:-1], 2).tolist()
     pts = [pt for i, pt in enumerate(raw) if pt != raw[i - 1]]  # повтор точки = ребро нулевой длины
     return json.dumps(pts)
+
+
+def _circle3(P: np.ndarray):
+    """Окружность по точкам (метод Каса): центр, радиус, наибольшее отклонение точек."""
+    A = np.c_[2 * P, np.ones(len(P))]
+    b = (P ** 2).sum(1)
+    (cx, cy, c), *_ = np.linalg.lstsq(A, b, rcond=None)
+    r = float(np.sqrt(max(c + cx * cx + cy * cy, 0.0)))
+    return np.array([cx, cy]), r, float(np.abs(np.linalg.norm(P - [cx, cy], axis=1) - r).max())
+
+
+def _fillet(A: np.ndarray, B: np.ndarray, P: np.ndarray, r0: float, tol: float):
+    """Скругление между двумя прямыми: прямые по точкам A (до дуги) и B (после), центр на
+    биссектрисе их угла, радиус — по точкам дуги P. Возвращает центр, радиус, точки касания и
+    середину дуги или None, если прямые короткие, почти параллельны или дуга не ложится."""
+    from scipy.optimize import minimize_scalar
+
+    def line(Q):
+        if len(Q) < 4 or np.linalg.norm(Q[-1] - Q[0]) < 1.0:
+            return None
+        c = Q.mean(0)
+        d = np.linalg.svd(Q - c, full_matrices=False)[2][0]
+        return c, d
+
+    la, lb = line(A), line(B)
+    if la is None or lb is None:
+        return None
+    (ca, da), (cb, db) = la, lb
+    M = np.c_[da, -db]
+    if abs(np.linalg.det(M)) < 0.05:
+        return None
+    ta, _ = np.linalg.solve(M, cb - ca)
+    X = ca + ta * da
+    u1 = A[0] - X
+    u2 = B[-1] - X
+    u1, u2 = da * np.sign(u1 @ da), db * np.sign(u2 @ db)
+    half = np.arccos(np.clip(u1 @ u2, -1, 1)) / 2
+    if half < np.radians(5) or half > np.radians(85):
+        return None
+    bis = (u1 + u2) / np.linalg.norm(u1 + u2)
+
+    def center(r):
+        return X + bis * r / np.sin(half)
+
+    def cost(r):
+        return float(((np.linalg.norm(P - center(r), axis=1) - r) ** 2).mean())
+
+    res = minimize_scalar(cost, bounds=(0.3 * r0, 3 * r0), method="bounded")
+    r = float(res.x)
+    if np.sqrt(res.fun) > tol / 2:
+        return None
+    t = r / np.tan(half)
+    if t > np.linalg.norm(A[0] - X) or t > np.linalg.norm(B[-1] - X):
+        return None
+    c = center(r)
+    return c, r, X + u1 * t, X + u2 * t, c + (X - c) / np.linalg.norm(X - c) * r
+
+
+def _sketch_code(p: Polygon, tol: float = 0.3) -> str:
+    """Контур для CadQuery: отрезки и дуги. Цепочку вершин упрощённого контура, которая вместе с
+    точками исходного контура между ними ложится на одну окружность (отклонение до tol/2, поворот
+    в одну сторону, дуга от 30° до 300°), заменяет дуга: скругление угла в плане становится точной
+    цилиндрической гранью, а не набором плоских фасет. Без дуг — прежняя ломаная."""
+    q = p.buffer(0.15, join_style=2).buffer(-0.15, join_style=2)
+    if q.geom_type != "Polygon" or q.area < 0.5 * p.area:
+        q = p
+    dense = np.asarray(q.exterior.coords)[:-1]
+    if not q.exterior.is_ccw:
+        dense = dense[::-1]
+    simp = q.simplify(tol)
+    V = np.asarray(simp.exterior.coords)[:-1]
+    if not simp.exterior.is_ccw:
+        V = V[::-1]
+    n = len(V)
+    poly = "polyline(" + _poly_code(p, tol) + ").close()"
+    if n < 5 or len(dense) < 8:
+        return poly
+    key = {tuple(np.round(x, 9)): i for i, x in enumerate(dense)}
+    idx = [key.get(tuple(np.round(v, 9))) for v in V]
+    if any(i is None for i in idx):
+        return poly
+    span = float(np.ptp(dense, axis=0).max())
+
+    def turn(i):
+        a, b, c = V[(i - 1) % n], V[i], V[(i + 1) % n]
+        u, w = b - a, c - b
+        return float(np.arctan2(u[0] * w[1] - u[1] * w[0], u @ w))
+
+    def chunk(i, j):  # точки исходного контура от вершины i до вершины j (по кругу)
+        a, b = idx[i % n], idx[j % n]
+        return dense[a:b + 1] if a <= b else np.vstack([dense[a:], dense[:b + 1]])
+
+    def arc_ok(i, j, final=True):
+        if j - i < 2 or j - i >= n:
+            return None
+        P = chunk(i, j)
+        if len(P) < 6:
+            return None
+        c, r, dev = _circle3(P)
+        if dev > tol / 2 or r > span or r < 0.5:
+            return None
+        # концы цепочки — переход к прямым, где точки уже не на окружности: радиус по середине
+        cut = max(1, len(P) // 6)
+        c, r, _ = _circle3(P[cut:-cut]) if len(P) - 2 * cut >= 5 else (c, r, dev)
+        t = [turn(k % n) for k in range(i + 1, j)]
+        if not (all(x > 0 for x in t) or all(x < 0 for x in t)):
+            return None
+        a0, a1 = V[i % n] - c, V[j % n] - c
+        sweep = abs(sum(t))
+        if sweep > np.radians(300) or (final and sweep < np.radians(30)):
+            return None
+        return c, r
+
+    arcs, i = {}, 0
+    # старт с вершины, которая не лежит внутри дуги: перебираем все и берём первую подходящую
+    start = 0
+    best = None
+    for s0 in range(n):
+        arcs_s, k = {}, s0
+        while k < s0 + n:
+            j, got = k + 2, None
+            while j <= s0 + n:
+                if arc_ok(k, j, final=False) is None:
+                    break
+                f = arc_ok(k, j)
+                if f is not None:
+                    got = (j, f)
+                j += 1
+            if got:
+                arcs_s[k] = got
+                k = got[0]
+            else:
+                k += 1
+        cover = sum(j - k for k, (j, _) in arcs_s.items())
+        if best is None or cover > best[0]:
+            best, start = (cover, arcs_s), s0
+        if cover == 0:
+            break
+    if not best or not best[1]:
+        return poly
+    arcs = best[1]
+
+    def onto(v, c, r):
+        d = v - c
+        return c + d * (r / max(np.linalg.norm(d), 1e-9))
+
+    pts = {k: V[k % n].copy() for k in range(start, start + n + 1)}
+    mids = {}
+    ends = {j for j, _ in arcs.values()}
+    for k, (j, (c, r)) in arcs.items():
+        pts[k], pts[j] = onto(pts[k], c, r), onto(pts[j], c, r)
+    for k, (j, (c, r)) in list(arcs.items()):
+        if k in ends or j in arcs:
+            continue  # скругление между двумя прямыми: радиус и точки касания — по самим прямым
+        fil = _fillet(chunk(k - 1, k), chunk(j, j + 1), chunk(k, j), r, tol)
+        if fil is not None:
+            c, r, t1, t2, m = fil
+            arcs[k] = (j, (c, r))
+            pts[k], pts[j], mids[k] = t1, t2, m
+            if j == start + n:
+                pts[start] = t2
+    f2 = lambda v: f"({v[0]:.3f}, {v[1]:.3f})"
+    out = f".moveTo{f2(pts[start])}"
+    k = start
+    while k < start + n:
+        if k in arcs:
+            j, (c, r) = arcs[k]
+            P = chunk(k, j)
+            m = mids.get(k, onto(P[len(P) // 2], c, r))
+            end = pts[j] if j < start + n else pts[start]
+            out += f".threePointArc({f2(m)}, {f2(end)})"
+            k = j
+        else:
+            if k + 1 < start + n:
+                out += f".lineTo{f2(pts[k + 1])}"
+            k += 1
+    return out.lstrip(".") + ".close()"
 
 
 def side_holes(mesh: trimesh.Trimesh, step: float = 1.5) -> list[dict]:
@@ -595,8 +781,8 @@ def build(mesh: trimesh.Trimesh, sheet: dict, restore: bool = True) -> tuple[str
         for c in it["cuts"]:
             if len(json.loads(_poly_code(c, 0.15))) < 3:
                 continue
-            out.append(f"s = s.cut(cq.Workplane('XY').workplane(offset={L['a'] - lap - 0.01:.3f}).polyline({_poly_code(c, 0.15)})"
-                       f".close().extrude({L['b'] - L['a'] + lap + 0.02:.3f}))")
+            out.append(f"s = s.cut(cq.Workplane('XY').workplane(offset={L['a'] - lap - 0.01:.3f}).{_sketch_code(c, 0.15)}"
+                       f".extrude({L['b'] - L['a'] + lap + 0.02:.3f}))")
         return out
 
     for grp in groups_rev:
@@ -623,7 +809,7 @@ def build(mesh: trimesh.Trimesh, sheet: dict, restore: bool = True) -> tuple[str
                          f".revolve(360, (0, 0, 0), (0, 1, 0)).translate(({cx:.3f}, {cy:.3f}, 0))")
         else:
             L, lap = it0["L"], it0["lap"]
-            lines.append(f"s = cq.Workplane('XY').workplane(offset={L['a'] - lap:.3f}).polyline({_poly_code(it0['outer'])}).close()"
+            lines.append(f"s = cq.Workplane('XY').workplane(offset={L['a'] - lap:.3f}).{_sketch_code(it0['outer'])}"
                          f".extrude({L['b'] - L['a'] + lap:.3f})")
         for g in grp:
             lines += cut_lines(g)
@@ -654,11 +840,11 @@ def build(mesh: trimesh.Trimesh, sheet: dict, restore: bool = True) -> tuple[str
                      f"построена плоскостью, а не ступеньками")
     lines += ["", "# Отверстия"]
     for g in groups:
-        z0, z1 = 0.0, float(mesh.bounds[1][2])
+        z0, z1 = 0.0, _top(mesh, levels)
         # отверстие режем на высоту слоёв, где оно видно (с запасом до границ слоёв)
         zs = g["zs"]
         # высоты — до ближайших горизонтальных площадок вокруг тех мест, где отверстие видно
-        bands = sorted(set([0.0, float(mesh.bounds[1][2])] + [z for z in levels if 0.3 < z < mesh.bounds[1][2] - 0.3]))
+        bands = sorted(set([0.0, z1] + [z for z in levels if 0.3 < z < z1 - 0.3]))
         lo_b = [z for z in bands if z <= min(zs) + 0.01]
         hi_b = [z for z in bands if z >= max(zs) - 0.01]
         if lo_b and hi_b:

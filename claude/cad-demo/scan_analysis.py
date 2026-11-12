@@ -340,14 +340,21 @@ def _section_once(mesh: trimesh.Trimesh, z: float):
     # Кусок внутри отверстия другого куска — обрывок контура отверстия, не материал.
     holes = [Polygon(r) for p in polys for r in p.interiors]
     polys = [p for p in polys if not any(h.buffer(0.2).contains(p) for h in holes)]
-    # Доля линий сечения, вошедших в замкнутые контуры: шумное сечение теряет куски.
+    # Куски материала не перекрываются. Перекрытие бывает, когда плоскость сечения прошла точно
+    # через ряд вершин сетки (втулка на Z=35,00: диск без отверстия и два одинаковых круга).
+    for i, p in enumerate(polys):
+        for q in polys[i + 1:]:
+            if p.intersection(q).area > 0.01 * min(p.area, q.area):
+                return polys, 0.0
     used = sum(p.exterior.length + sum(r.length for r in p.interiors) for p in polys)
     return polys, used / max(sec.length, 1e-9)
 
 
 def best_section(mesh: trimesh.Trimesh, z: float) -> list:
     """Сечение на нескольких близких высотах; берём то, где контуры замкнулись лучше всего."""
-    tries = [_section_once(mesh, z + dz) for dz in (0.0, 0.3, -0.3, 0.6, -0.6)]
+    # сдвиг 0,013 мм: высота слоя часто круглая (35,00), а у сетки из CAD ряды вершин лежат ровно
+    # на таких высотах — сечение через вершины рвётся и даёт обрывки и наложения
+    tries = [_section_once(mesh, z + 0.013 + dz) for dz in (0.0, 0.3, -0.3, 0.6, -0.6)]
     return max(tries, key=lambda t: t[1])[0]
 
 

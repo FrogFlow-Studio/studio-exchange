@@ -103,7 +103,7 @@ def _quads(coarse: trimesh.Trimesh):
 
 
 
-def _paired_quads(coarse: trimesh.Trimesh):
+def _paired_quads(coarse: trimesh.Trimesh, labels=None, *, return_pairs=False):
     """Треугольники грубой сетки склеиваются парами в четырёхугольники: у замкнутой поверхности
     граф соседства треугольников кубический и без мостов, поэтому разбиение на пары без остатка
     существует всегда (теорема Петерсена). Пары выбираются так, чтобы четырёхугольники были как
@@ -111,6 +111,12 @@ def _paired_quads(coarse: trimesh.Trimesh):
     import networkx as nx
 
     V, F, fn = coarse.vertices, coarse.faces, coarse.face_normals
+    if labels is not None:
+        labels = np.asarray(labels)
+        if labels.shape != (len(F),):
+            raise ValueError("one region label is required per coarse triangle")
+    # At equal cardinality a single same-region edge outweighs all shape scores.
+    bonus = (len(F) // 2 + 1) * 1_001_000
     g = nx.Graph()
     info = {}
     for (a, b), (u, v) in zip(coarse.face_adjacency, coarse.face_adjacency_edges):
@@ -133,19 +139,25 @@ def _paired_quads(coarse: trimesh.Trimesh):
         wgt = max(shape, 0.0) * max(float(fn[a] @ fn[b]), 0.0) + (1e-3 if shape > 0 else 0.0)
         # вес целым числом: с дробными весами поиск пар в networkx из-за округлений может не завершиться
         # (тестовый фланец считался дольше 15 минут)
-        g.add_edge(int(a), int(b), weight=int(round(wgt * 1_000_000)))
+        weight = int(round(wgt * 1_000_000))
+        if labels is not None and labels[a] == labels[b]:
+            weight += bonus
+        g.add_edge(int(a), int(b), weight=weight)
         info[(int(a), int(b))] = (q, n, shape)
     g.add_nodes_from(range(len(F)))
     m = nx.max_weight_matching(g, maxcardinality=True)
     if 2 * len(m) != len(F):
         return None
     out = []
+    pairs = []
     for a, b in m:
         q, n, shape = info.get((a, b)) or info[(b, a)]
         if (b, a) in info and (a, b) not in info:
             a, b = b, a
         out.append((q, n, fn[a], fn[b], shape))
-    return out
+        if return_pairs:
+            pairs.append((a, b))
+    return (out, pairs) if return_pairs else out
 
 
 def _plane_tags(mesh, quads, raw, proj, w):
@@ -239,7 +251,7 @@ def _onto(p, entry):
     return p - ((p - c0) @ nn) * nn
 
 
-def _cyl_tags(mesh, quads, raw, proj, w, tag, fit):
+def _cyl_tags(mesh, quads, raw, proj, w, tag, fit, *, seg=None, qlabel=None):
     """Лоскуты на цилиндрических областях (regions.segment): точки таких лоскутов кладутся точно
     на цилиндр, а общие с плоскостью или другим цилиндром — на линию их пересечения. Лоскут
     берётся, только если почти все его точки принадлежат одной области и лежат на её цилиндре."""
@@ -247,7 +259,8 @@ def _cyl_tags(mesh, quads, raw, proj, w, tag, fit):
 
     import regions
 
-    seg = regions.segment(mesh, scan=_SCAN)  # параметры областей уточняются по точкам исходного скана
+    if seg is None:
+        seg = regions.segment(mesh, scan=_SCAN)  # параметры областей уточняются по точкам исходного скана
     prim = {j: r for j, r in enumerate(seg["regions"]) if r["kind"] in ("plane", "cylinder")}
     if not prim:
         return tag, fit
@@ -261,9 +274,14 @@ def _cyl_tags(mesh, quads, raw, proj, w, tag, fit):
         if tag[i] >= 0:
             continue
         lab = label[tree.query(P)[1]]
-        j = int(np.bincount(lab[lab >= 0]).argmax()) if (lab >= 0).any() else -1
-        if j not in prim or (lab == j).mean() < 0.8:
-            continue
+        if qlabel is not None and qlabel[i] >= 0:  # оба треугольника пары из одной области раскладки
+            j = int(qlabel[i])
+            if j not in prim or (lab == j).mean() < 0.5:
+                continue
+        else:
+            j = int(np.bincount(lab[lab >= 0]).argmax()) if (lab >= 0).any() else -1
+            if j not in prim or (lab == j).mean() < 0.8:
+                continue
         r = prim[j]
         if r["kind"] == "plane":
             key, entry = PLN0 + j, (r["origin"], r["normal"])
@@ -386,9 +404,12 @@ def _merge_planes(sewn, faces, tag, fit):
         fl = [x for x in fl if x is not None]
         if len(fl) == 2 and tag[fl[0]] >= 0 and tag[fl[0]] == tag[fl[1]]:
             g.add_edge(fl[0], fl[1])
+    single = os.environ.get("CAD_REGIONS", "0") == "1"  # одиночный лоскут области тоже становится точной гранью
+    if single:
+        g.add_nodes_from(i for i in range(len(faces)) if tag[i] >= 0)
     rs = BRepTools_ReShape()
     merged = 0
-    for grp in (sorted(c) for c in nx.connected_components(g) if len(c) >= 2):
+    for grp in (sorted(c) for c in nx.connected_components(g) if len(c) >= (1 if single else 2)):
         entry = fit[int(tag[grp[0]])]
         if len(entry) != 4:
             c0, nn = entry
@@ -701,11 +722,37 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
 
     import surface
 
+    regions_on = planes and os.environ.get("CAD_REGIONS", "0") == "1"
+    seg = coarse = coarse_label = None
     with measured(profile, "coarse"):
-        if len(mesh.faces) > triangles:
-            coarse = surface.coarsen(mesh, triangles)
-        else:
-            coarse = mesh
+        if regions_on:  # этап Б: грубая сетка по границам областей разметки (раскладка Севера, задача 11)
+            try:
+                import regions
+                from region_layout import coarsen_by_regions
+
+                seg = regions.segment(mesh, scan=_SCAN)
+                # Раскладка тратит часть треугольников на границы областей и при том же числе
+                # треугольников хуже повторяет форму (кронштейн студии: p95 1,15 мм против 0,58).
+                # Берётся наименьший бюджет, при котором она не хуже прежнего огрубления.
+                plain = surface.coarsen(mesh, triangles) if len(mesh.faces) > triangles else mesh
+                probe, _ = trimesh.sample.sample_surface(mesh, 2000, seed=7)
+
+                def p95(c):
+                    return float(np.percentile(np.abs(trimesh.proximity.closest_point(c, probe)[1]), 95))
+
+                limit = 1.1 * p95(plain)
+                coarse = coarse_label = None
+                for k in (1.0, 1.5, 2.0):
+                    c, lab = coarsen_by_regions(mesh, seg["label"], int(k * triangles))
+                    if c.is_watertight and len(c.faces) <= 1.3 * k * triangles and p95(c) <= limit:
+                        coarse, coarse_label = c, lab
+                        break
+                if coarse_label is None:
+                    coarse = plain
+            except Exception:  # noqa: BLE001  без раскладки — прежнее огрубление
+                coarse = coarse_label = None
+        if coarse is None:
+            coarse = surface.coarsen(mesh, triangles) if len(mesh.faces) > triangles else mesh
     if not coarse.is_watertight:
         return None, 0, None
     s = np.linspace(0, 1, K)
@@ -717,7 +764,15 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
     cm = (np.arange(K - 1) + 0.5) / (K - 1)
     S_, T_ = S.ravel(), T.ravel()
     with measured(profile, "layout"):
-        pq = _paired_quads(coarse) if PAIR else None
+        qlabel = None
+        if PAIR and coarse_label is not None:
+            got = _paired_quads(coarse, coarse_label, return_pairs=True)
+            pq = None
+            if got is not None:
+                pq, pairs = got
+                qlabel = np.array([coarse_label[a] if coarse_label[a] == coarse_label[b] else -1 for a, b in pairs])
+        else:
+            pq = _paired_quads(coarse) if PAIR else None
         if PAIR and pq is None:
             return None, 0, None
         if pq is not None:
@@ -736,7 +791,7 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
                 tag, fit = _plane_tags(mesh, quads, projected, proj, w)
             if os.environ.get("CAD_REGIONS", "0") == "1":  # точные цилиндры по разметке областей (этап Б)
                 with measured(profile, "cylinders"):
-                    tag, fit = _cyl_tags(mesh, quads, projected, proj, w, tag, fit)
+                    tag, fit = _cyl_tags(mesh, quads, projected, proj, w, tag, fit, seg=seg, qlabel=qlabel)
         except Exception:  # noqa: BLE001  плоскости — улучшение, без них тело то же
             tag, fit = -np.ones(len(quads), int), {}
     faces, ftag = [], []

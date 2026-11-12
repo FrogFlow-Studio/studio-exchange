@@ -19,6 +19,25 @@ NUM = r"-?\d+(?:\.\d+)?"
 HOLE = re.compile(rf"\.center\(({NUM}), ({NUM})\)\.circle\(({NUM})\)")
 
 
+
+def _no_slivers(pts, tol: float = 0.02):
+    """Соседние точки профиля вращения, радиусы которых отличаются меньше tol, получают общий
+    радиус: иначе стенка выходит конусом с углом в сотые доли градуса вместо цилиндра (втулка:
+    R25 → конус 0,05°, приёмка STEP не находит цилиндр)."""
+    out = [list(p) for p in pts]
+    i = 0
+    while i < len(out):
+        j = i
+        while (j + 1 < len(out) and out[j + 1][0] > 0.5 and out[i][0] > 0.5
+               and abs(out[j + 1][0] - out[i][0]) < tol and out[j + 1][1] != out[j][1]):
+            j += 1
+        if j > i:
+            r = round(sum(out[k][0] for k in range(i, j + 1)) / (j - i + 1), 3)
+            for k in range(i, j + 1):
+                out[k][0] = r
+        i = j + 1
+    return out
+
 def faces(step: Path):
     """Цилиндры с осью вдоль Z (ось x, y, радиус) и плоскости, перпендикулярные Z (высота)."""
     import cadquery as cq
@@ -130,6 +149,7 @@ def refine(code: str, cyl: list, pl: list, pts=None, pos_tol: float = 0.3, r_tol
             if abs(nz - z) >= 0.001:
                 changes.append(f"высота {z:.3f} → {nz:.3f} мм")
             out.append([round(nr, 3), round(nz, 3)])
+        out = _no_slivers(out)
         return (f"polyline({json.dumps(out)}){m.group(2)}.translate(({tx}, {ty}, 0))")
 
     code = re.sub(rf"polyline\((\[\[.*?\]\])\)(\.close\(\)\.revolve\(360, \(0, 0, 0\), \(0, 1, 0\)\))"

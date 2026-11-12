@@ -143,7 +143,7 @@ def _sector(cc, e1, _unused, ax, r0, r1, phi, t0, t1):
 
 
 def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, log: list | None = None,
-          mesh=None, *, volumes=None, timings=None):
+          mesh=None, *, volumes=None, timings=None, limit_time: bool = False):
     """Заменяет в теле приближённые (сплайновые) скругления точными цилиндрическими гранями.
 
     У каждого участка скругления узкая полоса у дуги сначала вырезается (инструмент режет тело
@@ -157,7 +157,7 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
     import os
     import time
 
-    from cad_checks import InsideMemo, VolumeMemo, add_count, boolean_op, disjoint_tool_boxes, measured
+    from cad_checks import InsideMemo, VolumeMemo, add_count, boolean_limited, boolean_op, disjoint_tool_boxes, measured
 
     if volumes is None:
         volumes = VolumeMemo()
@@ -243,10 +243,17 @@ def apply(body, fl: list[dict], budget: float = 240.0, trim_deg: float = 4.0, lo
         ops = 0
         try:
             with measured(timings, "fillet_boolean"):
-                ops += 1
-                cut = boolean_op(base, [c for c, _ in part], preserve_inputs=trial)
-                ops += 1
-                new = boolean_op(cut, [a for _, a in part], fuse=True, preserve_inputs=trial)
+                if limit_time and tag == "все":
+                    # тяжёлое тело: «все разом» может тянуться десятки минут и всё равно откатиться
+                    # (кронштейн студии с разметкой: 961 с), поэтому — отдельным процессом, не дольше
+                    # четверти бюджета. Участки по одному быстрые, они идут здесь же.
+                    ops += 2
+                    new = boolean_limited(base, [c for c, _ in part], [a for _, a in part], max(15.0, budget / 4))
+                else:
+                    ops += 1
+                    cut = boolean_op(base, [c for c, _ in part], preserve_inputs=trial)
+                    ops += 1
+                    new = boolean_op(cut, [a for _, a in part], fuse=True, preserve_inputs=trial)
             with measured(timings, "fillet_checks"):
                 sols = new.Solids()
                 why = ("тел " + str(len(sols))) if len(sols) != 1 else ("" if sols[0].isValid() else "невалидно")

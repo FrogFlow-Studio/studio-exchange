@@ -300,12 +300,17 @@ def hole_parameters(scan: trimesh.Trimesh):
             for w in walls._hole_walls(scan)]
 
 
-def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_finder=hole_parameters):
-    """Круглые отверстия вырезаются точно по диаметру из скана. Возвращает (тело, сколько)."""
+def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_finder=hole_parameters,
+              limit_time: bool = False):
+    """Круглые отверстия вырезаются точно по диаметру из скана. Возвращает (тело, сколько).
+
+    limit_time: каждый вырез идёт в отдельном процессе с пределом времени (для тяжёлых тел, где
+    безнадёжная булева операция тянется минутами и всё равно откатывается). Предел — 60 с для первого
+    выреза, дальше 6× самого долгого удачного, но не меньше 30 с."""
     import cadquery as cq
     from time import perf_counter
 
-    from cad_checks import VolumeMemo, add_count, boolean_op, disjoint_tool_boxes, measured
+    from cad_checks import VolumeMemo, add_count, boolean_cut_limited, boolean_op, disjoint_tool_boxes, measured
     from hole_preflight import HolePreflight
 
     if volumes is None:
@@ -321,6 +326,8 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_find
         print(f"    {label}: {outcome}; булева {boolean_s:.3f} с, всего {perf_counter() - started:.3f} с",
               flush=True)
 
+    ok_times = []
+
     def attempt(body, tool, limit, label, *, trial=False):
         add_count(timings, "hole_ops")
         started = perf_counter()
@@ -330,7 +337,10 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_find
             t = perf_counter()
             try:
                 with measured(timings, "hole_boolean"):
-                    res = boolean_op(body, (tool,), preserve_inputs=trial)
+                    if limit_time and not trial:
+                        res = boolean_cut_limited(body, tool, max(30.0, 6 * max(ok_times)) if ok_times else 60.0)
+                    else:
+                        res = boolean_op(body, (tool,), preserve_inputs=trial)
             finally:
                 boolean_s = perf_counter() - t
             phase = "проверка"
@@ -348,6 +358,7 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_find
                         reason = "тело невалидно"
                     else:
                         volumes.remember_cut(res, solid, after)
+                        ok_times.append(boolean_s)
                         note(label, f"принято, удалено {delta:.9g} мм³", started, boolean_s)
                         return solid
         except Exception as ex:  # noqa: BLE001

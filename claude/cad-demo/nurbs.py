@@ -405,7 +405,7 @@ def _merge_planes(sewn, faces, tag, fit):
         fl = [x for x in fl if x is not None]
         if len(fl) == 2 and tag[fl[0]] >= 0 and tag[fl[0]] == tag[fl[1]]:
             g.add_edge(fl[0], fl[1])
-    single = os.environ.get("CAD_REGIONS", "0") == "1"  # одиночный лоскут области тоже становится точной гранью
+    single = _regions()  # одиночный лоскут области тоже становится точной гранью
     if single:
         g.add_nodes_from(i for i in range(len(faces)) if tag[i] >= 0)
     rs = BRepTools_ReShape()
@@ -727,7 +727,7 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
 
     import surface
 
-    regions_on = planes and os.environ.get("CAD_REGIONS", "0") == "1"
+    regions_on = planes and _regions()
     seg = coarse = coarse_label = None
     with measured(profile, "coarse"):
         if regions_on:  # этап Б: грубая сетка по границам областей разметки (раскладка Севера, задача 11)
@@ -794,7 +794,7 @@ def _build(mesh: trimesh.Trimesh, triangles: int, proj: _Projector, planes: bool
                 projected = [proj(w @ q, nn_) for (q, _), nn_ in zip(quads, nrm)]
             with measured(profile, "planes"):
                 tag, fit = _plane_tags(mesh, quads, projected, proj, w)
-            if os.environ.get("CAD_REGIONS", "0") == "1":  # точные цилиндры по разметке областей (этап Б)
+            if _regions():  # точные цилиндры по разметке областей (этап Б)
                 with measured(profile, "cylinders"):
                     tag, fit = _cyl_tags(mesh, quads, projected, proj, w, tag, fit, seg=seg, qlabel=qlabel)
         except Exception:  # noqa: BLE001  плоскости — улучшение, без них тело то же
@@ -924,7 +924,37 @@ def cover_share(body, proj: _Projector, tol: float = 0.3, n: int = 30000, *, pro
         return float((np.count_nonzero(near) + np.count_nonzero(d < tol)) / len(pts))
 
 
+_NO_REGIONS = False  # откат: разметка областей не дала ни одной принятой ступени
+
+
+def _regions() -> bool:
+    """Этап Б (точные грани по разметке областей) включён и не отключён откатом."""
+    return os.environ.get("CAD_REGIONS", "0") == "1" and not _NO_REGIONS
+
+
 def smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 900.0, tol: float = 0.3):
+    """Ступени гладкого тела; с разметкой областей (CAD_REGIONS=1) — если ни одна ступень не принята,
+    те же ступени без разметки, берётся лучшее (кронштейн студии: с разметкой третья ступень
+    невалидна, без неё принята)."""
+    global _NO_REGIONS
+    body, info = _smooth_body(mesh, scan, budget, tol)
+    if _regions() and not any(st.get("status") == "accepted" for st in info["stages"]) \
+            and info["sec"] < budget / 2:
+        _NO_REGIONS = True
+        try:
+            b2, i2 = _smooth_body(mesh, scan, budget - info["sec"], tol)
+        finally:
+            _NO_REGIONS = False
+        for st in i2["stages"]:
+            st["regions_fallback"] = True
+        stages = info["stages"] + i2["stages"]
+        if b2 is not None and (body is None or i2["score"] > info["score"]):
+            body, info = b2, dict(i2, regions_fallback=True)
+        info["stages"], info["sec"] = stages, info["sec"] + i2["sec"]
+    return body, info
+
+
+def _smooth_body(mesh: trimesh.Trimesh, scan: trimesh.Trimesh, budget: float = 900.0, tol: float = 0.3):
     """mesh — замкнутая чистая поверхность (из surface.py), scan — исходный скан, tol — допуск, с которым
     модель потом сравнивается со сканом. Возвращает (тело или None, сведения)."""
     t0 = time.time()

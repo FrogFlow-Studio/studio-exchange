@@ -117,3 +117,48 @@ class InsideMemo:
             self.shape = shape
         self.classifier.Perform(gp_Pnt(*map(float, point)), tol)
         return self.classifier.State() == TopAbs_IN or self.classifier.IsOnAFace()
+
+
+
+
+_CHILD = ("import sys, cadquery as cq\n"
+          "b = cq.Shape.importBrep(sys.argv[1])\n"
+          "if sys.argv[2] != '-': b = b.cut(cq.Shape.importBrep(sys.argv[2]))\n"
+          "if sys.argv[3] != '-': b = b.fuse(cq.Shape.importBrep(sys.argv[3]))\n"
+          "b.exportBrep(sys.argv[4])\n")
+
+
+def boolean_limited(base, cut_tools=(), fuse_tools=(), timeout_s: float = 60.0):
+    """Вырез, затем вставка, с пределом времени. OCC нельзя прервать изнутри, поэтому операция
+    идёт в отдельном процессе Python (так же на Windows), тела передаются файлами BRep.
+    Не уложилась — TimeoutError, исходное тело не тронуто."""
+    import subprocess
+    import sys
+    import tempfile
+
+    import cadquery as cq
+
+    def one(tools):
+        tools = list(tools)
+        return None if not tools else tools[0] if len(tools) == 1 else cq.Compound.makeCompound(tools)
+
+    with tempfile.TemporaryDirectory(prefix="cadbool-") as d:
+        paths = [os.path.join(d, n) for n in ("base.brep", "cut.brep", "fuse.brep", "out.brep")]
+        base.exportBrep(paths[0])
+        for shape, path in ((one(cut_tools), paths[1]), (one(fuse_tools), paths[2])):
+            if shape is None:
+                paths[paths.index(path)] = "-"
+            else:
+                shape.exportBrep(path)
+        try:
+            r = subprocess.run([sys.executable, "-c", _CHILD, *paths], capture_output=True, timeout=max(1.0, timeout_s))
+        except subprocess.TimeoutExpired:
+            raise TimeoutError(f"не уложилась в {timeout_s:.0f} с") from None
+        if r.returncode != 0 or not os.path.exists(paths[3]):
+            tail = r.stderr.decode("utf-8", "replace").strip().splitlines()[-1:] or [""]
+            raise RuntimeError(f"дочерний процесс: код {r.returncode} {tail[0][:120]}")
+        return cq.Shape.importBrep(paths[3])
+
+
+def boolean_cut_limited(base, tool, timeout_s: float):
+    return boolean_limited(base, (tool,), (), timeout_s)

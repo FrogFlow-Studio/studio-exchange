@@ -242,13 +242,15 @@ def main() -> None:
             fl = fillets.find_fillets(clean) if on and left > 120 else []
             if fl:
                 body, built, _ = fillets.apply(
-                    body, fl, budget=min(240.0, left - 90), mesh=clean, volumes=volumes, timings=timings)
+                    body, fl, budget=min(240.0, left - 90), mesh=clean, volumes=volumes, timings=timings,
+                    limit_time=True)
                 fil_note = [fillets.summary(fl) + (f"; точными цилиндрами построено кусков: {built}" if built else "")]
         except Exception:  # noqa: BLE001
             fil_note = []
         timings["fillets"] = time.perf_counter() - t
         t = time.perf_counter()
-        body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings, hole_finder=hole_finder)
+        body, cut = surface.cut_holes(body, scan, volumes=volumes, timings=timings, hole_finder=hole_finder,
+                                       limit_time=True)
         timings["holes"] = time.perf_counter() - t
         step = Path(sys.argv[4]).with_suffix(".step")
         with measured(timings, "step_write"):

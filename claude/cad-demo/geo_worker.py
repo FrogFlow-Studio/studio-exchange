@@ -159,9 +159,9 @@ def _hole_specs(scan, scan_path: Path, answer: Path, *, digest=None):
 
 
 def _symmetry_restore(clean, timings, scan=None, cache=None):
-    """CAD_SYMMETRY=1: сколы кривой детали достраиваются отражением целой стороны (этап Д) до построения
+    """Этап Д (CAD_SYMMETRY=0 — выключить): сколы кривой детали достраиваются отражением целой стороны (этап Д) до построения
     тела. Возвращает (сетка, строки «достроено», зоны для сравнения со сканом)."""
-    if os.environ.get("CAD_SYMMETRY", "0") != "1":
+    if os.environ.get("CAD_SYMMETRY", "1") == "0":
         return clean, [], []
     import symmetry
 

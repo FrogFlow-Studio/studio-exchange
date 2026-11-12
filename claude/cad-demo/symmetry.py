@@ -22,6 +22,26 @@ def _reflect(P, n, d):
     return P - 2 * ((P @ n) - d)[:, None] * n
 
 
+class _Near:
+    """Ближайшая точка поверхности без взрыва памяти: trimesh.closest_point на точке, далёкой от
+    поверхности, перебирает почти все треугольники (rav4: 10,8 ГБ). Сначала — дерево по плотной выборке,
+    точный поиск — только для близких точек; для далёких хватает приближения (они всё равно дальше tol)."""
+
+    def __init__(self, mesh: trimesh.Trimesh, n: int = 200_000):
+        self.mesh = mesh
+        self.P, self.F = trimesh.sample.sample_surface(mesh, n, seed=7)
+        self.tree = cKDTree(self.P)
+        self.step = 2.0 * float(np.sqrt(mesh.area / n))
+
+    def __call__(self, pts, tol):
+        dist, j = self.tree.query(pts)
+        near, face = self.P[j].copy(), self.F[j].copy()
+        close = dist < tol + self.step
+        if close.any():
+            near[close], dist[close], face[close] = trimesh.proximity.closest_point(self.mesh, pts[close])
+        return near, dist, face
+
+
 def find_planes(mesh: trimesh.Trimesh, tol: float = 0.3, starts: int = 60, keep: int = 4) -> list[dict]:
     """Плоскости зеркальной симметрии, лучшие первыми: normal, d (n·x = d), share — доля поверхности,
     чьё отражение лежит на поверхности в пределах tol. Поиск: направления по сфере и главные оси,
@@ -74,8 +94,9 @@ def find_planes(mesh: trimesh.Trimesh, tol: float = 0.3, starts: int = 60, keep:
     out.sort(key=lambda o: o["cost"])
     out = out[:keep]
     Q = trimesh.sample.sample_surface(mesh, 15_000, seed=5)[0]
+    near = _Near(mesh)
     for o in out:
-        dist = trimesh.proximity.closest_point(mesh, _reflect(Q, o["normal"], o["d"]))[1]
+        dist = near(_reflect(Q, o["normal"], o["d"]), tol)[1]
         o["share"] = float((dist < tol).mean())
     out.sort(key=lambda o: -o["share"])
     return out
@@ -96,7 +117,7 @@ def chips(mesh: trimesh.Trimesh, plane: dict, tol: float = 0.3, min_share: float
     n, d = plane["normal"], plane["d"]
     B = _mirror(mesh if source is None else source, plane)
     cen = B.triangles_center
-    near, dist, fa = trimesh.proximity.closest_point(mesh, cen)
+    near, dist, fa = _Near(mesh)(cen, tol)
     outside = (dist > tol) & (np.einsum("ij,ij->i", cen - near, mesh.face_normals[fa]) > 0)
     adj = B.face_adjacency
     adj = adj[outside[adj[:, 0]] & outside[adj[:, 1]]]
@@ -224,7 +245,15 @@ def restore_all(mesh: trimesh.Trimesh, tol: float = 0.3, min_share: float = 0.8)
     planes = [p for p in find_planes(mesh, tol) if p["share"] >= min_share]
     if planes:
         planes = [p for p in planes if p["share"] >= planes[0]["share"] - 0.07]
+    N = 15_000
+
+    def shares(m):
+        Q = trimesh.sample.sample_surface(m, N, seed=5)[0]
+        near = _Near(m)
+        return [float((near(_reflect(Q, q["normal"], q["d"]), tol)[1] < tol).mean()) for q in planes]
+
     cur, log = mesh, []
+    base = shares(cur) if len(planes) > 1 else None
     for _ in range(6 * max(1, len(planes))):
         # за шаг — одна достройка: та, что добавляет больше всего. Скол, пересекающий плоскость, ею
         # достраивается лишь частично (отражается сам в себя); другая плоскость даёт его целиком.
@@ -242,6 +271,14 @@ def restore_all(mesh: trimesh.Trimesh, tol: float = 0.3, min_share: float = 0.8)
                 # плёнка от неточного совпадения отражения (над отверстием: 0,035) — не скол
                 if gain < 0.08 * c["area"] * c["depth"]:
                     continue
+                if base is not None:
+                    # согласие плоскостей: настоящая достройка не делает деталь менее симметричной
+                    # относительно других найденных плоскостей; копия выступа по неверной плоскости
+                    # делает (крышка: диагональ размножала ушки). Допуск — разброс выборки, 3σ.
+                    now = shares(r)
+                    if any(q is not p and v < b0 - 3 * np.sqrt(max(b0 * (1 - b0), 1e-4) / N)
+                           for q, v, b0 in zip(planes, now, base)):
+                        continue
                 if best is None or gain > best[0]:
                     V = B.vertices[np.unique(B.faces[c["faces"]])]
                     c = dict(c, radius=float(np.linalg.norm(V - c["center"], axis=1).max()) + 1.0,
@@ -251,6 +288,8 @@ def restore_all(mesh: trimesh.Trimesh, tol: float = 0.3, min_share: float = 0.8)
         if best is None:
             break
         gain, cur, p, c = best
+        if base is not None:
+            base = shares(cur)
         log.append({"normal": p["normal"], "d": p["d"], "area": c["area"], "depth": c["depth"],
                     "center": c["center"], "radius": c["radius"], "hull": c["hull"], "volume": gain})
     return cur, log, planes

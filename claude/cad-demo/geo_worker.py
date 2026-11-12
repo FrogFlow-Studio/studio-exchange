@@ -158,7 +158,7 @@ def _hole_specs(scan, scan_path: Path, answer: Path, *, digest=None):
     return _run_cache(cache, "поиск отверстий", read, lambda: surface.hole_parameters(scan), write)
 
 
-def _symmetry_restore(clean, timings, scan=None):
+def _symmetry_restore(clean, timings, scan=None, cache=None):
     """CAD_SYMMETRY=1: сколы кривой детали достраиваются отражением целой стороны (этап Д) до построения
     тела. Возвращает (сетка, строки «достроено», зоны для сравнения со сканом)."""
     if os.environ.get("CAD_SYMMETRY", "0") != "1":
@@ -170,14 +170,27 @@ def _symmetry_restore(clean, timings, scan=None):
         # сколы ищутся по сырому скану: на очищенной поверхности излом сглажен и похож на целую
         # поверхность (крышка: неверная плоскость нашла 20 «сколов»); крупный скан прорежен
         raw = clean if scan is None else scan
-        if len(raw.faces) > 200_000:
-            import fast_simplification
 
-            v, f = fast_simplification.simplify(np.asarray(raw.vertices, np.float32), np.asarray(raw.faces),
-                                                target_reduction=1 - 200_000 / len(raw.faces))
-            raw = trimesh.Trimesh(v, f)
-        _, log, planes = symmetry.restore_all(raw)
-        out = symmetry.apply_to(clean, log) if raw is not clean else _
+        def find():
+            src = raw
+            if len(src.faces) > 200_000:
+                import fast_simplification
+
+                v, f = fast_simplification.simplify(np.asarray(src.vertices, np.float32), np.asarray(src.faces),
+                                                    target_reduction=1 - 200_000 / len(src.faces))
+                src = trimesh.Trimesh(v, f)
+            _, log, planes = symmetry.restore_all(src)
+            return {"log": log, "planes": planes}
+
+        if cache is None:
+            found = find()
+        else:   # 0в и 0к ищут одни и те же сколы: второй берёт найденное первым
+            import pickle
+
+            found = _run_cache(cache, "поиск сколов по симметрии", lambda s: pickle.load(s), find,
+                               lambda s, v: pickle.dump(v, s))
+        log, planes = found["log"], found["planes"]
+        out = symmetry.apply_to(clean, log)
         if log and out is clean:
             print("    достройка на очищенной поверхности не удалась: тело по скану как есть", flush=True)
             return clean, [], []
@@ -237,7 +250,8 @@ def main() -> None:
         t = time.perf_counter()
         clean = _clean_surface(scan, scan_path, answer, digest=digest)
         timings["cleanup"] = time.perf_counter() - t
-        clean, restored, zones = _symmetry_restore(clean, timings, scan)
+        clean, restored, zones = _symmetry_restore(
+            clean, timings, scan, None if digest is None else answer.parent / f"symmetry-v1-{digest}.pkl")
         body, info = surface.surface_body(scan, prepared=clean, timings=timings, hole_finder=hole_finder)
         step = Path(sys.argv[4]).with_suffix(".step")
         with measured(timings, "step_write"):
@@ -265,7 +279,8 @@ def main() -> None:
         clean = _clean_surface(scan, scan_path, answer, digest=digest)
         t = time.perf_counter()
         timings["cleanup"] = t - t_smooth
-        clean, restored, zones = _symmetry_restore(clean, timings, scan)
+        clean, restored, zones = _symmetry_restore(
+            clean, timings, scan, None if digest is None else answer.parent / f"symmetry-v1-{digest}.pkl")
         t = time.perf_counter()
         plugged = None
         if os.environ.get("CAD_HOLE_PLUG", "0") == "1":   # отверстия закрыть в сетке, вырезать точно потом

@@ -29,20 +29,50 @@ function makePoints(source, limit, material) {
   return new THREE.Points(geometry, material);
 }
 
+const green = new THREE.Color('#53dfd2');
+const amber = new THREE.Color('#ffd07b');
+const red = new THREE.Color('#f1836e');
+
+function distanceColor(color, distance, tolerance) {
+  const scale = distance / tolerance;
+  return color.copy(scale < 1 ? green : amber)
+    .lerp(scale < 1 ? amber : red, Math.min(1, scale < 1 ? scale : scale - 1));
+}
+
+function modelColors(values, vertexCount, tolerance, legacy = false) {
+  if (values.length * 3 !== vertexCount) throw new Error('Карта отклонений не соответствует модели.');
+  const compare = new Uint8Array(vertexCount * 3);
+  const deviation = legacy ? null : new Uint8Array(compare.length);
+  const amberShade = new THREE.Color('#edac60').toArray().map((value) => Math.round(value * 255));
+  const white = [255, 255, 255];
+  const sample = new THREE.Color();
+  const rgb = [0, 0, 0];
+  for (let face = 0; face < values.length; face++) {
+    const outside = legacy ? values[face] : values[face] > tolerance;
+    if (deviation) {
+      distanceColor(sample, values[face], tolerance).toArray(rgb);
+      for (let channel = 0; channel < 3; channel++) rgb[channel] = Math.round(rgb[channel] * 255);
+    }
+    for (let i = face * 9; i < face * 9 + 9; i += 3) {
+      compare.set(outside ? amberShade : white, i);
+      if (deviation) deviation.set(rgb, i);
+    }
+  }
+  return {
+    compare: new THREE.BufferAttribute(compare, 3, true),
+    deviation: deviation ? new THREE.BufferAttribute(deviation, 3, true) : null,
+  };
+}
+
 function makeDeviations(buffer, tolerance, material) {
   const values = new Float32Array(buffer);
   if (!values.length || values.length % 4) throw new Error('Проба отклонений повреждена.');
   const positions = new Float32Array(values.length / 4 * 3);
   const colors = new Float32Array(positions.length);
-  const green = new THREE.Color('#53dfd2');
-  const amber = new THREE.Color('#ffd07b');
-  const red = new THREE.Color('#f1836e');
   const sample = new THREE.Color();
   for (let i = 0, j = 0; i < values.length; i += 4, j += 3) {
     positions.set(values.subarray(i, i + 3), j);
-    const scale = values[i + 3] / tolerance;
-    sample.copy(scale < 1 ? green : amber).lerp(scale < 1 ? amber : red, Math.min(1, scale < 1 ? scale : scale - 1));
-    colors.set([sample.r, sample.g, sample.b], j);
+    distanceColor(sample, values[i + 3], tolerance).toArray(colors, j);
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -90,7 +120,8 @@ export class Viewport {
       scan: new THREE.MeshStandardMaterial({color: 0x76b6bc, metalness: .10, roughness: .72, side: THREE.DoubleSide}),
       ghost: new THREE.PointsMaterial({color: 0x83e6dc, transparent: true, opacity: .54,
         size: 1.45, sizeAttenuation: false, depthTest: true, depthWrite: false}),
-      deviation: new THREE.PointsMaterial({vertexColors: true, size: 3.6,
+      heatmap: new THREE.MeshBasicMaterial({vertexColors: true, toneMapped: false, side: THREE.DoubleSide}),
+      deviation: new THREE.PointsMaterial({vertexColors: true, size: 3.6, toneMapped: false,
         sizeAttenuation: false, depthTest: true, depthWrite: false}),
     };
     this.scene.add(new THREE.HemisphereLight(0xe3f5ff, 0x55677e, 1.5));
@@ -108,6 +139,8 @@ export class Viewport {
     this.anchor = null;
     this.version = 0;
     this.mode = 'compare';
+    this.direction = 'model';
+    this.colors = {};
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(element);
     this.renderer.setAnimationLoop(() => {
@@ -147,6 +180,7 @@ export class Viewport {
       this.grid.material.dispose();
     }
     this.objects = {scan: new THREE.Mesh(scan, this.material.scan)};
+    this.colors = {};
     if (model) {
       this.objects.model = new THREE.Mesh(model, this.material.model);
       this.objects.ghost = makePoints(scan, 31000, this.material.ghost);
@@ -166,21 +200,13 @@ export class Viewport {
     this.clip(false, 53);
     this.setMode(this.mode);
     this.view('iso');
-    if (model && assets.unobserved) {
-      const mask = new Uint8Array(await binary(assets.unobserved));
+    if (model && (assets.model_deviation || assets.unobserved)) {
+      const data = await binary(assets.model_deviation || assets.unobserved);
       if (version !== this.version) return;
-      const vertexCount = model.getAttribute('position').count;
-      if (mask.length * 3 === vertexCount) {
-        const colors = new Float32Array(vertexCount * 3);
-        const shade = new THREE.Color('#edac60').toArray();
-        for (let face = 0; face < mask.length; face++) {
-          for (let v = face * 9; v < face * 9 + 9; v += 3) {
-            colors.set(mask[face] ? shade : [1, 1, 1], v);
-          }
-        }
-        model.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        this.setMode(this.mode);
-      }
+      const legacy = !assets.model_deviation;
+      const values = legacy ? new Uint8Array(data) : new Float32Array(data);
+      this.colors = modelColors(values, model.getAttribute('position').count, tolerance, legacy);
+      this.setMode(this.mode);
     }
     if (assets.deviations) {
       const buffer = await binary(assets.deviations);
@@ -192,15 +218,21 @@ export class Viewport {
     }
   }
 
-  setMode(mode) {
+  setMode(mode, direction = this.direction) {
     this.mode = mode;
+    this.direction = direction;
     const {scan, model, ghost, deviation} = this.objects;
+    const heatmap = mode === 'deviation' && direction === 'model' && Boolean(this.colors.deviation);
     if (scan) scan.visible = mode === 'scan' || !model;
-    if (model) model.visible = mode !== 'scan';
     if (ghost) ghost.visible = mode === 'compare';
-    if (deviation) deviation.visible = mode === 'deviation';
+    if (deviation) deviation.visible = mode === 'deviation' && direction === 'scan';
+    if (!model) return;
+    model.visible = mode !== 'scan';
+    model.material = heatmap ? this.material.heatmap : this.material.model;
+    const colors = heatmap ? this.colors.deviation : mode === 'compare' ? this.colors.compare : null;
+    if (colors) model.geometry.setAttribute('color', colors);
     const material = this.material.model;
-    const shaded = mode === 'compare' && Boolean(model?.geometry.hasAttribute('color'));
+    const shaded = mode === 'compare' && Boolean(colors);
     if (material.vertexColors !== shaded) {
       material.vertexColors = shaded;
       material.needsUpdate = true;

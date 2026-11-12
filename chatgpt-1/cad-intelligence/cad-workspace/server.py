@@ -30,7 +30,8 @@ SAMPLE = DEMO / "samples/flange_scan.stl"
 TRUTH = DEMO / "samples/flange_truth.step"
 UNITS = {"mm": 1., "cm": 10., "m": 1000., "in": 25.4}
 ASSETS = {"scan": "scan.stl", "model": "model.stl", "step": "model.step",
-          "deviations": "deviations.bin", "unobserved": "unobserved.bin", "report": "inspection.json"}
+          "deviations": "deviations.bin", "model_deviation": "model-deviation.bin",
+          "unobserved": "unobserved.bin", "macro": "model_sw.bas", "report": "inspection.json"}
 STATIC = {"": "index.html", "workspace.css": "workspace.css",
           "workspace.js": "workspace.js", "viewport.js": "viewport.js"}
 VENDOR = {"three.module.min.js", "OrbitControls.js", "STLLoader.js"}
@@ -59,23 +60,80 @@ def mesh_info(mesh):
     return {"triangles": len(mesh.faces), "extents": mesh.extents.tolist()}
 
 
-def prepare_inspection(directory, scan, model, step, example=False, transform=None):
+def engine_revision():
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=DEMO,
+                                       text=True, stderr=subprocess.DEVNULL, timeout=5).strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def run_identity(name, revision, regions):
+    flag = "вкл." if regions else "выкл."
+    return {"name": f"{name} · {revision[:7] if revision else 'версия неизвестна'} · Разметка {flag}",
+            "engine_revision": revision, "cad_regions": regions}
+
+
+def update_progress(job, line):
+    message = re.sub(r"^\d\d:\d\d:\d\d\s+", "", line).strip()
+    for pattern, stage in STAGES:
+        if pattern.match(message):
+            job.update(stage=stage, stage_detail=message[3:].strip().rstrip("…"), heartbeat=None)
+            attempt = re.match(r"2/4\s+попытка\s+(\w+):", message)
+            if attempt:
+                job["attempt"] = attempt[1]
+            elif not message.startswith(("3/4 строю модель", "4/4 сравниваю со сканом")):
+                job["attempt"] = None
+            return
+    heartbeat = re.match(r"…\s*идёт\s+(\d+)\s+мин(?:\s+из предела\s+(\d+)\s+мин)?", message)
+    if heartbeat:
+        job["heartbeat"] = {"minutes": int(heartbeat[1]), "limit_minutes": int(heartbeat[2]) if heartbeat[2] else None}
+    attempt = job.get("attempt")
+    if attempt and message.startswith("в допуске ") and job.get("stage") == "Проверка результата":
+        job["compared"] = list(dict.fromkeys([*job.get("compared", []), attempt]))
+    if attempt and message.startswith("обязательная проверка не пройдена:"):
+        job["rejected"] = list(dict.fromkeys([*job.get("rejected", []), attempt]))
+    winner = re.match(r"Выбран путь\s+(\w+)\b", message)
+    if winner:
+        job["winner"] = winner[1]
+
+
+def display_distances(scan, points, ceiling):
+    """Exact distance to scan triangles up to the top of the color scale."""
+    tree = scan.triangles_tree
+    triangles = scan.triangles
+    result = np.full(len(points), ceiling, dtype="<f4")
+    for start in range(0, len(points), 512):
+        query = points[start:start + 512]
+        low, high = query - ceiling, query + ceiling
+        try:
+            indices, counts = tree.intersection_v(low, high)
+            owners = np.repeat(np.arange(len(query)), counts.astype(np.intp))
+        except Exception:
+            # Older Rtree builds may lack the vectorized query.
+            candidates = [list(tree.intersection(bounds)) for bounds in np.column_stack((low, high))]
+            indices = np.concatenate(candidates).astype(np.intp)
+            owners = np.repeat(np.arange(len(query)), list(map(len, candidates)))
+        if len(indices):
+            p = query[owners]
+            near = trimesh.triangles.closest_point(triangles[indices], p)
+            np.minimum.at(result[start:start + len(query)], owners, np.linalg.norm(near - p, axis=1))
+    return result
+
+
+def prepare_inspection(directory, scan, model, step, example=False, transform=None, identity=None):
     tol = audit.Tolerance(samples=4000)
     result = audit.evaluate(step, TRUTH if example else None, transform=transform, tol=tol)
     scan_fit = audit.distances(scan, model, tol)
     p, _ = trimesh.sample.sample_surface(scan, tol.samples, seed=tol.seed)
-    distance = np.concatenate([trimesh.proximity.closest_point(model, p[i:i+96])[1]
+    distance = np.concatenate([trimesh.proximity.closest_point(model, p[i:i + 96])[1]
                                for i in range(0, len(p), 96)])
     np.asarray(np.c_[p, distance], dtype="<f4").tofile(directory / ASSETS["deviations"])
-    # Match the STL triangle order used by the browser. This shading is an
-    # observation about scan coverage, independent of how the body was built.
-    mask = directory / ASSETS["unobserved"]
-    mask.unlink(missing_ok=True)
-    if len(model.faces) <= 15000:
-        centers = model.triangles_center
-        inverse = np.concatenate([trimesh.proximity.closest_point(scan, centers[i:i+96])[1]
-                                  for i in range(0, len(centers), 96)])
-        np.asarray(inverse > tol.cover_mm, dtype=np.uint8).tofile(mask)
+    # STL triangle order is also the viewer's order. Values above the legend
+    # ceiling use the same color, so no search outside that radius is needed.
+    display_distances(scan, model.triangles_center, 2 * tol.cover_mm).tofile(
+        directory / ASSETS["model_deviation"])
+    (directory / ASSETS["unobserved"]).unlink(missing_ok=True)
     issues = []
     dimensions = {
         "offset_mm": ("Смещение плоскости", "plane_mm", "мм"),
@@ -112,7 +170,8 @@ def prepare_inspection(directory, scan, model, step, example=False, transform=No
     if not all(top[k] for k in ("valid", "closed", "connected_solid")):
         issues.append({"label": "Проверка тела требует внимания", "severity": "warning",
                        "source": "Повторное чтение STEP"})
-    audit.write_json(directory / ASSETS["report"], {**result, "scan_surface": scan_fit})
+    audit.write_json(directory / ASSETS["report"],
+                     {**result, "scan_surface": scan_fit, "run": identity})
     return {"topology": top, "scan_surface": scan_fit, "reference_surface": result["surface"],
             "reference_outcomes": result["outcomes"], "tolerance_mm": tol.cover_mm,
             "issues": issues, "has_reference": example}
@@ -157,24 +216,27 @@ class Workspace:
         directory = self.path("example")
         directory.mkdir(exist_ok=True)
         with zipfile.ZipFile(HERE / "example.zip") as archive:
-            for filename in ("model.stl", "model.step", "example.json"):
+            for filename in ("model.stl", "model.step", "example.json", ASSETS["macro"]):
                 (directory / filename).write_bytes(archive.read(filename))
         example = json_read(directory / "example.json")
         scan = load_mesh(SAMPLE)
         scan.apply_transform(example["transform"])
         scan.export(directory / "scan.stl")
         model = load_mesh(directory / "model.stl", process=False)
+        identity = run_identity("Тестовый фланец", example["provenance"]["commit"], False)
         check = prepare_inspection(directory, scan, model, directory / "model.step",
-                                   example=True, transform=example["transform"])
+                                   example=True, transform=example["transform"], identity=identity)
         self.jobs["example"] = {"id": "example", "name": "Тестовый фланец", "filename": SAMPLE.name,
                                 "status": "ready", "example": True, "sample": True, "units": "mm",
                                 "created": 0, "stage": "Результат сохранён", "seconds": None,
                                 "scan": mesh_info(scan), "check": check,
-                                "provenance": example["provenance"], "log": []}
+                                "provenance": example["provenance"], "identity": identity,
+                                "compared": ["0", "0ж"], "winner": "0ж", "log": []}
 
     def summary(self):
         with self.lock:
-            return [{"id": j["id"], "name": j["name"], "status": j["status"], "created": j["created"]}
+            return [{"id": j["id"], "name": j["name"], "status": j["status"], "created": j["created"],
+                     "identity": j.get("identity")}
                     for j in sorted(self.jobs.values(), key=lambda j: j["created"], reverse=True)]
 
     def snapshot(self, id):
@@ -227,7 +289,7 @@ class Workspace:
             self.jobs[id] = job
         return id
 
-    def start(self, id, units):
+    def start(self, id, units, regions=False):
         with self.lock:
             if self.active:
                 raise ValueError("Уже идёт расчёт. Дождитесь его завершения.")
@@ -241,7 +303,8 @@ class Workspace:
                         id = self.create(old["filename"], units, stream, original.stat().st_size)
             job = self.jobs[id]
             job.update(status="running", units="mm" if job["sample"] else units, started=time.time(),
-                       stage="Запуск расчёта", log=[])
+                       stage="Запуск расчёта", log=[], compared=[], rejected=[],
+                       identity=run_identity(job["name"], engine_revision(), regions))
             self.save(job)
             self.active = id
             threading.Thread(target=self.work, args=(job,), daemon=True).start()
@@ -253,7 +316,8 @@ class Workspace:
         source = directory / ("input" + Path(job["filename"]).suffix.lower())
         out = directory / "engine"
         env = {k: v for k, v in os.environ.items() if k.upper() not in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY")}
-        env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+        env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
+                   CAD_REGIONS="1" if job["identity"]["cad_regions"] else "0")
         cmd = [sys.executable, "-u", str(DEMO / "demo.py"), str(source), "--mode", "geometric",
                "--units", job["units"], "--out", str(out), "--no-open"]
         process = None
@@ -273,10 +337,7 @@ class Workspace:
                     with self.lock:
                         job["log"].append(line)
                         del job["log"][:-160]
-                        for pattern, stage in STAGES:
-                            if pattern.search(line):
-                                job["stage"] = stage
-                                break
+                        update_progress(job, line)
             if process.wait() != 0:
                 raise RuntimeError("Расчёт завершился с ошибкой. Подробности в журнале.")
             roots = list(out.glob("*/model.step"))
@@ -284,18 +345,21 @@ class Workspace:
                 raise RuntimeError("Конвейер не выдал итоговый STEP.")
             run = roots[0].parent
             with self.lock:
-                job["stage"] = "Независимая проверка STEP"
+                job.update(stage="Независимая проверка STEP", stage_detail=None, heartbeat=None)
             for name, filename in (("scan_aligned.stl", "scan.stl"), ("model.stl", "model.stl"),
                                    ("model.step", "model.step")):
                 temporary = directory / (filename + ".tmp")
                 shutil.copyfile(run / name, temporary)
                 temporary.replace(directory / filename)
+            macro = run / ASSETS["macro"]
+            if macro.is_file():
+                shutil.copyfile(macro, directory / ASSETS["macro"])
             scan = load_mesh(directory / "scan.stl")
             model = load_mesh(directory / "model.stl", process=False)
             transform = json_read(run / "sheet.json")["transform_from_scan_4x4"]
             try:
                 check = prepare_inspection(directory, scan, model, directory / "model.step",
-                                           example=job["sample"], transform=transform)
+                                           example=job["sample"], transform=transform, identity=job["identity"])
                 inspection_error = None
             except Exception as exc:
                 check = None
@@ -312,7 +376,7 @@ class Workspace:
             if process and process.poll() is None:
                 stop_tree(process)
             with self.lock:
-                job.update(outcome, seconds=time.time() - job["started"])
+                job.update(outcome, seconds=time.time() - job["started"], stage_detail=None, heartbeat=None)
                 self.active = None
                 self.process = None
                 self.save(job)
@@ -392,8 +456,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(job)
             if job and parts[3] == "asset" and parts[4] in job["assets"]:
                 key = parts[4]
-                name = (f"flange-{id}.step" if job["sample"] else f"reconstruction-{id}.step") if key == "step" else (
-                    f"inspection-{id}.json" if key == "report" else None)
+                downloads = {"step": f"{'flange' if job['sample'] else 'reconstruction'}-{id}.step",
+                             "report": f"inspection-{id}.json", "macro": f"solidworks-{id}.bas"}
+                name = downloads.get(key)
                 return self.send_file(self.server.workspace.path(id) / ASSETS[key], name)
         return self.send_json({"error": "Адрес не найден."}, 404)
 
@@ -414,7 +479,10 @@ class Handler(BaseHTTPRequestHandler):
                 match = re.fullmatch(r"/api/jobs/(example|[a-f0-9]{12})/run", self.path)
                 if not match:
                     return self.send_json({"error": "Адрес не найден."}, 404)
-                id = self.server.workspace.start(match[1], units)
+                regions = self.headers.get("X-CAD-Regions", "0")
+                if regions not in ("0", "1"):
+                    return self.send_json({"error": "Недопустимый режим разметки."}, 400)
+                id = self.server.workspace.start(match[1], units, regions == "1")
             return self.send_json(self.server.workspace.snapshot(id), 201)
         except KeyError:
             return self.send_json({"error": "Расчёт не найден."}, 404)

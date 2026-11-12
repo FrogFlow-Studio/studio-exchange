@@ -1,7 +1,7 @@
 import {Viewport} from './viewport.js';
 
 const $ = (id) => document.getElementById(id);
-const selected = {job: null, mode: 'compare', view: 'iso', section: false, busy: false, globalRunning: false};
+const selected = {job: null, mode: 'compare', view: 'iso', section: false, direction: 'model', busy: false, globalRunning: false};
 const units = {mm: 1, cm: 10, m: 1000, in: 25.4};
 const statusLabels = {ready: 'Результат', draft: 'Скан загружен', running: 'В расчёте', error: 'Ошибка'};
 const number = (value, digits = 0) => Number(value).toLocaleString('ru-RU', {
@@ -44,15 +44,23 @@ function message(text) {
   $('notice').textContent = text || '';
 }
 
-function setMode(mode) {
+function setMode(mode, direction = selected.direction) {
   const available = selected.job?.assets || {};
   if (mode !== 'scan' && !available.model) mode = 'scan';
-  if (mode === 'deviation' && !available.deviations) mode = available.model ? 'model' : 'scan';
+  if (mode === 'deviation' && !available.model_deviation && !available.deviations) mode = 'model';
+  if (direction === 'model' && !available.model_deviation) direction = 'scan';
+  if (direction === 'scan' && !available.deviations && available.model_deviation) direction = 'model';
   selected.mode = mode;
-  scene?.setMode(mode);
+  selected.direction = direction;
+  scene?.setMode(mode, direction);
+  $('directions').hidden = mode !== 'deviation';
+  for (const button of document.querySelectorAll('[data-direction]')) {
+    button.disabled = !(button.dataset.direction === 'model' ? available.model_deviation : available.deviations);
+    button.setAttribute('aria-pressed', String(button.dataset.direction === direction));
+  }
   for (const button of document.querySelectorAll('[data-mode]')) {
     button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
-    button.disabled = button.dataset.mode === 'deviation' ? !available.deviations :
+    button.disabled = button.dataset.mode === 'deviation' ? !available.model_deviation && !available.deviations :
       button.dataset.mode !== 'scan' ? !available.model : !available.scan;
   }
   const legend = $('legend');
@@ -63,7 +71,7 @@ function setMode(mode) {
     legend.append(dom('span', '', '0'), gradient, dom('span', '', number(limit, 1) + ' мм — допуск'),
                   dom('span', '', number(2 * limit, 1) + ' мм и выше'));
   } else {
-    for (const [text, color] of mode === 'compare' ? [['Скан', '#86d8d2'], ['Модель', '#b5c3cc'], ...(available.unobserved ? [['Вне покрытия скана', '#edac60']] : [])] :
+    for (const [text, color] of mode === 'compare' ? [['Скан', '#86d8d2'], ['Модель', '#b5c3cc'], ...(available.unobserved || available.model_deviation ? [['Вне покрытия скана', '#edac60']] : [])] :
          mode === 'scan' ? [['Исходный скан', '#86d8d2']] : [['Модель', '#b5c3cc']]) {
       const item = dom('span');
       const mark = dom('i');
@@ -112,6 +120,7 @@ function renderInspection(job) {
     report.has_reference ? 'Проверка завершена' : 'Сверено со сканом';
   const top = report.topology;
   const file = dom('section', 'inspect-section');
+  file.append(dom('h3', '', 'Тело'));
   file.append(
     checkRow('STEP перечитан', 'Экспорт доступен', Boolean(job.assets.step)),
     checkRow(top.valid && top.closed ? 'Тело валидно и замкнуто' : 'Проверка тела выявила проблему',
@@ -120,6 +129,17 @@ function renderInspection(job) {
       number(top.edges) + ' ' + plural(top.edges, ['ребро', 'ребра', 'рёбер']),
       top.valid && top.closed && top.connected_solid),
   );
+
+  const kinds = top.surface_types || {};
+  const count = (kind) => kinds[kind] || 0;
+  const faces = dom('dl', 'face-counts');
+  const known = ['PLANE', 'CYLINDER', 'BSPLINE'];
+  const other = Object.entries(kinds).reduce((sum, [kind, value]) => sum + (known.includes(kind) ? 0 : value), 0);
+  for (const [label, value] of [['Плоскости', count('PLANE')], ['Цилиндры', count('CYLINDER')],
+      ['B-сплайны', count('BSPLINE')], ['Прочие', other]]) {
+    faces.append(dom('dt', '', label), dom('dd', '', number(value)));
+  }
+  if (Object.keys(kinds).length) file.append(faces);
 
   const coverage = dom('section', 'inspect-section');
   const heading = dom('div', 'metric-heading');
@@ -137,7 +157,8 @@ function renderInspection(job) {
   audit.append(dom('h3', '', 'Проверка по эталону'));
   if (report.has_reference) {
     const counts = report.reference_outcomes || {};
-    audit.append(dom('p', 'section-note', number(counts.ok || 0) + ' элементов в допуске'));
+    audit.append(dom('p', 'section-note', number(counts.ok || 0) + ' из ' +
+      number((counts.ok || 0) + (counts.parameter_error || 0) + (counts.missing || 0)) + ' элементов в допуске'));
   } else {
     audit.append(dom('p', 'section-note', 'Эталонный STEP отсутствует. Параметры достроенных элементов не подтверждены.'));
   }
@@ -202,6 +223,11 @@ function showActions() {
   $('units').disabled = !draft || job.sample;
   $('run').classList.toggle('primary', Boolean(draft));
   $('run').classList.toggle('secondary', !draft);
+  $('regions').disabled = !job || selected.busy || selected.globalRunning || job.status === 'running';
+  const macro = $('macro');
+  macro.hidden = !job?.assets?.macro;
+  if (job?.assets?.macro) macro.href = job.assets.macro;
+  else macro.removeAttribute('href');
   const link = $('step');
   if (job?.assets?.step) {
     link.href = job.assets.step;
@@ -210,6 +236,17 @@ function showActions() {
     link.removeAttribute('href');
     link.setAttribute('aria-disabled', 'true');
   }
+}
+
+function elapsed(seconds) {
+  const total = Math.floor(Math.max(0, seconds));
+  return total < 60 ? total + ' с' : Math.floor(total / 60) + ' мин ' + (total % 60) + ' с';
+}
+
+function runLabel(identity) {
+  if (!identity) return '';
+  return (identity.engine_revision?.slice(0, 7) || 'Версия неизвестна') +
+    ' · Разметка ' + (identity.cad_regions ? 'вкл.' : 'выкл.');
 }
 
 function renderJob(job) {
@@ -221,6 +258,8 @@ function renderJob(job) {
     $('sample-tag').hidden = !job.sample;
     $('sample-tag').textContent = job.example ? 'Сохранённый пример' : 'Тестовый скан';
     $('part-meta').textContent = job.filename + (job.scan ? ' · ' + number(job.scan.triangles) + ' треугольников' : '');
+    $('run-identity').textContent = runLabel(job.identity);
+    $('regions').checked = Boolean(job.identity?.cad_regions);
     $('scan-type').textContent = job.filename.split('.').pop().toUpperCase();
     $('model-type').textContent = job.assets.model ? 'STEP' : 'Ожидает расчёта';
     $('tolerance').textContent = job.check ? '±' + number(job.check.tolerance_mm, 1) + ' мм' : '—';
@@ -232,9 +271,19 @@ function renderJob(job) {
     for (const entry of $('history').children) entry.setAttribute('aria-current', String(entry.dataset.id === job.id));
   }
   showActions();
-  if ($('stage').textContent !== job.stage) $('stage').textContent = job.stage;
+  const detail = job.stage_detail;
+  const label = detail ? detail[0].toUpperCase() + detail.slice(1) : job.stage;
+  const stage = detail && job.attempt && !detail.startsWith('попытка') ?
+    'Попытка ' + job.attempt + ' · ' + label : label;
+  if ($('stage').textContent !== stage) $('stage').textContent = stage;
   $('stage-dot').className = job.status;
-  $('elapsed').textContent = job.seconds != null ? number(job.seconds) + ' с' : '';
+  const heartbeat = job.heartbeat;
+  $('elapsed').textContent = heartbeat ? 'Идёт ' + heartbeat.minutes + ' мин' +
+    (heartbeat.limit_minutes != null ? ' из предела ' + heartbeat.limit_minutes + ' мин' : '') :
+    job.seconds != null ? 'Всего ' + elapsed(job.seconds) : '';
+  const compared = (job.compared || []).filter((id) => !(job.rejected || []).includes(id));
+  $('attempts').textContent = job.winner ? 'Выбрана попытка ' + job.winner :
+    compared.length ? 'Со сканом сравнены попытки ' + compared.join(', ') : '';
   const log = $('log');
   const scroll = log.scrollTop;
   const pinned = log.scrollHeight - log.clientHeight - scroll < 25;
@@ -249,7 +298,7 @@ function renderJob(job) {
     loadedKey = key;
     $('view-message').hidden = false;
     $('view-message').textContent = 'Загрузка геометрии…';
-    setMode(job.assets.model ? 'compare' : 'scan');
+    setMode(job.assets.model ? 'compare' : 'scan', 'model');
     selected.section = false;
     $('section').setAttribute('aria-pressed', 'false');
     $('section-level').hidden = true;
@@ -278,6 +327,7 @@ async function history() {
     const info = dom('span');
     info.append(dom('b', '', job.name), dom('small', '',
       (job.created ? stamp(job.created) + ' · ' : '') + (statusLabels[job.status] || job.status)));
+    if (job.identity) info.append(dom('small', 'history-run', runLabel(job.identity)));
     entry.append(dom('i'), info);
     entry.onclick = () => activate(job.id);
     list.append(entry);
@@ -357,7 +407,8 @@ $('file-input').onchange = (event) => {
   event.target.value = '';
 };
 $('units').onchange = showDimensions;
-$('run').onclick = () => selected.job && mutate('/api/jobs/' + selected.job.id + '/run', null);
+$('run').onclick = () => selected.job && mutate('/api/jobs/' + selected.job.id + '/run', null,
+  {'X-CAD-Regions': $('regions').checked ? '1' : '0'});
 $('fit').onclick = () => { clearFocus(); setView(selected.view); };
 $('section').onclick = () => {
   selected.section = !selected.section;
@@ -372,6 +423,9 @@ $('journal').onclick = () => {
   if (!$('log').hidden) $('log').scrollTop = $('log').scrollHeight;
 };
 for (const button of document.querySelectorAll('[data-mode]')) button.onclick = () => setMode(button.dataset.mode);
+for (const button of document.querySelectorAll('[data-direction]')) {
+  button.onclick = () => setMode('deviation', button.dataset.direction);
+}
 for (const button of document.querySelectorAll('[data-view]')) button.onclick = () => {
   clearFocus();
   setView(button.dataset.view);

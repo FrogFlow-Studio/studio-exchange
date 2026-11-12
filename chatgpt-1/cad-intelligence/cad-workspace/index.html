@@ -23,9 +23,11 @@
       <div>
         <div class="part-title"><h1 id="part-name">Тестовый фланец</h1><span id="sample-tag" class="sample-tag" hidden>Тестовый скан</span></div>
         <p class="part-meta" id="part-meta">Загружается…</p>
+        <p class="run-identity" id="run-identity"></p>
       </div>
       <div class="part-actions">
         <button id="run" class="button secondary" type="button" disabled><span aria-hidden="true">↻</span> <span id="run-label">Пересчитать</span></button>
+        <a id="macro" class="button secondary" hidden>Макрос SolidWorks</a>
         <a id="step" class="button primary" aria-disabled="true"><span aria-hidden="true">↓</span> Скачать STEP</a>
       </div>
     </section>
@@ -43,10 +45,11 @@
           </button>
         </div>
         <section class="sidebar-section">
-          <h2>Параметры скана</h2>
+          <h2>Параметры расчёта</h2>
           <label class="field-row"><span>Единицы</span><select id="units" aria-label="Единицы скана"><option value="mm">мм</option><option value="cm">см</option><option value="m">м</option><option value="in">дюймы</option></select></label>
           <div class="field-row"><span>Допуск</span><strong id="tolerance">—</strong></div>
           <div class="field-row dims"><span>Габариты, мм</span><strong id="dimensions">—</strong></div>
+          <label class="regions-option"><input id="regions" type="checkbox"> <span>Точные грани по разметке (опытный)</span></label>
         </section>
         <section class="sidebar-section history">
           <h2>История</h2>
@@ -63,6 +66,10 @@
             <button type="button" data-mode="deviation">Отклонения</button>
           </div>
           <button type="button" class="icon-button" id="fit" title="Подогнать модель в кадр" aria-label="Подогнать модель в кадр">⌗</button>
+        </div>
+        <div class="deviation-controls tabs" id="directions" role="group" aria-label="Направление измерения отклонений" hidden>
+          <button type="button" data-direction="model">Модель → скан</button>
+          <button type="button" data-direction="scan">Скан → модель</button>
         </div>
         <div class="viewport" id="viewport">
           <div class="viewport-info" aria-hidden="true"><span class="view-dot"></span><span id="view-label">Изометрия</span></div>
@@ -89,7 +96,7 @@
     </div>
 
     <footer class="status-bar">
-      <div class="stage-status"><i id="stage-dot"></i><strong id="stage" aria-live="polite">Загрузка рабочего окна</strong><span id="elapsed"></span></div>
+      <div class="stage-status"><i id="stage-dot"></i><strong id="stage" aria-live="polite">Загрузка рабочего окна</strong><span id="elapsed"></span><span id="attempts" class="attempt-summary"></span></div>
       <button type="button" id="journal" aria-expanded="false">Журнал <span aria-hidden="true">⌃</span></button>
     </footer>
     <pre id="log" class="log" tabindex="0" hidden></pre>

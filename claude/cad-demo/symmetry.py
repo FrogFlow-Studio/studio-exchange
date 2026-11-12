@@ -162,3 +162,37 @@ def restore(mesh: trimesh.Trimesh, plane: dict, chip: dict, B: trimesh.Trimesh, 
         return tri(u)
     except Exception:  # noqa: BLE001 — сетка не замкнута или булева операция не удалась
         return None
+
+
+def restore_all(mesh: trimesh.Trimesh, tol: float = 0.3, min_share: float = 0.8, passes: int = 2):
+    """Достройка всех сколов по найденным плоскостям симметрии. Скол, пересекающий одну плоскость,
+    ею не достраивается целиком (отражается сам в себя) — остаток закрывает следующая плоскость.
+    Возвращает (сетка или исходная, список достроенного: plane, area, depth, center, volume)."""
+    planes = [p for p in find_planes(mesh, tol) if p["share"] >= min_share]
+    if planes:
+        planes = [p for p in planes if p["share"] >= planes[0]["share"] - 0.07]
+    cur, log = mesh, []
+    for _ in range(passes):
+        changed = False
+        for p in planes:
+            for _ in range(6):  # после каждой достройки отражение пересчитывается
+                cs, B = chips(cur, p, tol)
+                done = False
+                for c in cs:
+                    r = restore(cur, p, c, B)
+                    if r is None:
+                        continue
+                    gain = float(r.volume - cur.volume)
+                    # полнота: у скола объём сравним с площадью × глубину (образцы: 0,13–0,32); тонкая
+                    # плёнка от неточного совпадения отражения (над отверстием: 0,035) — не скол
+                    if gain < 0.08 * c["area"] * c["depth"]:
+                        continue
+                    log.append({"normal": p["normal"], "d": p["d"], "area": c["area"], "depth": c["depth"],
+                                "center": c["center"], "volume": gain})
+                    cur, done, changed = r, True, True
+                    break
+                if not done:
+                    break
+        if not changed:
+            break
+    return cur, log, planes

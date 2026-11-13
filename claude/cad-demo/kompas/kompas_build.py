@@ -512,7 +512,7 @@ def _extend_down(it, dz, max_levels=6, min_area=0.03):
     zs = sorted(RAW_VOIDS)
     out = list(it)
     g0 = it[0][1]
-    if g0.area > 6.0 or 2 * g0.area / max(g0.length, 1e-9) > 0.8:
+    if g0.area > float(os.environ.get("VOID_TIP_AREA", "6.0")) or 2 * g0.area / max(g0.length, 1e-9) > 0.8:
         return out  # только узкие канавки: у больших отделений пологий край дна — не клин
     for _ in range(max_levels):
         z, g = out[0]
@@ -909,6 +909,39 @@ def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=floa
     return out
 
 
+def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RIB_T", "0.45")),
+                    min_area=float(os.environ.get("THIN_RIB_MIN", "0.06"))):
+    """тонкое ребро (язычок защёлки, перегородка): по каждому сечению — тонкая часть «скан минус модель»
+    (толщина 2A/L < tmax), прилегающая к модели; выдавливание ровно на высоту слоя многоугольником с
+    прямыми сторонами, без сплайна по 32 точкам (сплайн и сглаживание 0,12 мм съедали полоску 0,2 мм)"""
+    z0 = max(scan.bounds[0, 2], model_mesh.bounds[0, 2]); z1 = min(scan.bounds[1, 2], model_mesh.bounds[1, 2])
+    def sec(mesh, z):
+        s = mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
+        if s is None: return Polygon()
+        P, _ = s.to_2D(to_2D=np.eye(4))
+        return shapely.union_all([p.buffer(0) for p in P.polygons_full])
+    out = []
+    for z in np.arange(z0 + dz, z1 - dz / 2, dz):
+        a, b = sec(model_mesh, z), sec(scan, z)
+        if a.is_empty or b.is_empty: continue
+        D = b.difference(a).buffer(-0.01).buffer(0.01)
+        ext = max(getattr(a, "geoms", [a]), key=lambda q: q.area).exterior
+        for g in getattr(D, "geoms", [D]):
+            if g.is_empty or g.geom_type != "Polygon" or g.area < min_area: continue
+            if 2 * g.area / g.length > tmax: continue          # толстое — дело CORR_ADD
+            if g.distance(a.boundary) > 0.03: continue          # висит в воздухе — шум скана
+            if g.distance(ext) < 0.05: continue                  # корка по наружной стенке — не ребро
+            from shapely.geometry import Point
+            if max(a.boundary.distance(Point(c)) for c in g.exterior.coords) < 0.3: continue  # и так в допуске
+            L = g.length / 2
+            if L < 0.5: continue                                 # короче 0,5 мм — не ребро
+            try:
+                out.append(prism_poly(g.buffer(0.02, join_style=2), z - dz / 2 - 0.01, z + dz / 2 + 0.01, tol=0.02))
+            except Exception:  # noqa: BLE001
+                pass
+    return out
+
+
 def _nz(f):
     try:
         return f.normalAt().z
@@ -993,12 +1026,15 @@ def assemble(scan, log=print):
         experiment = "stable_pockets"
     baseline = _assemble_stock(scan, log=log)
     upper = os.environ.get("CAD_KOMPAS_UPPER_WALL", "0") == "1"
-    floor = os.environ.get("CAD_KOMPAS_POCKET_FLOOR", "0") == "1"
+    floor = os.environ.get("CAD_KOMPAS_POCKET_FLOOR", "1") == "1"
     variable = os.environ.get("CAD_KOMPAS_VARIABLE_FILLET", "0") == "1"
     if candidate is None and (upper or floor or variable):
         experiment = "local_surfaces"
         try:
-            trial = _assemble_stock(scan, log=log, fit_upper_wall=upper, fit_pocket_floor=floor, fit_variable=variable)
+            # вместе с густыми контурами кармана (48 точек), иначе опытный проход вытесняет кандидата fine_voids
+            fine_n = int(os.environ.get("CAD_KOMPAS_FINE_VOIDS", "48")) or None
+            trial = _assemble_stock(scan, log=log, fit_upper_wall=upper, fit_pocket_floor=floor, fit_variable=variable,
+                                    void_n=fine_n)
             if any(trial[1].get(key) for key in ("upper_wall_fit","smooth_pocket_floors",
                                                  "top_fillet_law","bottom_fillet_law")):
                 candidate = trial
@@ -1160,6 +1196,20 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
                 except Exception:  # noqa: BLE001
                     pass
             info["correction_adds"] = na
+            body = body.clean()
+        if os.environ.get("THIN_RIB", "1") == "1":
+            # задача 66: язычок защёлки и тонкие перегородки — тоньше, чем ловит CORR_ADD
+            write_stl_checked(body.wrapped, tf, 0.03, True, 0.15, tol=0.1)
+            mm = trimesh.load(tf, force="mesh")
+            nt = 0
+            for v in thin_rib_prisms(scan, mm):
+                try:
+                    nb = body.fuse(v)
+                    if nb.isValid() and len(nb.Solids()) == 1 and nb.Volume() < 1.02 * body.Volume():
+                        body = nb; nt += 1
+                except Exception:  # noqa: BLE001
+                    pass
+            info["thin_ribs"] = nt
             body = body.clean()
         body = body.clean()
         try:

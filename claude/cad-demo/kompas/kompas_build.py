@@ -208,7 +208,7 @@ def pick_levels(zs, rings, jump=0.8, dzmax=2.0, dzmin=0.6):
         else: keep.append(len(zs) - 1)
     return keep
 
-def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=0.05):
+def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.environ.get('RING_SMOOTH', '0.05'))):
     """наружная стенка — один лофт по всей высоте; внутренние объёмы (карманы, пазы) вычитаются по слоям"""
     secs = sections(mesh, dz)
     secs = [(z, p) for z, p in secs if p]
@@ -300,6 +300,7 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=0.05):
             if done:
                 cut.extend(pieces_l); print("void loft", round(z0, 2), round(z1, 2), len(pieces_l), flush=True)
                 continue
+        print("void prism", round(z0, 2), round(z1, 2), len(mid), flush=True)
         for g in mid:
             try:
                 s = cq.Workplane().add(prism(ring_pts(g.exterior.coords, n, 0.03), z0 - 0.02, z1 + 0.02))

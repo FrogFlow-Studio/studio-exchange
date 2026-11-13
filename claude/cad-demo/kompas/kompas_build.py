@@ -85,7 +85,26 @@ def prism(pts2, za, zb):
     return w.extrude(float(zb - za)).val()
 
 def _wire(pts2, z):
-    return cq.Wire.assembleEdges([cq.Edge.makeSpline([cq.Vector(float(x), float(y), float(z)) for x, y in pts2], periodic=True)])
+    zz = np.broadcast_to(np.asarray(z, float), (len(pts2),))  # кольцо может лежать не в плоскости (скругление по дну)
+    return cq.Wire.assembleEdges([cq.Edge.makeSpline([cq.Vector(float(x), float(y), float(h)) for (x, y), h in zip(pts2, zz)], periodic=True)])
+
+
+def _inset(ring, d):
+    """кольцо, сдвинутое внутрь на d по нормали (кольцо гладкое, d мало по сравнению с размером)"""
+    t = np.roll(ring, -1, 0) - np.roll(ring, 1, 0)
+    nrm = np.c_[t[:, 1], -t[:, 0]] / np.linalg.norm(t, axis=1)[:, None]  # наружная для кольца против часовой
+    return ring - nrm * d
+
+
+def round_rings(ring, zfun, r, k=6):
+    """кольца скругления кромки дна радиусом r: четверть окружности от дна (z = zfun(x, y)) вверх на r"""
+    # нижнее кольцо — плоское (торец лофта закрывается плоской гранью), ниже дна; дно потом срезает
+    out = [(_inset(ring, r), float(np.min(zfun(ring[:, 0], ring[:, 1]))) - 0.3)]
+    for h in r * (1 - np.cos(np.linspace(0, np.pi / 2, k)))[1:]:
+        d = r - np.sqrt(max(0.0, r * r - (r - h) ** 2))
+        q = _inset(ring, d)
+        out.append((q, zfun(ring[:, 0], ring[:, 1]) + h))
+    return out
 
 def _loft_child(rings_z, ruled, q):
     try:
@@ -117,7 +136,8 @@ def align(rings_z):
     for p, z in rings_z[1:]:
         q = out[-1][0]
         cost = [np.sum((np.roll(p, -k, axis=0) - q) ** 2) for k in range(len(p))]
-        out.append((np.roll(p, -int(np.argmin(cost)), axis=0), z))
+        k = int(np.argmin(cost))
+        out.append((np.roll(p, -k, axis=0), np.roll(z, -k) if np.ndim(z) else z))
     return out
 
 def loft(rings_z, ruled=False):
@@ -251,6 +271,13 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
     lz = np.array([zs[i] for i in keep]); lz[0] = za; lz[-1] = zb
     print("outer levels", len(keep), round(za, 2), round(zb, 2), flush=True)
     coef = top_surface(mesh, rings[-1], zb)
+    if os.environ.get("TOP_RIM", "0") == "1":  # опыт: подгонка борта Севера (задача 50), высота по длине
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+                                        "chatgpt-1", "cad-intelligence", "cad-kompas-button-2026-11-13"))
+        from rim_fit import fit_rim
+        ev = fit_rim(mesh, rings[-1], zb)
+        if ev is not None:
+            coef = lambda x, y, ev=ev: np.broadcast_to(np.asarray(ev(x, y), float), np.broadcast(np.asarray(x), np.asarray(y)).shape).copy() if np.ndim(x) or np.ndim(y) else float(ev(x, y))
     ztop = zb
     levels = [(rings[i], z) for i, z in zip(keep, lz)]
     if coef is not None:
@@ -268,6 +295,26 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
         levels[0] = (levels[0][0], min(levels[0][1], float(zz.min()) - 0.3))
     TOPINFO["bcoef"] = bcoef
     TOPINFO["dome"] = False
+    rr = os.environ.get("BOTTOM_ROUND", "0")
+    if rr != "0" and bcoef is not None:
+        r = None
+        if rr == "auto":  # радиус по тому, как сужаются нижние сечения (оценка Севера, задача 49)
+            sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+                                            "chatgpt-1", "cad-intelligence", "cad-kompas-button-2026-11-13"))
+            from bottom_round import estimate_radius
+            allo = sorted(pads, key=lambda p: p[0]) + outer
+            zb0 = float(np.median(surf_eval(bcoef, rings[keep[0]][:, 0], rings[keep[0]][:, 1])))
+            r = estimate_radius([np.asarray(p[1].exterior.coords) for p in allo], [p[0] for p in allo], zb0)
+        else:
+            r = float(rr)
+        if r:
+            zf = lambda x, y: surf_eval(bcoef, x, y)
+            base = rings[keep[0]]
+            ztop_r = float(np.max(zf(base[:, 0], base[:, 1]))) + r
+            rest = [(p, z) for p, z in levels[1:] if z > ztop_r + 0.15]
+            levels = round_rings(base, zf, r) + rest
+            TOPINFO["bottom_round"] = r
+            print("bottom round", round(r, 3), "levels", len(levels), flush=True)
     if os.environ.get("BOTTOM_DOME", "0") == "1" and pads:
         # дно-купол: отдельный лофт по срезам низа (pad ниже) срастается со стенкой; стенку вниз не тянем
         # и плоскостью дна не режем — иначе на дне остаётся уступ по контуру купола
@@ -612,6 +659,8 @@ def _basis(x, y, k):
     return np.stack(b, -1)
 
 def surf_eval(coef, x, y):
+    if callable(coef):
+        return coef(x, y)
     return _basis(x, y, len(coef)) @ coef
 
 def top_surface(mesh, ring, zb, band=3.0, down=False):
@@ -631,7 +680,7 @@ def top_surface(mesh, ring, zb, band=3.0, down=False):
         return None
     x, y, z = P.T
     # дно — кубика: она ловит купол и наклон дна одной гладкой гранью, без площадки-ступеньки снизу
-    deg = int(os.environ.get("BOTTOM_DEG", "3") if down else os.environ.get("TOP_DEG", "2"))
+    deg = int(os.environ.get("BOTTOM_DEG", "3") if down else os.environ.get("TOP_DEG", "3"))
     A = _basis(x, y, 10 if deg == 3 else 6)
     w = np.ones_like(z)
     for _ in range(5):  # робастно: отбрасываем далёкие точки
@@ -672,7 +721,8 @@ if __name__ == "__main__":
     cq.exporters.export(body, sys.argv[2] + ".stl", tolerance=0.01, angularTolerance=0.1)
 
 
-def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=0.6, shrink=0.12):
+def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=0.6, shrink=0.12,
+                      skin=float(os.environ.get("CORR_SKIN", "0.6"))):
     """поправка по сечениям: где в модели есть материал, а в скане нет (пазы, канавки), — вырез;
     при extra=True наоборот — где в скане есть, а в модели нет — добавка. Слои по перекрытию, выдавливание."""
     z0 = max(scan.bounds[0, 2], model_mesh.bounds[0, 2]); z1 = min(scan.bounds[1, 2], model_mesh.bounds[1, 2])
@@ -686,6 +736,11 @@ def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=0.6,
         a, b = sec(model_mesh, z), sec(scan, z)
         D = (b.difference(a) if extra else a.difference(b)).buffer(-shrink).buffer(shrink)
         geoms = [g for g in getattr(D, "geoms", [D]) if not g.is_empty and g.geom_type == "Polygon" and g.area >= min_area]
+        if skin and not extra and geoms and not a.is_empty:
+            # тонкая корка снаружи (лишнее модели по наружной кромке, шире скана на доли мм) — не паз,
+            # а погрешность стенки; вырез такой корки оставляет на детали щели-лепестки
+            ext = max(getattr(a, "geoms", [a]), key=lambda q: q.area).exterior
+            geoms = [g for g in geoms if not (g.distance(ext) < 0.05 and 2 * g.area / g.length < skin)]
         for g in geoms:
             for L in layers_:
                 if abs(L["z1"] - z) < dz * 1.5 and L["g"].intersection(g).area > 0.5 * min(L["g"].area, g.area):
@@ -782,6 +837,11 @@ def assemble(scan, log=print):
         except OSError:
             pass
     sols = body.Solids()
+    if len(sols) == 1 and len(body.Shells()) > 1:
+        # одно тело с несколькими наружными оболочками (тонкий обрывок борта после среза верха):
+        # в STEP оно читается как два тела — разбираем по оболочкам, как отдельные тела
+        sols = [cq.Solid.makeSolid(sh) for sh in body.Shells()]
+        sols = [x for x in sols if x.isValid()] or body.Solids()
     if len(sols) > 1:
         # мелкие отрезанные обрывки (тонкие перемычки между вырезами) — убираем, если их меньше 1% объёма
         sols = sorted(sols, key=lambda x: -x.Volume())

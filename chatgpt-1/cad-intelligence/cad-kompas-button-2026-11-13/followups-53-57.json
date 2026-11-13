@@ -1,0 +1,493 @@
+[
+  {
+    "task": 54,
+    "sigma": 0.0,
+    "coverage": [
+      0.9992,
+      0.9995
+    ],
+    "faces": 187,
+    "valid": true,
+    "mesh_volume_ratio": 1.0001842730726953,
+    "seconds": 2.42449590000615,
+    "info": {
+      "stable_pockets": true,
+      "voids": 3,
+      "voids_skipped": 0,
+      "bosses": 2,
+      "faces": 187,
+      "seconds": 2.4138738000037847
+    }
+  },
+  {
+    "task": 53,
+    "sigma": 0.0,
+    "coverage": [
+      0.9992,
+      0.9994
+    ],
+    "faces": 175,
+    "valid": true,
+    "mesh_volume_ratio": 0.9988255956203885,
+    "seconds": 3.0307568999996874,
+    "info": {
+      "stable_pockets": true,
+      "voids": 3,
+      "voids_skipped": 0,
+      "bosses": 2,
+      "faces": 175,
+      "seconds": 3.0297216000035405,
+      "analytic_outline": true,
+      "bottom_rounded": true,
+      "top_rounded": true
+    }
+  },
+  {
+    "task": 54,
+    "sigma": 0.05,
+    "coverage": [
+      0.9993,
+      0.9993
+    ],
+    "faces": 452,
+    "valid": true,
+    "mesh_volume_ratio": 0.9992537522349406,
+    "seconds": 2.257078399998136,
+    "info": {
+      "stable_pockets": true,
+      "voids": 3,
+      "voids_skipped": 0,
+      "bosses": 2,
+      "faces": 452,
+      "seconds": 2.2548000999959186
+    }
+  },
+  {
+    "task": 53,
+    "sigma": 0.05,
+    "coverage": [
+      0.9993,
+      0.9996
+    ],
+    "faces": 394,
+    "valid": true,
+    "mesh_volume_ratio": 0.9983534077481512,
+    "seconds": 2.7203570999990916,
+    "info": {
+      "stable_pockets": true,
+      "voids": 3,
+      "voids_skipped": 0,
+      "bosses": 2,
+      "faces": 394,
+      "seconds": 2.718305100002908,
+      "analytic_outline": true,
+      "bottom_rounded": true,
+      "top_rounded": true
+    }
+  },
+  {
+    "task": 54,
+    "sigma": 0.1,
+    "coverage": [
+      0.9993,
+      0.9996
+    ],
+    "faces": 636,
+    "valid": true,
+    "mesh_volume_ratio": 0.9979558975875441,
+    "seconds": 2.9820146999991266,
+    "info": {
+      "stable_pockets": true,
+      "voids": 3,
+      "voids_skipped": 0,
+      "bosses": 2,
+      "faces": 636,
+      "seconds": 2.9787197999976343
+    }
+  },
+  {
+    "task": 53,
+    "sigma": 0.1,
+    "coverage": [
+      0.9993,
+      0.9993
+    ],
+    "faces": 535,
+    "valid": true,
+    "mesh_volume_ratio": 0.9966194400903692,
+    "seconds": 3.2820427999977255,
+    "info": {
+      "stable_pockets": true,
+      "voids": 3,
+      "voids_skipped": 0,
+      "bosses": 2,
+      "faces": 535,
+      "seconds": 3.2785409999924013,
+      "analytic_outline": true,
+      "bottom_rounded": true,
+      "top_rounded": true
+    }
+  },
+  {
+    "task": 55,
+    "patches": [
+      {
+        "status": "removed",
+        "before": {
+          "source": "scan",
+          "sign": "above",
+          "views": [
+            "front_right",
+            "back_left",
+            "right",
+            "left",
+            "front",
+            "back"
+          ],
+          "area_mm2": 151.4353914017076,
+          "center_mm": [
+            10.143833118522991,
+            -22.378634787966714,
+            5.4437818496741865
+          ],
+          "max_distance_mm": 2.7599578349583362
+        },
+        "after": null
+      },
+      {
+        "status": "removed",
+        "before": {
+          "source": "model",
+          "sign": "below",
+          "views": [
+            "front_right",
+            "right",
+            "front"
+          ],
+          "area_mm2": 18.491712354293927,
+          "center_mm": [
+            9.393946473985308,
+            -21.40950607089052,
+            4.5579143230176085
+          ],
+          "max_distance_mm": 0.7482357808246647
+        },
+        "after": null
+      },
+      {
+        "status": "added",
+        "before": null,
+        "after": {
+          "source": "model",
+          "sign": "above",
+          "views": [
+            "top",
+            "bottom",
+            "front_right",
+            "right",
+            "front",
+            "back"
+          ],
+          "area_mm2": 8.89810840882068,
+          "center_mm": [
+            12.336144425726662,
+            0.005028422123235274,
+            6.52689944912811
+          ],
+          "max_distance_mm": 1.4423143151715048
+        }
+      },
+      {
+        "status": "added",
+        "before": null,
+        "after": {
+          "source": "model",
+          "sign": "above",
+          "views": [
+            "top",
+            "bottom",
+            "back_left",
+            "left",
+            "front",
+            "back"
+          ],
+          "area_mm2": 3.626003641055838,
+          "center_mm": [
+            9.731624907414517,
+            0.0013310010681626193,
+            6.391430771284786
+          ],
+          "max_distance_mm": 0.8302904753383311
+        }
+      }
+    ],
+    "summary": {
+      "removed": 2,
+      "added": 2,
+      "changed": 0,
+      "unchanged": 0
+    }
+  },
+  {
+    "task": 56,
+    "sigma": 0.0,
+    "before": {
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "faces": 3,
+      "valid": true,
+      "mesh_volume_ratio": 0.9932520721958883,
+      "seconds": 0.0
+    },
+    "after": {
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "faces": 3,
+      "valid": true,
+      "mesh_volume_ratio": 1.0040749842260457,
+      "seconds": 0.9796208000043407
+    },
+    "curvature_p99": {
+      "axial": [
+        4.650650020573857e-14,
+        0.0016269113554255614
+      ],
+      "transverse": [
+        0.17948683939430737,
+        0.21345369849905385
+      ]
+    }
+  },
+  {
+    "task": 56,
+    "sigma": 0.05,
+    "before": {
+      "coverage": [
+        0.9996,
+        0.9993
+      ],
+      "faces": 3,
+      "valid": true,
+      "mesh_volume_ratio": 0.9987201285747146,
+      "seconds": 0.0
+    },
+    "after": {
+      "coverage": [
+        1.0,
+        0.9998
+      ],
+      "faces": 3,
+      "valid": true,
+      "mesh_volume_ratio": 1.0037887866515718,
+      "seconds": 1.8077787999936845
+    },
+    "curvature_p99": {
+      "axial": [
+        4.198422640476237,
+        0.19299046291369393
+      ],
+      "transverse": [
+        0.1946104496022986,
+        0.21381262879748528
+      ]
+    }
+  },
+  {
+    "task": 56,
+    "sigma": 0.1,
+    "before": {
+      "coverage": [
+        0.988,
+        0.978
+      ],
+      "faces": 3,
+      "valid": true,
+      "mesh_volume_ratio": 1.0015818355397592,
+      "seconds": 0.0
+    },
+    "after": {
+      "coverage": [
+        0.9944,
+        0.9921
+      ],
+      "faces": 3,
+      "valid": true,
+      "mesh_volume_ratio": 1.0037770228014797,
+      "seconds": 2.965042199997697
+    },
+    "curvature_p99": {
+      "axial": [
+        4.337113099008233,
+        0.37498084625647604
+      ],
+      "transverse": [
+        0.20362165910566227,
+        0.2222014811802744
+      ]
+    }
+  },
+  {
+    "task": 57,
+    "case": "button",
+    "suitable": true,
+    "axis": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "axes": [
+      {
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "score": 1.0,
+        "missing": 0,
+        "split_levels": 0,
+        "contour_jumps": 0,
+        "severe_jumps": 0,
+        "sections": 26,
+        "height_mm": 23.27025634718329
+      },
+      {
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "score": 0.7692307692307692,
+        "missing": 0,
+        "split_levels": 0,
+        "contour_jumps": 6,
+        "severe_jumps": 4,
+        "sections": 26,
+        "height_mm": 49.22085424965486
+      },
+      {
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "score": 1.0,
+        "missing": 0,
+        "split_levels": 0,
+        "contour_jumps": 0,
+        "severe_jumps": 0,
+        "sections": 26,
+        "height_mm": 13.4112114850223
+      },
+      {
+        "axis": [
+          -0.9982498115505951,
+          0.059082402097387174,
+          0.0025658335106394678
+        ],
+        "score": 0.9230769230769231,
+        "missing": 0,
+        "split_levels": 0,
+        "contour_jumps": 2,
+        "severe_jumps": 0,
+        "sections": 26,
+        "height_mm": 25.5741220348
+      },
+      {
+        "axis": [
+          -0.05908466716072294,
+          -0.9982526414362483,
+          -0.0008160711119363897
+        ],
+        "score": 0.7307692307692308,
+        "missing": 0,
+        "split_levels": 0,
+        "contour_jumps": 7,
+        "severe_jumps": 2,
+        "sections": 26,
+        "height_mm": 49.97402801677779
+      }
+    ]
+  },
+  {
+    "task": 57,
+    "case": "bracket",
+    "suitable": false,
+    "axis": null,
+    "axes": [
+      {
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "score": 0.0,
+        "missing": 0,
+        "split_levels": 22,
+        "contour_jumps": 4,
+        "severe_jumps": 4,
+        "sections": 26,
+        "height_mm": 48.0
+      },
+      {
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "score": 0.9230769230769231,
+        "missing": 0,
+        "split_levels": 0,
+        "contour_jumps": 2,
+        "severe_jumps": 1,
+        "sections": 26,
+        "height_mm": 37.0
+      },
+      {
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "score": 0.0,
+        "missing": 0,
+        "split_levels": 23,
+        "contour_jumps": 3,
+        "severe_jumps": 3,
+        "sections": 26,
+        "height_mm": 34.5
+      },
+      {
+        "axis": [
+          -0.0,
+          -0.6912607635110146,
+          -0.722605394963371
+        ],
+        "score": 0.2692307692307693,
+        "missing": 0,
+        "split_levels": 16,
+        "contour_jumps": 3,
+        "severe_jumps": 0,
+        "sections": 26,
+        "height_mm": 37.01127717195288
+      },
+      {
+        "axis": [
+          0.0,
+          -0.722605394963371,
+          0.6912607635110146
+        ],
+        "score": 0.5,
+        "missing": 0,
+        "split_levels": 9,
+        "contour_jumps": 4,
+        "severe_jumps": 2,
+        "sections": 26,
+        "height_mm": 50.58489595477473
+      }
+    ]
+  }
+]

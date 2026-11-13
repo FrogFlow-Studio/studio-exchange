@@ -767,6 +767,12 @@ def assemble(scan, log=print):
     поправка по сечениям (пазы и канавки вырезом). Если деталь не «стопка» вдоль z, тело выйдет негодным
     или далёким от скана — тогда попытку отбрасывает сравнение со сканом."""
     import tempfile
+    if os.environ.get("CAD_KOMPAS_STABLE_POCKETS", "0") == "1":
+        from stable_pockets import assemble_stable
+
+        candidate = assemble_stable(scan, log=log)
+        if candidate is not None:
+            return candidate
     TOPINFO.clear()
     info = {}
     t = time.time()
@@ -776,16 +782,29 @@ def assemble(scan, log=print):
         raise RuntimeError("наружная стенка не построена")
     info["voids"] = len(cut)
     skipped = 0
+    trace = os.environ.get("CAD_KOMPAS_TRACE", "0") == "1"
+    void_checks = []
     for v in sorted(cut, key=lambda c: -c.Volume()):
         try:
+            before = body.Volume() if trace else None
             nb = body.cut(v)
             if nb.isValid() and nb.Volume() > 0.5 * body.Volume():
                 body = nb
+                reason = "accepted"
             else:
                 skipped += 1
-        except Exception:  # noqa: BLE001
+                reason = "empty" if not nb.Solids() else "invalid" if not nb.isValid() else "half_volume_guard"
+            if trace:
+                bounds = v.BoundingBox()
+                void_checks.append(dict(z=[bounds.zmin,bounds.zmax],reason=reason,
+                                        tool_volume=v.Volume(),before_volume=before,after_volume=nb.Volume()))
+        except Exception as error:  # noqa: BLE001
             skipped += 1
+            if trace:
+                void_checks.append(dict(reason="exception",error=str(error)))
     info["voids_skipped"] = skipped
+    if trace:
+        info["void_checks"] = void_checks
     bb = pieces[0].BoundingBox()
     for key, below in (("coef", False), ("bcoef", True)):
         if TOPINFO.get(key) is not None:
@@ -793,6 +812,8 @@ def assemble(scan, log=print):
             if nb.isValid() and nb.Volume() > 0:
                 body = nb
                 info["bottom_surface" if below else "top_surface"] = True
+            if trace:
+                info[key+"_check"] = dict(valid=nb.isValid(), volume=nb.Volume(), solids=len(nb.Solids()))
     body = body.clean()
     rf = float(os.environ.get("BOTTOM_FILLET", "0"))
     if rf > 0 and info.get("bottom_surface"):

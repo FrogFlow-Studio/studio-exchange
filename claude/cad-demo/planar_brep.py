@@ -266,13 +266,13 @@ def build(V, F, label, regions, *, sew_tol: float = 1e-3, min_faces: int = 3,
     # ложится в допуск или не строится, остаётся треугольниками.
     smooth, smooth_area, smooth_tris, smooth_fail = 0, 0.0, 0, 0
     rest = comp < 0
+    why = defaultdict(int)        # причины отказа гладких заплаток (пусто, если свободных зон нет)
     if smooth_tol and rest.any():
         import time
 
         import patch_faces
 
         started = time.perf_counter()
-        why = defaultdict(int)
         own = np.where(label >= 0, label, -1)          # пятна не смешивают разные области (цилиндр и свободу)
         zl = np.asarray([int(l) if l >= 0 and regions[l]["kind"] != "plane" else -1 for l in own])
         zone_comp = _components(F, np.where(rest, np.where(zl >= 0, zl, len(regions)), -1))

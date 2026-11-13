@@ -580,6 +580,23 @@ def main() -> None:
                     k: v for k, v in info.items() if k not in ("label", "regions", "axes")}},
                 "assumptions": ["плоские участки построены как в CAD: одна плоскость — одна грань, рёбра — "
                                 "линии пересечения плоскостей"]}
+        try:   # видимые дефекты модели относительно скана (задача 35 Севера) — честно в описание
+            import defects
+
+            with measured(timings, "defects"):
+                rows = defects.find(str(step), sys.argv[1], tol=0.3)
+            meta["defects"] = rows
+            if rows:
+                kinds = {}
+                for row in rows:
+                    n, a = kinds.get(row["type"], (0, 0.0))
+                    kinds[row["type"]] = (n + 1, a + float(row["area_mm2"]))
+                meta["plan"] += "; видимые дефекты: " + ", ".join(
+                    f"{k} — {n} мест, {a:.0f} мм²" for k, (n, a) in kinds.items())
+            else:
+                meta["plan"] += "; видимых дефектов не найдено"
+        except Exception as error:  # noqa: BLE001
+            print(f"    поиск дефектов не удался ({type(error).__name__}: {error})", flush=True)
     else:
         code, meta = geometric.build(scan, sheet, restore=sys.argv[3] == "1")
     timings["total"] = time.perf_counter() - started

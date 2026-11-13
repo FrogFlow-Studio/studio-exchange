@@ -71,17 +71,15 @@ try:
     # грани уходила от неё до 0,8 мм, и сравнение со сканом штрафовало модель за погрешность самой
     # сетки (Э11). Поэтому у гладкого тела допуск 0,01; признак — число сплайновых граней, а не всех.
     many = sum(f.geomType() not in ("PLANE", "CYLINDER", "CONE", "SPHERE", "TORUS") for f in shape.Faces()) > 200
-    from OCP.BRepMesh import BRepMesh_IncrementalMesh
-    from OCP.StlAPI import StlAPI_Writer
+    # сетка проверяется по объёму тела и при поломке строится заново (stl_out.py)
+    from stl_out import write_stl_checked
 
-    # CadQuery exportStl already uses relative deflection and parallel meshing.
     with measured(timings, "stl_tessellation"):
-        BRepMesh_IncrementalMesh(shape.wrapped, 0.01 if many else 0.02, True, 1.0 if many else 0.1, True)
-    with measured(timings, "stl_write"):
-        writer = StlAPI_Writer()
-        writer.ASCIIMode = False
-        if not writer.Write(shape.wrapped, str(out / "model.stl")):
-            raise RuntimeError("не удалось записать STL")
+        ratio, attempt = write_stl_checked(shape.wrapped, out / "model.stl", 0.01 if many else 0.02, True,
+                                           1.0 if many else 0.1, tol=0.1)
+    info["stl_volume_ratio"] = round(ratio, 4)
+    if attempt:
+        info["stl_retessellated"] = attempt
     # Относительный допуск на тысячах мелких сплайновых граней даёт миллионы треугольников: крышка
     # студии, 4287 граней — 2,4 млн, сравнение со сканом съело 13 ГБ и было убито. Более грубая
     # тесселяция OCC мало помогает (абсолютный допуск 0,1 мм — 4 млн), поэтому готовая сетка

@@ -3,6 +3,7 @@ import os
 Сечения скана каждые dz; слой = промежуток, где набор контуров не меняется; каждый контур слоя —
 гладкий сплайн; тело слоя — лофт через несколько сечений; дыры контура вычитаются тем же способом."""
 import sys, time, numpy as np, trimesh, shapely
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # stl_out.py рядом с demo.py
 from shapely.geometry import Polygon
 from scipy.interpolate import splprep, splev
 import cadquery as cq
@@ -254,7 +255,7 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
     levels = [(rings[i], z) for i, z in zip(keep, lz)]
     if coef is not None:
         xs, ys = rings[-1][:, 0], rings[-1][:, 1]
-        zz = coef[0] + coef[1] * xs + coef[2] * ys + coef[3] * xs * xs + coef[4] * xs * ys + coef[5] * ys * ys
+        zz = surf_eval(coef, xs, ys)
         print("top z", round(float(zz.min()), 2), round(float(zz.max()), 2), flush=True)
         if zz.max() + 0.5 > zb + 0.3:
             ztop = float(zz.max()) + 0.5
@@ -262,7 +263,7 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
     bcoef = top_surface(mesh, rings[keep[0]], zs[0], down=True) if os.environ.get("BOTTOM_FIT", "1") == "1" else None
     if bcoef is not None:
         xs, ys = rings[keep[0]][:, 0], rings[keep[0]][:, 1]
-        zz = bcoef[0] + bcoef[1] * xs + bcoef[2] * ys + bcoef[3] * xs * xs + bcoef[4] * xs * ys + bcoef[5] * ys * ys
+        zz = surf_eval(bcoef, xs, ys)
         print("bottom z", round(float(zz.min()), 2), round(float(zz.max()), 2), flush=True)
         levels[0] = (levels[0][0], min(levels[0][1], float(zz.min()) - 0.3))
     TOPINFO["bcoef"] = bcoef
@@ -290,7 +291,7 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
     pieces = [body.val()]
     isl = islands(secs, zb, dz, n)
     # выступ под дном (площадка): выдавливание самого большого из отрезанных нижних срезов до дна
-    if TOPINFO.get("pads"):
+    if TOPINFO.get("pads") and os.environ.get("PADS", "0") == "1":
         pz = [p[0] for p in TOPINFO["pads"]]; big = max(TOPINFO["pads"], key=lambda p: p[2])[1]
         try:
             # дно-купол: лофт по срезам низа (от самого нижнего, маленького, к полному), а не плоская площадка со ступенькой
@@ -602,6 +603,17 @@ def _boss_slots(sol, ref, ps, dz, n, min_area=0.4, shrink=0.12):
             pass
     return sol, k
 
+def _basis(x, y, k):
+    """базис поверхности z = f(x, y): 6 членов — квадратичная, 10 — кубическая"""
+    x = np.asarray(x, float); y = np.asarray(y, float); one = np.ones_like(x)
+    b = [one, x, y, x * x, x * y, y * y]
+    if k == 10:
+        b += [x ** 3, x * x * y, x * y * y, y ** 3]
+    return np.stack(b, -1)
+
+def surf_eval(coef, x, y):
+    return _basis(x, y, len(coef)) @ coef
+
 def top_surface(mesh, ring, zb, band=3.0, down=False):
     """верх стенки: гладкая поверхность z = f(x, y) (квадратичная) по точкам скана, смотрящим вверх у края"""
     from shapely.geometry import Point
@@ -618,7 +630,9 @@ def top_surface(mesh, ring, zb, band=3.0, down=False):
     if len(P) < 30:
         return None
     x, y, z = P.T
-    A = np.c_[np.ones_like(x), x, y, x * x, x * y, y * y]
+    # дно — кубика: она ловит купол и наклон дна одной гладкой гранью, без площадки-ступеньки снизу
+    deg = int(os.environ.get("BOTTOM_DEG", "3") if down else os.environ.get("TOP_DEG", "2"))
+    A = _basis(x, y, 10 if deg == 3 else 6)
     w = np.ones_like(z)
     for _ in range(5):  # робастно: отбрасываем далёкие точки
         coef = np.linalg.lstsq(A * w[:, None], z * w, rcond=None)[0]
@@ -638,12 +652,12 @@ def cut_above(solid, coef, bbox, margin=5.0, below=False):
     arr = TColgp_Array2OfPnt(1, k, 1, k)
     for i, x in enumerate(np.linspace(x0, x1, k)):
         for j, y in enumerate(np.linspace(y0, y1, k)):
-            z = coef @ [1, x, y, x * x, x * y, y * y]
+            z = surf_eval(coef, x, y)
             arr.SetValue(i + 1, j + 1, gp_Pnt(float(x), float(y), float(z)))
     surf = GeomAPI_PointsToBSplineSurface(arr, 3, 3, GeomAbs_C2, 1e-4).Surface()
     face = BRepBuilderAPI_MakeFace(surf, 1e-6).Face()
     xc, yc = (x0 + x1) / 2, (y0 + y1) / 2
-    zc = coef @ [1, xc, yc, xc * xc, xc * yc, yc * yc] + (-50 if below else 50)
+    zc = surf_eval(coef, xc, yc) + (-50 if below else 50)
     hs = BRepPrimAPI_MakeHalfSpace(face, gp_Pnt(float(xc), float(yc), float(zc))).Solid()
     return solid.cut(cq.Solid(hs))
 
@@ -725,6 +739,18 @@ def assemble(scan, log=print):
                 body = nb
                 info["bottom_surface" if below else "top_surface"] = True
     body = body.clean()
+    rf = float(os.environ.get("BOTTOM_FILLET", "0"))
+    if rf > 0 and info.get("bottom_surface"):
+        # скруглённая кромка дна, как операция «скругление» в CAD; при неудаче радиус уменьшаем
+        bot = min(body.Faces(), key=lambda f: f.Center().z)
+        for r in (rf, rf * 0.7, rf * 0.5):
+            try:
+                nb = body.fillet(r, bot.Edges())
+                if nb.isValid() and nb.Volume() > 0.9 * body.Volume():
+                    body = nb; info["bottom_fillet"] = r
+                    break
+            except Exception:  # noqa: BLE001
+                pass
     added = 0
     for p in isl:
         try:
@@ -737,7 +763,9 @@ def assemble(scan, log=print):
     body = body.clean()
     if os.environ.get("CAD_SECTIONS_CORRECT", "1") == "1":
         tf = os.path.join(tempfile.gettempdir(), "_kcorr%d.stl" % os.getpid())
-        cq.exporters.export(body, tf, tolerance=0.03, angularTolerance=0.15)
+        # сетка для поправки — с проверкой объёма: битая сетка давала ложные вырезы
+        from stl_out import write_stl_checked
+        write_stl_checked(body.wrapped, tf, 0.03, True, 0.15, tol=0.1)
         mm = trimesh.load(tf, force="mesh")
         nc = 0
         for v in sorted(correction_prisms(scan, mm), key=lambda c: -c.Volume()):

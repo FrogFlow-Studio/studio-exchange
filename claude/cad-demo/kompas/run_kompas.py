@@ -13,4 +13,7 @@ if __name__ == "__main__":
     body, info = kompas_build.assemble(scan)
     print("годное" if body.isValid() else "негодное", info, flush=True)
     cq.exporters.export(body, sys.argv[2] + ".step")
-    cq.exporters.export(body, sys.argv[2] + ".stl", tolerance=0.05, angularTolerance=0.2)
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from stl_out import write_stl_checked
+
+    print("STL: объём сетки / тела, попытка", write_stl_checked(body.wrapped, sys.argv[2] + ".stl", tol=0.1))

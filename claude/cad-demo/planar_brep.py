@@ -375,9 +375,13 @@ def _unmeshed_parts(body, V, F, parts):
 
     # Проверяется тело после записи в STEP и чтения обратно: так его видят окно и Компас, и именно после
     # этого круга грань может перестать разбиваться в сетку.
+    # пишется только набор гладких граней (их хватает для проверки, а всё тело кронштейна — 25 МБ)
+    smooth_faces = [face for face in body.Faces() if face.geomType() == "BSPLINE"]
+    if not smooth_faces:
+        return []
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "check.step")
-        cq.exporters.export(body, path)
+        cq.exporters.export(cq.Compound.makeCompound(smooth_faces), path)
         again = cq.importers.importStep(path).val()
     bad = []
     for face in again.Faces():

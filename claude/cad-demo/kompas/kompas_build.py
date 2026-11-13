@@ -17,6 +17,8 @@ from OCP.GeomAbs import GeomAbs_C2
 MIN_AREA = 1.0
 TOPINFO = {}
 STEP_JUMP = float(os.environ.get('STEP_JUMP', '1.0'))
+VOID_OPEN = float(os.environ.get("VOID_OPEN", "0.15"))  # срез тонких перешейков пустоты
+VOID_MIN = float(os.environ.get("VOID_MIN", "1.0"))  # мельче — шум сечения
 
 def sections(mesh, dz):
     z0, z1 = mesh.bounds[:, 2]
@@ -402,8 +404,8 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
             top_v.append((z, geoms))
             continue
         big = max(polys, key=lambda p: Polygon(p.exterior).area)
-        v = Polygon(big.exterior).difference(shapely.union_all(polys)).buffer(-0.15).buffer(0.15)
-        geoms = [g for g in getattr(v, "geoms", [v]) if not g.is_empty and g.area >= 1.0]
+        v = Polygon(big.exterior).difference(shapely.union_all(polys)).buffer(-VOID_OPEN).buffer(VOID_OPEN)
+        geoms = [g for g in getattr(v, "geoms", [v]) if not g.is_empty and g.area >= VOID_MIN]
         voids.append((z, geoms))
     if os.environ.get("VOIDS", "chains") == "chains":
         # углубление выше верха стенки продолжает цепочку кармана, с которым сливается: один лофт,
@@ -576,7 +578,7 @@ def void_chains(voids, dz, n, zb, jump=0.5):
                 pass
     return cut
 
-def islands(secs, zb, dz=0.2, n=32, min_area=3.0):
+def islands(secs, zb, dz=0.2, n=32, min_area=float(os.environ.get("ISL_MIN", "0.8"))):
     """бобышки и рёбра внутри кармана и над краем: отдельные многоугольники сечений,
     сгруппированные по перекрытию в плане; каждое — выдавливание своего контура с отверстиями"""
     items = []
@@ -606,7 +608,7 @@ def islands(secs, zb, dz=0.2, n=32, min_area=3.0):
         if wall is not None and g["foot"].distance(wall) < 0.8:
             print("island at wall skipped", round(g["foot"].area, 1), flush=True); continue
         zset = sorted({z for z, _ in ps})
-        if len(zset) < 2: continue
+        if len(zset) < int(os.environ.get("ISL_MIN_LEVELS", "1")): continue
         # низ бобышки утапливаем в пол кармана, чтобы она срослась с телом, а не висела отдельно
         za, zb2 = zset[0] - dz / 2 - float(os.environ.get("CAD_SECTIONS_EMBED", "0.6")), zset[-1] + dz / 2
         with_holes = [q for _, q in ps if len(q.interiors)]
@@ -814,7 +816,7 @@ if __name__ == "__main__":
     cq.exporters.export(body, sys.argv[2] + ".stl", tolerance=0.01, angularTolerance=0.1)
 
 
-def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=0.6, shrink=0.12,
+def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=float(os.environ.get("CORR_MIN", "0.6")), shrink=0.12,
                       skin=float(os.environ.get("CORR_SKIN", "0.6"))):
     """поправка по сечениям: где в модели есть материал, а в скане нет (пазы, канавки), — вырез;
     при extra=True наоборот — где в скане есть, а в модели нет — добавка. Слои по перекрытию, выдавливание."""

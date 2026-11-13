@@ -1,0 +1,143 @@
+[
+  {
+    "task": 64,
+    "before": {
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "faces": 4,
+      "valid": true,
+      "mesh_volume_ratio": 0.9978525097346198,
+      "seconds": 0
+    },
+    "after": {
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "faces": 4,
+      "valid": true,
+      "mesh_volume_ratio": 0.9977614481519107,
+      "seconds": 0.3699340999883134
+    },
+    "end_profile_max_mm": [
+      0.4299999999999997,
+      0.2794380233741336
+    ],
+    "nose_max_mm": [
+      0.18718854006698038,
+      0.09760978035485479
+    ],
+    "top_fillet_mm": 0.3
+  },
+  {
+    "task": 65,
+    "curved": false,
+    "before": {
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "faces": 94,
+      "valid": true,
+      "mesh_volume_ratio": 0.9999999994951441,
+      "seconds": 0
+    },
+    "after": {
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "faces": 12,
+      "valid": true,
+      "mesh_volume_ratio": 1.0002512469083351,
+      "seconds": 0.042162900004768744
+    }
+  },
+  {
+    "task": 65,
+    "curved": true,
+    "before": {
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "faces": 97,
+      "valid": true,
+      "mesh_volume_ratio": 0.9999999994101618,
+      "seconds": 0
+    },
+    "after": {
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "faces": 11,
+      "valid": true,
+      "mesh_volume_ratio": 1.0012738963384995,
+      "seconds": 0.046751100016990677
+    }
+  },
+  {
+    "task": 67,
+    "before": {
+      "coverage": [
+        0.9994,
+        0.9982
+      ],
+      "faces": 7,
+      "valid": true,
+      "mesh_volume_ratio": 0.9999946022838488,
+      "seconds": 0
+    },
+    "after": {
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "faces": 7,
+      "valid": true,
+      "mesh_volume_ratio": 0.9998476924911752,
+      "seconds": 0.16430469998158514
+    },
+    "law": [
+      [
+        0.0,
+        0.34710579949517456
+      ],
+      [
+        0.125,
+        0.2902135381766988
+      ],
+      [
+        0.25,
+        0.5862217001247558
+      ],
+      [
+        0.375,
+        1.0271502795877727
+      ],
+      [
+        0.5,
+        1.1
+      ],
+      [
+        0.625,
+        0.9756525309777571
+      ],
+      [
+        0.75,
+        0.6463064493801601
+      ],
+      [
+        0.875,
+        0.3772747288839325
+      ],
+      [
+        1.0,
+        0.29906427649176914
+      ]
+    ]
+  }
+]

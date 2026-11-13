@@ -273,7 +273,7 @@ def _top_open_levels(top_v, min_area=20.0):
 
 
 def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.environ.get('RING_SMOOTH', '0.05')), *,
-           periodic_wall=False, void_n=None):
+           periodic_wall=False, void_n=None, fit_upper_wall=False):
     """наружная стенка — один лофт по всей высоте; внутренние объёмы (карманы, пазы) вычитаются по слоям"""
     secs = sections(mesh, dz)
     secs = [(z, p) for z, p in secs if p]
@@ -373,8 +373,20 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
         TOPINFO["bcoef"] = None; TOPINFO["dome"] = True
         levels[0] = (levels[0][0], zs[keep[0]] - dz / 2)
     degree = int(os.environ.get("WALL_DEG", "2")) or None
+    if fit_upper_wall and coef is not None:
+        from local_surfaces import upper_wall
+
+        extended = upper_wall(mesh,levels,rings[-1],zs[-1],ztop)
+        if extended is not None:
+            try:
+                wall = loft(extended,deg=degree)
+                levels = None
+                TOPINFO["upper_wall_fit"] = True
+            except RuntimeError:
+                pass
     try:
-        wall = loft(levels, deg=degree)
+        if levels is not None:
+            wall = loft(levels, deg=degree)
     except RuntimeError:
         if (os.environ.get("CAD_KOMPAS_END_RECOVERY", "0") != "1"
                 or len(levels)<4 or TOPINFO.get("bottom_round")):
@@ -904,7 +916,7 @@ def _nz(f):
         return 0.0
 
 
-def _edge_fillets(body, info, scan=None):
+def _edge_fillets(body, info, scan=None, *, fit_variable=False):
     """скругления кромок, как операция «скругление» в CAD: дно (BOTTOM_FILLET) и наружная кромка верха борта
     (TOP_FILLET), радиус в мм; при отказе ядра радиус уменьшается, при неудаче тело остаётся как было"""
     # радиусы по умолчанию — малые технологические скругления; оценка радиуса по скану — задача 61 Севера
@@ -933,6 +945,15 @@ def _edge_fillets(body, info, scan=None):
                 continue
         else:
             rf = float(setting)
+        if fit_variable and scan is not None and len(edges)==1:
+            from variable_fillet import variable_fillet
+
+            fitted = variable_fillet(scan,body,edges[0])
+            if fitted is not None:
+                body, law = fitted
+                info[key.lower()] = round(float(np.median(law[:,1])),3)
+                info[key.lower()+"_law"] = law.tolist()
+                continue
         for r in (rf, rf * 0.7, rf * 0.5):
             try:
                 nb = body.fillet(r, edges)
@@ -971,6 +992,18 @@ def assemble(scan, log=print):
         candidate = assemble_stable(scan, log=log)
         experiment = "stable_pockets"
     baseline = _assemble_stock(scan, log=log)
+    upper = os.environ.get("CAD_KOMPAS_UPPER_WALL", "0") == "1"
+    floor = os.environ.get("CAD_KOMPAS_POCKET_FLOOR", "0") == "1"
+    variable = os.environ.get("CAD_KOMPAS_VARIABLE_FILLET", "0") == "1"
+    if candidate is None and (upper or floor or variable):
+        experiment = "local_surfaces"
+        try:
+            trial = _assemble_stock(scan, log=log, fit_upper_wall=upper, fit_pocket_floor=floor, fit_variable=variable)
+            if any(trial[1].get(key) for key in ("upper_wall_fit","smooth_pocket_floors",
+                                                 "top_fillet_law","bottom_fillet_law")):
+                candidate = trial
+        except (RuntimeError, ValueError) as error:
+            log(f"    local surfaces rollback: {error}")
     if candidate is None and os.environ.get("CAD_KOMPAS_PERIODIC_WALL", "0") == "1":
         experiment = "periodic_wall"
         try:
@@ -993,13 +1026,22 @@ def assemble(scan, log=print):
     from candidate_guard import compare_candidate
 
     accepted, audit = compare_candidate(scan, baseline[0], candidate[0])
+    if experiment == "local_surfaces" and baseline[1].get("top_fillet") and not candidate[1].get("top_fillet"):
+        accepted = False
+        audit["reason"] = "top_fillet_lost"
+    if accepted and experiment == "local_surfaces" and variable and not (upper or floor):
+        gains = np.subtract(audit["candidate"],audit["stock"])
+        if min(gains)<-1e-9 or max(gains)<=.0003+1e-9:
+            accepted = False
+            audit["reason"] = "variable_fillet_gain_below_threshold"
     audit["accepted"] = accepted
     log(f"    {experiment} guard: {audit}")
     body, info = candidate if accepted else baseline
     return body, {**info, experiment+"_guard": audit}
 
 
-def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None):
+def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
+                    fit_upper_wall=False, fit_pocket_floor=False, fit_variable=False):
     """Сборка «как в Компасе» вдоль оси z выровненного скана. Возвращает (тело, сведения).
     Порядок операций: наружная стенка (лофт по сечениям, сглаженным по высоте) → вырез кармана слоями →
     срез верха и низа гладкими поверхностями по скану → бобышки и площадка выдавливанием →
@@ -1009,8 +1051,8 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None):
     TOPINFO.clear()
     info = {}
     t = time.time()
-    pieces, cut, isl = build2(scan, periodic_wall=periodic_wall, void_n=void_n)
-    for key in ("periodic_wall", "wall_end_recovery"):
+    pieces, cut, isl = build2(scan, periodic_wall=periodic_wall, void_n=void_n,fit_upper_wall=fit_upper_wall)
+    for key in ("periodic_wall", "wall_end_recovery", "upper_wall_fit"):
         if TOPINFO.get(key):
             info[key] = True
     body = pieces[0]
@@ -1020,6 +1062,10 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None):
     skipped = 0
     trace = os.environ.get("CAD_KOMPAS_TRACE", "0") == "1"
     void_checks = []
+    if fit_pocket_floor:
+        from local_surfaces import floor_samples, trim_pocket
+
+        floor_points = floor_samples(scan)
     def _cut_try(body, v):
         try:
             nb = body.cut(v)
@@ -1033,7 +1079,20 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None):
     for v in sorted(cut, key=lambda c: -c.Volume()):
         try:
             before = body.Volume() if trace else None
-            nb = _cut_try(body, v)
+            nb = None
+            if fit_pocket_floor:
+                try:
+                    smooth_tool = trim_pocket(scan,v,samples=floor_points)
+                    if smooth_tool is not None:
+                        trial = body.cut(smooth_tool)
+                        if (trial.isValid() and len(trial.Solids())==1
+                                and .5*body.Volume()<trial.Volume()<body.Volume()):
+                            nb = trial
+                            info["smooth_pocket_floors"] = info.get("smooth_pocket_floors",0)+1
+                except (ValueError,RuntimeError):
+                    pass
+            if nb is None:
+                nb = _cut_try(body, v)
             if nb.isValid() and nb.Volume() > 0.5 * body.Volume():
                 body = nb
                 reason = "accepted"
@@ -1061,7 +1120,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None):
             if trace:
                 info[key+"_check"] = dict(valid=nb.isValid(), volume=nb.Volume(), solids=len(nb.Solids()))
     body = body.clean()
-    body = _edge_fillets(body, info, scan)
+    body = _edge_fillets(body, info, scan,fit_variable=fit_variable)
     added = 0
     for p in isl:
         try:

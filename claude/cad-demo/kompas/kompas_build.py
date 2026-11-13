@@ -224,7 +224,7 @@ def build(mesh, dz=0.2, tol=0.3, n=96, smooth=0.05, step=1.0, secs=None, fuse=Tr
 
 
 
-def pick_levels(zs, rings, jump=0.8, dzmax=2.0, dzmin=0.6):
+def pick_levels(zs, rings, jump=float(os.environ.get("LEV_JUMP", "0.8")), dzmax=float(os.environ.get("LEV_DZMAX", "2.0")), dzmin=0.6):
     """уровни для лофта: новый уровень, когда контур ушёл на jump мм или прошло dzmax мм"""
     keep = [0]
     for i in range(1, len(zs)):

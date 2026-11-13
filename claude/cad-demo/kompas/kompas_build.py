@@ -246,6 +246,30 @@ def pick_levels(zs, rings, jump=float(os.environ.get("LEV_JUMP", "0.8")), dzmax=
         else: keep.append(len(zs) - 1)
     return keep
 
+def _region_below(coef, poly, z, h=0.2):
+    """часть многоугольника, где поверхность верха выше z (по сетке h, полосами строк)"""
+    from shapely.geometry import box
+    x0, y0, x1, y1 = poly.bounds
+    xs = np.arange(x0, x1 + h, h); boxes = []
+    for y in np.arange(y0, y1 + h, h):
+        ok = np.asarray(surf_eval(coef, xs + h / 2, np.full_like(xs, y + h / 2))) > z
+        d = np.diff(np.r_[0, ok.astype(int), 0]); st = np.flatnonzero(d == 1); en = np.flatnonzero(d == -1)
+        boxes += [box(xs[a], y, xs[b - 1] + h, y + h) for a, b in zip(st, en)]
+    return shapely.union_all(boxes).intersection(poly) if boxes else Polygon()
+
+
+def _top_open_levels(top_v, min_area=20.0):
+    """главное углубление выше верха стенки по уровням, пока оно не распалось и не сжалось вдвое"""
+    lev = []
+    for z, gs in top_v:
+        if not gs: break
+        g = max(gs, key=lambda q: q.area)
+        if g.area < min_area or (lev and g.area < 0.5 * lev[-1][1].area): break
+        if lev and lev[-1][1].intersection(g).area < 0.5 * min(lev[-1][1].area, g.area): break
+        lev.append((z, g))
+    return lev
+
+
 def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.environ.get('RING_SMOOTH', '0.05')), *,
            periodic_wall=False):
     """наружная стенка — один лофт по всей высоте; внутренние объёмы (карманы, пазы) вычитаются по слоям"""
@@ -362,15 +386,29 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
     body = cq.Workplane().add(wall)
     TOPINFO.update(coef=coef, ztop=ztop, ring=rings[-1])
     # пустоты внутри наружного контура по слоям
-    voids = []
+    voids = []; top_v = []
+    # выше верха стенки (чаша, углубление у края) — пустоты считаем внутри последнего полного контура:
+    # иначе их форму несёт только гладкая поверхность верха и на месте чаши остаётся ровная площадка
+    above = float(os.environ.get("VOID_ABOVE", "0.6"))
+    ref_top = Polygon(outer[-1][1].exterior).buffer(-above) if above > 0 else None
     for z, polys in secs:
-        if z > zb: break
+        if z > zb:
+            if ref_top is None or ref_top.is_empty: break
+            # только там, где по поверхности верха тело ещё есть: выше неё срез верха и так всё снимет,
+            # а вырез у края оставил бы тонкую кожуру отдельным телом
+            live = _region_below(coef, ref_top, z + 0.25) if coef is not None else ref_top
+            v = live.difference(shapely.union_all(polys)).buffer(-0.15).buffer(0.15)
+            geoms = [g for g in getattr(v, "geoms", [v]) if not g.is_empty and g.area >= 1.0]
+            top_v.append((z, geoms))
+            continue
         big = max(polys, key=lambda p: Polygon(p.exterior).area)
         v = Polygon(big.exterior).difference(shapely.union_all(polys)).buffer(-0.15).buffer(0.15)
         geoms = [g for g in getattr(v, "geoms", [v]) if not g.is_empty and g.area >= 1.0]
         voids.append((z, geoms))
     if os.environ.get("VOIDS", "chains") == "chains":
-        cut = void_chains(voids, dz, n, zb)
+        # углубление выше верха стенки продолжает цепочку кармана, с которым сливается: один лофт,
+        # стенка чаши — наклонная грань (отдельный вырез рядом с карманом ломал вычитание)
+        cut = void_chains(voids + [(z, [g]) for z, g in _top_open_levels(top_v)], dz, n, zb)
         print("void chains", len(cut), flush=True)
     else:
         cut = void_layers(voids, dz, n, zb)
@@ -859,6 +897,23 @@ def _edge_fillets(body, info, scan=None):
                     break
             except Exception:  # noqa: BLE001
                 pass
+    rin = float(os.environ.get("TOP_IN_FILLET", "0"))
+    if rin > 0 and TOPINFO.get("ring") is not None:
+        # внутренняя кромка борта (край кармана сверху): рёбра верхней грани, далёкие от наружного контура
+        tops = [f for f in body.Faces() if _nz(f) > 0.7]
+        if tops:
+            top = max(tops, key=lambda f: f.Area())
+            outer = Polygon(TOPINFO["ring"]).exterior
+            edges = [e for e in top.Edges()
+                     if outer.distance(shapely.Point(e.Center().x, e.Center().y)) > 0.8]
+            for r in (rin, rin * 0.6, rin * 0.4):
+                try:
+                    nb = body.fillet(r, edges)
+                    if nb.isValid() and nb.Volume() > 0.95 * body.Volume():
+                        body = nb; info["top_in_fillet"] = round(r, 3)
+                        break
+                except Exception:  # noqa: BLE001
+                    pass
     return body
 
 

@@ -273,7 +273,7 @@ def _top_open_levels(top_v, min_area=20.0):
 
 
 def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.environ.get('RING_SMOOTH', '0.05')), *,
-           periodic_wall=False):
+           periodic_wall=False, void_n=None):
     """наружная стенка — один лофт по всей высоте; внутренние объёмы (карманы, пазы) вычитаются по слоям"""
     secs = sections(mesh, dz)
     secs = [(z, p) for z, p in secs if p]
@@ -410,7 +410,7 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
     if os.environ.get("VOIDS", "chains") == "chains":
         # углубление выше верха стенки продолжает цепочку кармана, с которым сливается: один лофт,
         # стенка чаши — наклонная грань (отдельный вырез рядом с карманом ломал вычитание)
-        cut = void_chains(voids + [(z, [g]) for z, g in _top_open_levels(top_v)], dz, n, zb)
+        cut = void_chains(voids + [(z, [g]) for z, g in _top_open_levels(top_v)], dz, (void_n or n), zb)
         print("void chains", len(cut), flush=True)
     else:
         cut = void_layers(voids, dz, n, zb)
@@ -937,6 +937,15 @@ def assemble(scan, log=print):
                 candidate = trial
         except (RuntimeError, ValueError) as error:
             log(f"    periodic wall rollback: {error}")
+    fine = int(os.environ.get("CAD_KOMPAS_FINE_VOIDS", "48"))
+    if candidate is None and fine:
+        # контуры кармана гуще (меньше «волны» в углах): построение капризнее, поэтому это кандидат,
+        # который берётся, только если тело цело и ближе к скану, чем основное
+        experiment = "fine_voids"
+        try:
+            candidate = _assemble_stock(scan, log=log, void_n=fine)
+        except (RuntimeError, ValueError) as error:
+            log(f"    fine voids rollback: {error}")
     if candidate is None:
         return baseline
     from candidate_guard import compare_candidate
@@ -948,7 +957,7 @@ def assemble(scan, log=print):
     return body, {**info, experiment+"_guard": audit}
 
 
-def _assemble_stock(scan, log=print, *, periodic_wall=False):
+def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None):
     """Сборка «как в Компасе» вдоль оси z выровненного скана. Возвращает (тело, сведения).
     Порядок операций: наружная стенка (лофт по сечениям, сглаженным по высоте) → вырез кармана слоями →
     срез верха и низа гладкими поверхностями по скану → бобышки и площадка выдавливанием →
@@ -958,7 +967,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False):
     TOPINFO.clear()
     info = {}
     t = time.time()
-    pieces, cut, isl = build2(scan, periodic_wall=periodic_wall)
+    pieces, cut, isl = build2(scan, periodic_wall=periodic_wall, void_n=void_n)
     for key in ("periodic_wall", "wall_end_recovery"):
         if TOPINFO.get(key):
             info[key] = True
@@ -1055,7 +1064,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False):
             body = sols[0]
             info["fragments_dropped"] = len(sols) - 1
         else:
-            raise RuntimeError(f"сборка распалась на {len(sols)} тела")
+            raise RuntimeError(f"сборка распалась на {len(sols)} тела: " + ", ".join(f"{x.Volume():.1f}" for x in sols[:5]))
     info["faces"] = len(body.Faces())
     info["seconds"] = round(time.time() - t, 1)
     log(f"    сборка по сечениям: стенка лофтом, вырезов кармана {len(cut) - skipped}, бобышек {added}, "

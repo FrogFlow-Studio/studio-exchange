@@ -522,9 +522,30 @@ def main() -> None:
         # Пятна треугольников вне плоскостей — одной гладкой гранью по той же границе (задача 27 Севера).
         # CAD_STRAIGHT_SMOOTH=0 — без них.
         smooth = os.environ.get("CAD_STRAIGHT_SMOOTH", "1") != "0"
+        builder = planar_brep
+        if os.environ.get("CAD_STRAIGHT_FILLETS", "0") == "1":
+            # опыт: скругление между двумя плоскостями — точной цилиндрической гранью (задача 31 Севера);
+            # опорные плоскости после слияния в idealize переводятся на ту, в которую слились
+            import planar_brep_cyl
+
+            regs = info["regions"]
+            for r in regs:
+                if "fillet_planes" not in r:
+                    continue
+                pair = []
+                for p in r["fillet_planes"]:
+                    while regs[p].get("kind") == "merged":
+                        p = regs[p]["into"]
+                    pair.append(p)
+                if all(regs[p]["kind"] == "plane" for p in pair) and pair[0] != pair[1]:
+                    r["fillet_planes"] = pair
+                else:
+                    del r["fillet_planes"]
+            builder = planar_brep_cyl
         try:
-            body, built = planar_brep.build(V, F, label, info["regions"], smooth_tol=fit if smooth else None,
-                                            smooth_edge_tol=fit, smooth_budget=180.0)
+            extra = {"tol": fit} if builder is not planar_brep else {}
+            body, built = builder.build(V, F, label, info["regions"], smooth_tol=fit if smooth else None,
+                                        smooth_edge_tol=fit, smooth_budget=180.0, **extra)
             if smooth and not built["valid"]:
                 raise RuntimeError("тело с гладкими гранями невалидно")
         except Exception as error:  # noqa: BLE001

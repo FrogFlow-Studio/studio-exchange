@@ -186,7 +186,8 @@ def augment(mesh, tol, noise, seg=None):
         ids, audit = _grow_to_tangency(mesh, seg, blend, claimed, neighbors, limit, step)
         if len(ids):
             claimed[ids] = True
-            region = {"kind": "cylinder", "origin": blend["origin"], "axis": blend["axis"], "r": blend["radius"]}
+            region = {"kind": "cylinder", "origin": blend["origin"], "axis": blend["axis"], "r": blend["radius"],
+                      "fillet_planes": list(map(int, blend["planes"]))}
             _insert(seg, region, ids, areas)
             cylinders.append({**audit, "planes": list(map(int, blend["planes"])), "radius_mm": blend["radius"],
                               "sense": blend["sense"]})
@@ -198,6 +199,13 @@ def augment(mesh, tol, noise, seg=None):
     seg["regions"] = [seg["regions"][i] for i in active]
     for blend in cylinders:
         blend["planes"] = remap[blend["planes"]].tolist()
+    for region in seg["regions"]:
+        if "fillet_planes" in region:
+            pair = remap[region["fillet_planes"]].tolist()
+            if min(pair) < 0:
+                del region["fillet_planes"]
+            else:
+                region["fillet_planes"] = pair
     return seg, {"narrow_planes_added": added, "narrow_planes_rejected": rejected,
                  "fillets_added": len(cylinders), "fillets_rejected_supported_ring": rejected_blends,
                  "fillet_growth": cylinders}

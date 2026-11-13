@@ -292,6 +292,50 @@ def hole_parameters(scan: trimesh.Trimesh):
             for w in walls._hole_walls(scan)]
 
 
+def _new_walls_off_scan(body, scan: trimesh.Trimesh, spec, away: float = 0.5) -> float | None:
+    """Доля площади новых стенок выреза (цилиндр радиуса отверстия и торцы поперёк его оси),
+    которая лежит дальше away мм от скана. Настоящее отверстие уже есть в скане, и его стенка ложится
+    на скан; «отверстие» на месте неглубокой круглой площадки вырезает дно там, где скан — сплошной
+    материал. None — новых стенок не нашлось."""
+    c, d, r, h = spec
+    c, d = np.asarray(c, float), np.asarray(d, float)
+    d = d / np.linalg.norm(d)
+    pts, wts = [], []
+    for f in body.Faces():
+        kind = f.geomType()
+        if kind == "CYLINDER":     # стенка: цилиндр того же радиуса и с той же осью, что инструмент
+            cyl = f._geomAdaptor().Cylinder()
+            ax = cyl.Axis().Direction()
+            if abs(cyl.Radius() - r) > 1e-3 or abs(ax.X() * d[0] + ax.Y() * d[1] + ax.Z() * d[2]) < 0.999:
+                continue
+        elif kind == "PLANE":      # дно: плоскость поперёк оси точно на торце инструмента, внутри его круга
+            n = np.array(f.normalAt().toTuple())
+            if abs(float(n @ d)) < 0.999:
+                continue
+            along = float((np.array(f.Vertices()[0].toTuple()) - c) @ d)
+            if min(abs(along), abs(along - h)) > 0.02:
+                continue
+            rel = np.array(f.Center().toTuple()) - c
+            if np.linalg.norm(rel - float(rel @ d) * d) > r:
+                continue
+        else:
+            continue
+        vs, tris = f.tessellate(0.05, 0.3)
+        if not tris:
+            continue
+        P = np.array([v.toTuple() for v in vs])
+        T = np.array(tris)
+        tri = P[T]
+        area = np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1) / 2
+        pts.append(tri.mean(axis=1))
+        wts.append(area)
+    if not pts:
+        return None
+    P, W = np.vstack(pts), np.concatenate(wts)
+    _, dist, _ = trimesh.proximity.closest_point(scan, P)
+    return float(W[dist > away].sum() / max(W.sum(), 1e-12))
+
+
 def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_finder=hole_parameters,
               limit_time: bool = False):
     """Круглые отверстия вырезаются точно по диаметру из скана. Возвращает (тело, сколько).
@@ -310,6 +354,7 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_find
     add_count(timings, "hole_ops", 0)
     add_count(timings, "hole_rolled_back_ops", 0)
     add_count(timings, "hole_preflight_rejected", 0)
+    add_count(timings, "hole_scan_rejected", 0)
     preflight = HolePreflight() if os.environ.get("CAD_HOLE_PREFLIGHT", "1") != "0" else None
     with measured(timings, "hole_search"):
         specs = hole_finder(scan)
@@ -389,6 +434,16 @@ def cut_holes(s, scan: trimesh.Trimesh, *, volumes=None, timings=None, hole_find
             note(label, f"инструмент: исключение {type(ex).__name__}", started)
             continue
         new = attempt(s, tool, limit + 1, label)
+        if new is not None and os.environ.get("CAD_HOLE_SCAN_CHECK", "1") != "0":
+            try:
+                off = _new_walls_off_scan(new, scan, spec)
+            except Exception:  # noqa: BLE001  проверка не удалась — вырез остаётся
+                off = None
+            if off is not None and off > 0.3:
+                add_count(timings, "hole_scan_rejected")
+                note(label, f"откат: {off:.0%} новых стенок дальше 0,5 мм от скана (в скане такого выреза нет)",
+                     started)
+                new = None
         if new is not None:
             s, cut = new, cut + 1
     return s, cut

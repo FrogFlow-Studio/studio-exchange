@@ -454,14 +454,37 @@ def main() -> None:
         import planar_brep
 
         noise = float(sheet.get("diagnostics", {}).get("noise_mm", 0) or 0)
+        # Шум листа замеров на сглаженных сканах студии завышен (0,6–1,4 мм при настоящем около 0,01–0,1):
+        # для посадки берётся оценка задачи 22 Севера (scan_uncertainty, рабочее значение).
+        try:
+            import scan_uncertainty
+
+            noise = float(scan_uncertainty.estimate(scan).working_mm)
+        except Exception as error:  # noqa: BLE001
+            print(f"    оценка шума задачи 22 не удалась ({type(error).__name__}): шум из листа замеров", flush=True)
+        if os.environ.get("CAD_STRAIGHT_NOISE"):      # для опытов: шум для посадки задаётся вручную
+            noise = float(os.environ["CAD_STRAIGHT_NOISE"])
+        timings["noise_mm"] = noise
         # Выпрямляется сам скан: у него сетка мельче очищенной, плоскости и рёбра находятся точнее.
         # Очищенная (и достроенная) поверхность берётся, если скан не замкнут или на нём достроен скол.
         source, restored, zones = scan, [], []
         t = time.perf_counter()
         clean = _clean_surface(scan, scan_path, answer, digest=digest)
         fixed, restored, zones = _restore(clean, timings, scan, digest, answer)
-        if restored or not scan.is_watertight:
+        if restored:
             source = fixed
+        elif not scan.is_watertight:
+            # дыры скана закрываются как есть (pymeshfix): очищенная поверхность крупнее и уходит от скана
+            # до 0,3 мм (Terrano студии: 94,9% при 0,3 мм против 99,9% по самому скану)
+            try:
+                import pymeshfix
+
+                v, f = pymeshfix.clean_from_arrays(np.asarray(scan.vertices), np.asarray(scan.faces))
+                mended = trimesh.Trimesh(v, f, process=False)
+                ok = mended.is_watertight and abs(mended.volume - fixed.volume) <= 0.02 * abs(fixed.volume)
+            except Exception:  # noqa: BLE001
+                ok = False
+            source = mended if ok else fixed
         timings["cleanup"] = time.perf_counter() - t
         import regions
 

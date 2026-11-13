@@ -321,6 +321,9 @@ def idealize(scan: trimesh.Trimesh, tol: float = 0.3, noise: float = 0.0, *, seg
     # вперёд и шаг назад, как у Таубина); уход от скана не больше допуска
     free = ~snapped
     V0 = np.asarray(scan.vertices, float)
+    # свободная форма сглаживается не дальше половины допуска: иначе она уходит от скана на весь допуск
+    # и при сравнении на 0,3 мм теряет до 5% поверхности (Terrano студии)
+    fair_cap = 0.5 * tol
     if fair_iters and free.any():
         deg = np.bincount(e.ravel(), minlength=len(V)).astype(float)
         deg[deg == 0] = 1
@@ -334,7 +337,7 @@ def idealize(scan: trimesh.Trimesh, tol: float = 0.3, noise: float = 0.0, *, seg
             V[free] += lam * lap[free]
             off = V[free] - V0[free]
             ln = np.linalg.norm(off, axis=1)
-            V[free] = V0[free] + off * np.minimum(1.0, fit / np.maximum(ln, 1e-12))[:, None]
+            V[free] = V0[free] + off * np.minimum(1.0, fair_cap / np.maximum(ln, 1e-12))[:, None]
 
     # Ребро сетки поперёк ребра детали: один конец на плоскости A, другой на B, общей поверхности нет.
     # Такой треугольник висит «фаской» через ребро. Если линия пересечения A и B проходит у самого конца

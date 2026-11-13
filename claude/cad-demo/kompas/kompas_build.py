@@ -106,7 +106,7 @@ def round_rings(ring, zfun, r, k=int(os.environ.get("ROUND_K", "4"))):
         out.append((q, zfun(ring[:, 0], ring[:, 1]) + h))
     return out
 
-def _loft_child(rings_z, ruled, q):
+def _loft_child(rings_z, ruled, q, deg=None):
     try:
         if os.environ.get("LOFT_SMOOTH", "0") == "1" and not ruled and len(rings_z) > 2:
             ts = BRepOffsetAPI_ThruSections(True, False, 1e-6)
@@ -119,6 +119,16 @@ def _loft_child(rings_z, ruled, q):
             s = cq.Solid(ts.Shape())
             if not s.isValid():
                 s = cq.Solid.makeLoft([_wire(p, z) for p, z in rings_z], ruled)
+        elif deg and not ruled:
+            # степень лофта вдоль высоты ограничена: квадратичный лофт меньше раздувается между сечениями,
+            # и на его кромках строятся скругления (при степени 6 ядро в скруглении отказывает)
+            ts = BRepOffsetAPI_ThruSections(True, False, 1e-6)
+            ts.SetMaxDegree(int(deg))
+            ts.CheckCompatibility(False)
+            for p, z in rings_z:
+                ts.AddWire(_wire(p, z).wrapped)
+            ts.Build()
+            s = cq.Solid(ts.Shape())
         else:
             s = cq.Solid.makeLoft([_wire(p, z) for p, z in rings_z], ruled)
         import io
@@ -140,11 +150,11 @@ def align(rings_z):
         out.append((np.roll(p, -k, axis=0), np.roll(z, -k) if np.ndim(z) else z))
     return out
 
-def loft(rings_z, ruled=False):
+def loft(rings_z, ruled=False, deg=None):
     rings_z = align(rings_z)
     import multiprocessing as mp
     ctx = mp.get_context("fork"); q = ctx.Queue()
-    p = ctx.Process(target=_loft_child, args=(rings_z, ruled, q)); p.start(); p.join(60)
+    p = ctx.Process(target=_loft_child, args=(rings_z, ruled, q, deg)); p.start(); p.join(60)
     if p.is_alive(): p.kill(); raise RuntimeError("loft timeout")
     if p.exitcode != 0: raise RuntimeError("loft crash %s" % p.exitcode)
     fn = q.get(timeout=5)
@@ -320,7 +330,7 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
         # и плоскостью дна не режем — иначе на дне остаётся уступ по контуру купола
         TOPINFO["bcoef"] = None; TOPINFO["dome"] = True
         levels[0] = (levels[0][0], zs[keep[0]] - dz / 2)
-    body = cq.Workplane().add(loft(levels))
+    body = cq.Workplane().add(loft(levels, deg=int(os.environ.get("WALL_DEG", "2")) or None))
     TOPINFO.update(coef=coef, ztop=ztop, ring=rings[-1])
     # пустоты внутри наружного контура по слоям
     voids = []
@@ -760,6 +770,40 @@ def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=0.6,
     return out
 
 
+def _nz(f):
+    try:
+        return f.normalAt().z
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def _edge_fillets(body, info):
+    """скругления кромок, как операция «скругление» в CAD: дно (BOTTOM_FILLET) и наружная кромка верха борта
+    (TOP_FILLET), радиус в мм; при отказе ядра радиус уменьшается, при неудаче тело остаётся как было"""
+    # радиусы по умолчанию — малые технологические скругления; оценка радиуса по скану — задача 61 Севера
+    for key, sign, dflt in (("BOTTOM_FILLET", -1, "0.4"), ("TOP_FILLET", 1, "0.3")):
+        rf = float(os.environ.get(key, dflt))
+        if rf <= 0:
+            continue
+        faces = body.Faces()
+        cap = [f for f in faces if sign * _nz(f) > 0.7]
+        walls = [f for f in faces if abs(_nz(f)) < 0.5]
+        if not cap or not walls:
+            continue
+        cap = max(cap, key=lambda f: f.Area()); wall = max(walls, key=lambda f: f.Area())
+        we = {e.hashCode() for e in wall.Edges()}
+        edges = [e for e in cap.Edges() if e.hashCode() in we]
+        for r in (rf, rf * 0.7, rf * 0.5):
+            try:
+                nb = body.fillet(r, edges)
+                if nb.isValid() and nb.Volume() > 0.95 * body.Volume():
+                    body = nb; info[key.lower()] = round(r, 3)
+                    break
+            except Exception:  # noqa: BLE001
+                pass
+    return body
+
+
 def assemble(scan, log=print):
     """Сборка «как в Компасе» вдоль оси z выровненного скана. Возвращает (тело, сведения).
     Порядок операций: наружная стенка (лофт по сечениям, сглаженным по высоте) → вырез кармана слоями →
@@ -815,18 +859,7 @@ def assemble(scan, log=print):
             if trace:
                 info[key+"_check"] = dict(valid=nb.isValid(), volume=nb.Volume(), solids=len(nb.Solids()))
     body = body.clean()
-    rf = float(os.environ.get("BOTTOM_FILLET", "0"))
-    if rf > 0 and info.get("bottom_surface"):
-        # скруглённая кромка дна, как операция «скругление» в CAD; при неудаче радиус уменьшаем
-        bot = min(body.Faces(), key=lambda f: f.Center().z)
-        for r in (rf, rf * 0.7, rf * 0.5):
-            try:
-                nb = body.fillet(r, bot.Edges())
-                if nb.isValid() and nb.Volume() > 0.9 * body.Volume():
-                    body = nb; info["bottom_fillet"] = r
-                    break
-            except Exception:  # noqa: BLE001
-                pass
+    body = _edge_fillets(body, info)
     added = 0
     for p in isl:
         try:

@@ -1,0 +1,91 @@
+[
+  {
+    "sigma": 0.0,
+    "flag": "fixed_rings",
+    "coverage": [
+      0.497,
+      0.3907
+    ],
+    "faces": 52,
+    "valid": true,
+    "mesh_volume_ratio": 1.0028952586655084,
+    "seconds": 259.0957552000036,
+    "info": {
+      "voids": 8,
+      "voids_skipped": 6,
+      "bottom_surface": true,
+      "bosses": 1,
+      "correction_cuts": 9,
+      "faces": 52,
+      "seconds": 259.1,
+      "fixed_rings_used": false
+    }
+  },
+  {
+    "sigma": 0.0,
+    "flag": "raised_rim",
+    "coverage": [
+      0.5198,
+      0.431
+    ],
+    "faces": 50,
+    "valid": true,
+    "mesh_volume_ratio": 1.009556586181366,
+    "seconds": 254.02278189999925,
+    "info": {
+      "voids": 8,
+      "voids_skipped": 6,
+      "top_surface": true,
+      "bottom_surface": true,
+      "bosses": 1,
+      "correction_cuts": 9,
+      "faces": 50,
+      "seconds": 254.0,
+      "raised_rim_used": true
+    }
+  },
+  {
+    "sigma": 0.0,
+    "flag": "round_edge",
+    "coverage": [
+      0.497,
+      0.3907
+    ],
+    "faces": 52,
+    "valid": true,
+    "mesh_volume_ratio": 1.0028952586655084,
+    "seconds": 259.14147319999756,
+    "info": {
+      "voids": 8,
+      "voids_skipped": 6,
+      "bottom_surface": true,
+      "bosses": 1,
+      "correction_cuts": 9,
+      "faces": 52,
+      "seconds": 258.9,
+      "bottom_radius_mm": 0.8499999998680305,
+      "bottom_rounded": false
+    }
+  },
+  {
+    "sigma": 0.0,
+    "flag": "stock",
+    "coverage": [
+      0.497,
+      0.3907
+    ],
+    "faces": 52,
+    "valid": true,
+    "mesh_volume_ratio": 1.0028952586655084,
+    "seconds": 258.2048180999991,
+    "info": {
+      "voids": 8,
+      "voids_skipped": 6,
+      "bottom_surface": true,
+      "bosses": 1,
+      "correction_cuts": 9,
+      "faces": 52,
+      "seconds": 258.2
+    }
+  }
+]

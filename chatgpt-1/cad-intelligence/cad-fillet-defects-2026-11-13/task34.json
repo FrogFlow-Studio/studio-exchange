@@ -1,0 +1,297 @@
+[
+  {
+    "kind": "angle",
+    "noise_mm": 0.1,
+    "audit": {
+      "proposed": 0,
+      "support_groups": 0,
+      "free_area_mm2": [
+        217.9182965390576,
+        217.9182965390576
+      ]
+    },
+    "base": {
+      "planar_faces": 7,
+      "triangle_faces": 576,
+      "faces": 583,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.9212455589838705,
+      "step_valid": true,
+      "step_cylinders": 0,
+      "score": 86.37,
+      "coverage": [
+        0.996,
+        0.986
+      ],
+      "sharp_edges": 12,
+      "sharp_probe_count": 60,
+      "sharp_probe_within_0p3": 59,
+      "sharp_p95_mm": 0.07957985786513815,
+      "curved_step_area_share": 0.0
+    },
+    "new": {
+      "planar_faces": 7,
+      "triangle_faces": 576,
+      "faces": 583,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.9212455589838705,
+      "step_valid": true,
+      "step_cylinders": 0,
+      "score": 86.37,
+      "coverage": [
+        0.996,
+        0.986
+      ],
+      "sharp_edges": 12,
+      "sharp_probe_count": 60,
+      "sharp_probe_within_0p3": 59,
+      "sharp_p95_mm": 0.07957985786513815,
+      "curved_step_area_share": 0.0
+    }
+  },
+  {
+    "kind": "angle",
+    "noise_mm": 0.2,
+    "audit": {
+      "proposed": 0,
+      "support_groups": 0,
+      "free_area_mm2": [
+        229.46889659811248,
+        229.46889659811248
+      ]
+    },
+    "base": {
+      "planar_faces": 6,
+      "triangle_faces": 807,
+      "faces": 813,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.8721355484964713,
+      "step_valid": true,
+      "step_cylinders": 0,
+      "score": 86.48,
+      "coverage": [
+        0.994,
+        0.9865
+      ],
+      "sharp_edges": 12,
+      "sharp_probe_count": 60,
+      "sharp_probe_within_0p3": 54,
+      "sharp_p95_mm": 12.490618131449304,
+      "curved_step_area_share": 0.0
+    },
+    "new": {
+      "planar_faces": 6,
+      "triangle_faces": 807,
+      "faces": 813,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.8721355484964713,
+      "step_valid": true,
+      "step_cylinders": 0,
+      "score": 86.48,
+      "coverage": [
+        0.994,
+        0.9865
+      ],
+      "sharp_edges": 12,
+      "sharp_probe_count": 60,
+      "sharp_probe_within_0p3": 54,
+      "sharp_p95_mm": 12.490618131449304,
+      "curved_step_area_share": 0.0
+    }
+  },
+  {
+    "kind": "ribbed",
+    "noise_mm": 0.1,
+    "audit": {
+      "proposed": 0,
+      "support_groups": 0,
+      "free_area_mm2": [
+        109.6481715870356,
+        109.6481715870356
+      ]
+    },
+    "base": {
+      "planar_faces": 15,
+      "triangle_faces": 220,
+      "faces": 235,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.9696458668733047,
+      "step_valid": true,
+      "step_cylinders": 0,
+      "score": 92.16,
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "sharp_edges": 48,
+      "sharp_probe_count": 240,
+      "sharp_probe_within_0p3": 233,
+      "sharp_p95_mm": 0.12792264429111366,
+      "curved_step_area_share": 0.0
+    },
+    "new": {
+      "planar_faces": 15,
+      "triangle_faces": 220,
+      "faces": 235,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.9696458668733047,
+      "step_valid": true,
+      "step_cylinders": 0,
+      "score": 92.16,
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "sharp_edges": 48,
+      "sharp_probe_count": 240,
+      "sharp_probe_within_0p3": 233,
+      "sharp_p95_mm": 0.12792264429111366,
+      "curved_step_area_share": 0.0
+    }
+  },
+  {
+    "kind": "ribbed",
+    "noise_mm": 0.2,
+    "audit": {
+      "proposed": 0,
+      "support_groups": 0,
+      "free_area_mm2": [
+        444.44492513128864,
+        444.44492513128864
+      ]
+    },
+    "base": {
+      "planar_faces": 15,
+      "triangle_faces": 635,
+      "faces": 650,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.8772316376070691,
+      "step_valid": true,
+      "step_cylinders": 0,
+      "score": 83.03,
+      "coverage": [
+        0.9975,
+        0.9955
+      ],
+      "sharp_edges": 48,
+      "sharp_probe_count": 240,
+      "sharp_probe_within_0p3": 187,
+      "sharp_p95_mm": 7.152814784421292,
+      "curved_step_area_share": 0.0
+    },
+    "new": {
+      "planar_faces": 15,
+      "triangle_faces": 635,
+      "faces": 650,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.8772316376070691,
+      "step_valid": true,
+      "step_cylinders": 0,
+      "score": 83.03,
+      "coverage": [
+        0.9975,
+        0.9955
+      ],
+      "sharp_edges": 48,
+      "sharp_probe_count": 240,
+      "sharp_probe_within_0p3": 187,
+      "sharp_p95_mm": 7.152814784421292,
+      "curved_step_area_share": 0.0
+    }
+  },
+  {
+    "kind": "fragmented_control",
+    "False": {
+      "free_triangles": 28,
+      "proposed": 1,
+      "support_groups": 0,
+      "sharp_rejected": 1,
+      "planar_faces": 4,
+      "triangle_faces": 84,
+      "faces": 88,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.6121472952450303
+    },
+    "True": {
+      "free_triangles": 0,
+      "proposed": 1,
+      "support_groups": 2,
+      "sharp": 1,
+      "planar_faces": 6,
+      "triangle_faces": 28,
+      "faces": 34,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.8084722222222224
+    }
+  }
+]

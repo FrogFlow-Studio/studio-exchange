@@ -153,7 +153,7 @@ def align(rings_z):
 def loft(rings_z, ruled=False, deg=None):
     rings_z = align(rings_z)
     import multiprocessing as mp
-    ctx = mp.get_context("fork"); q = ctx.Queue()
+    ctx = mp.get_context("spawn" if os.name == "nt" else "fork"); q = ctx.Queue()
     p = ctx.Process(target=_loft_child, args=(rings_z, ruled, q, deg)); p.start(); p.join(60)
     if p.is_alive(): p.kill(); raise RuntimeError("loft timeout")
     if p.exitcode != 0: raise RuntimeError("loft crash %s" % p.exitcode)
@@ -246,7 +246,8 @@ def pick_levels(zs, rings, jump=float(os.environ.get("LEV_JUMP", "0.8")), dzmax=
         else: keep.append(len(zs) - 1)
     return keep
 
-def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.environ.get('RING_SMOOTH', '0.05'))):
+def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.environ.get('RING_SMOOTH', '0.05')), *,
+           periodic_wall=False):
     """наружная стенка — один лофт по всей высоте; внутренние объёмы (карманы, пазы) вычитаются по слоям"""
     secs = sections(mesh, dz)
     secs = [(z, p) for z, p in secs if p]
@@ -268,8 +269,23 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
     from scipy.interpolate import UnivariateSpline
     al = align([(r, z) for r, z in zip(rings, zs)])
     R = np.array([r for r, _ in al]); Z = np.array(zs)
+    if periodic_wall:
+        from wall_profiles import fit_profiles
+
+        contours = [o[1].exterior.coords for o in outer]
+        fitted = fit_profiles(contours, Z)
+        if fitted is None and len(Z)>=9:
+            # The first and last cuts may touch the caps. Interior contours
+            # still describe the wall and can extend to the trim surfaces.
+            middle = fit_profiles(contours[2:-2], Z[2:-2])
+            if middle is not None:
+                fitted = np.pad(middle,((2,2),(0,0),(0,0)),mode="edge")
+        if fitted is not None:
+            R = fitted
+            TOPINFO["periodic_wall"] = True
+            rings = list(R)
     sm = float(os.environ.get("Z_SMOOTH", "0.08"))
-    if len(Z) >= 6:
+    if len(Z) >= 6 and not TOPINFO.get("periodic_wall"):
         R2 = np.empty_like(R)
         W = 1.0 + 6.0 * np.exp(-(Z - Z[0]) / 1.0)  # у дна форма меняется быстро — держимся ближе к срезам
         for i in range(R.shape[1]):
@@ -330,7 +346,20 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
         # и плоскостью дна не режем — иначе на дне остаётся уступ по контуру купола
         TOPINFO["bcoef"] = None; TOPINFO["dome"] = True
         levels[0] = (levels[0][0], zs[keep[0]] - dz / 2)
-    body = cq.Workplane().add(loft(levels, deg=int(os.environ.get("WALL_DEG", "2")) or None))
+    degree = int(os.environ.get("WALL_DEG", "2")) or None
+    try:
+        wall = loft(levels, deg=degree)
+    except RuntimeError:
+        if (os.environ.get("CAD_KOMPAS_END_RECOVERY", "0") != "1"
+                or len(levels)<4 or TOPINFO.get("bottom_round")):
+            raise
+        # End sections may cut the curved bottom or the rising rim instead
+        # of the wall. Extend the neighboring full profiles to the trim tools.
+        recovery = [(levels[1][0],levels[0][1]),*levels[1:-1],
+                    (levels[-2][0],levels[-1][1])]
+        wall = loft(recovery, deg=degree)
+        TOPINFO["wall_end_recovery"] = True
+    body = cq.Workplane().add(wall)
     TOPINFO.update(coef=coef, ztop=ztop, ring=rings[-1])
     # пустоты внутри наружного контура по слоям
     voids = []
@@ -463,6 +492,11 @@ def void_chains(voids, dz, n, zb, jump=0.5):
         segs.append((cur, top_of(k) + dz / 2))
     cut = []
     for it, z1 in segs:
+        if (os.environ.get("CAD_KOMPAS_VOID_PERSISTENCE", "0") == "1"
+                and len(it)==1 and it[0][1].area<12):
+            # A small, isolated slice can be caused by floor noise. It
+            # must not inherit the height of a later, persistent pocket.
+            continue
         z0 = it[0][0] - dz / 2
         if z1 >= zb - 1e-6: z1 = TOPINFO['ztop'] + 0.5
         try:
@@ -777,13 +811,13 @@ def _nz(f):
         return 0.0
 
 
-def _edge_fillets(body, info):
+def _edge_fillets(body, info, scan=None):
     """скругления кромок, как операция «скругление» в CAD: дно (BOTTOM_FILLET) и наружная кромка верха борта
     (TOP_FILLET), радиус в мм; при отказе ядра радиус уменьшается, при неудаче тело остаётся как было"""
     # радиусы по умолчанию — малые технологические скругления; оценка радиуса по скану — задача 61 Севера
     for key, sign, dflt in (("BOTTOM_FILLET", -1, "0.4"), ("TOP_FILLET", 1, "0.3")):
-        rf = float(os.environ.get(key, dflt))
-        if rf <= 0:
+        setting = os.environ.get(key, dflt)
+        if setting != "auto" and float(setting) <= 0:
             continue
         faces = body.Faces()
         cap = [f for f in faces if sign * _nz(f) > 0.7]
@@ -793,6 +827,19 @@ def _edge_fillets(body, info):
         cap = max(cap, key=lambda f: f.Area()); wall = max(walls, key=lambda f: f.Area())
         we = {e.hashCode() for e in wall.Edges()}
         edges = [e for e in cap.Edges() if e.hashCode() in we]
+        if not edges:
+            continue
+        if setting == "auto":
+            if scan is None:
+                continue
+            from fillet_radius import fillet_radius
+
+            rf = fillet_radius(scan,body,max(edges,key=lambda edge:edge.Length()))
+            info[key.lower()+"_estimated"] = rf
+            if rf is None:
+                continue
+        else:
+            rf = float(setting)
         for r in (rf, rf * 0.7, rf * 0.5):
             try:
                 nb = body.fillet(r, edges)
@@ -805,22 +852,48 @@ def _edge_fillets(body, info):
 
 
 def assemble(scan, log=print):
+    """Build 0с and validate an opt-in candidate against the stock result."""
+    candidate = None
+    experiment = None
+    if os.environ.get("CAD_KOMPAS_STABLE_POCKETS", "0") == "1":
+        from stable_pockets import assemble_stable
+
+        candidate = assemble_stable(scan, log=log)
+        experiment = "stable_pockets"
+    baseline = _assemble_stock(scan, log=log)
+    if candidate is None and os.environ.get("CAD_KOMPAS_PERIODIC_WALL", "0") == "1":
+        experiment = "periodic_wall"
+        try:
+            trial = _assemble_stock(scan, log=log, periodic_wall=True)
+            if trial[1].get("periodic_wall"):
+                candidate = trial
+        except (RuntimeError, ValueError) as error:
+            log(f"    periodic wall rollback: {error}")
+    if candidate is None:
+        return baseline
+    from candidate_guard import compare_candidate
+
+    accepted, audit = compare_candidate(scan, baseline[0], candidate[0])
+    audit["accepted"] = accepted
+    log(f"    {experiment} guard: {audit}")
+    body, info = candidate if accepted else baseline
+    return body, {**info, experiment+"_guard": audit}
+
+
+def _assemble_stock(scan, log=print, *, periodic_wall=False):
     """Сборка «как в Компасе» вдоль оси z выровненного скана. Возвращает (тело, сведения).
     Порядок операций: наружная стенка (лофт по сечениям, сглаженным по высоте) → вырез кармана слоями →
     срез верха и низа гладкими поверхностями по скану → бобышки и площадка выдавливанием →
     поправка по сечениям (пазы и канавки вырезом). Если деталь не «стопка» вдоль z, тело выйдет негодным
     или далёким от скана — тогда попытку отбрасывает сравнение со сканом."""
     import tempfile
-    if os.environ.get("CAD_KOMPAS_STABLE_POCKETS", "0") == "1":
-        from stable_pockets import assemble_stable
-
-        candidate = assemble_stable(scan, log=log)
-        if candidate is not None:
-            return candidate
     TOPINFO.clear()
     info = {}
     t = time.time()
-    pieces, cut, isl = build2(scan)
+    pieces, cut, isl = build2(scan, periodic_wall=periodic_wall)
+    for key in ("periodic_wall", "wall_end_recovery"):
+        if TOPINFO.get(key):
+            info[key] = True
     body = pieces[0]
     if not body.isValid() or body.Volume() <= 0:
         raise RuntimeError("наружная стенка не построена")
@@ -859,7 +932,7 @@ def assemble(scan, log=print):
             if trace:
                 info[key+"_check"] = dict(valid=nb.isValid(), volume=nb.Volume(), solids=len(nb.Solids()))
     body = body.clean()
-    body = _edge_fillets(body, info)
+    body = _edge_fillets(body, info, scan)
     added = 0
     for p in isl:
         try:

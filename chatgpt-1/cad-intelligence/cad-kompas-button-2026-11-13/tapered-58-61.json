@@ -1,0 +1,138 @@
+[
+  {
+    "task": 61,
+    "radius": 0.0,
+    "estimate": null,
+    "seconds": 1.6040112000046065
+  },
+  {
+    "task": 61,
+    "radius": 0.3,
+    "estimate": 0.2900969768353111,
+    "seconds": 0.8586596000095597
+  },
+  {
+    "task": 61,
+    "radius": 0.48,
+    "estimate": 0.5169912354915586,
+    "seconds": 0.8049852999974973
+  },
+  {
+    "task": 59,
+    "case": "same",
+    "accepted": true,
+    "stock": [
+      1.0,
+      1.0
+    ],
+    "candidate": [
+      1.0,
+      1.0
+    ],
+    "reason": "coverage_ok"
+  },
+  {
+    "task": 59,
+    "case": "shifted",
+    "accepted": false,
+    "stock": [
+      1.0,
+      1.0
+    ],
+    "candidate": [
+      0.601,
+      0.6122
+    ],
+    "reason": "coverage_regression"
+  },
+  {
+    "task": 61,
+    "radius": 0.8,
+    "estimate": 0.8329478861983183,
+    "seconds": 0.8012949999974808
+  },
+  {
+    "task": 60,
+    "sigma": 0.0,
+    "coverage": [
+      1.0,
+      1.0
+    ],
+    "faces": 3,
+    "valid": true,
+    "mesh_volume_ratio": 1.0000105406416775,
+    "seconds": 0.11689130000013392,
+    "curvature_p99": [
+      0.0011502039697276513,
+      0.22142196085491203
+    ],
+    "bottom_rounded": true,
+    "top_rounded": true,
+    "rounded_quality": {
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "faces": 5,
+      "valid": true,
+      "mesh_volume_ratio": 1.0001804923351585,
+      "seconds": 1.2892740999959642
+    }
+  },
+  {
+    "task": 60,
+    "sigma": 0.05,
+    "coverage": [
+      1.0,
+      1.0
+    ],
+    "faces": 3,
+    "valid": true,
+    "mesh_volume_ratio": 1.000232347220238,
+    "seconds": 0.103295299995807,
+    "curvature_p99": [
+      0.21394152450841925,
+      0.221812697887837
+    ],
+    "bottom_rounded": true,
+    "top_rounded": true,
+    "rounded_quality": {
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "faces": 5,
+      "valid": true,
+      "mesh_volume_ratio": 1.0015645132389195,
+      "seconds": 1.3118450999900233
+    }
+  },
+  {
+    "task": 60,
+    "sigma": 0.1,
+    "coverage": [
+      1.0,
+      1.0
+    ],
+    "faces": 3,
+    "valid": true,
+    "mesh_volume_ratio": 1.0005169918511814,
+    "seconds": 0.09696799999801442,
+    "curvature_p99": [
+      0.4057586566024905,
+      0.22859349177482755
+    ],
+    "bottom_rounded": true,
+    "top_rounded": true,
+    "rounded_quality": {
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "faces": 5,
+      "valid": true,
+      "mesh_volume_ratio": 1.0030180118408822,
+      "seconds": 1.4018839999916963
+    }
+  }
+]

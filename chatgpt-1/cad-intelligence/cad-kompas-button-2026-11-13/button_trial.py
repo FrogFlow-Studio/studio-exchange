@@ -60,16 +60,28 @@ def assemble(scan, *, round_edge=False, raised_rim=False, fixed_rings=False, det
                 return list(zip(aligned,z))
         return old_align(rings)
 
-    def loft(rings, ruled=False):
+    def loft(rings, ruled=False, deg=None):
         nonlocal first_loft
         outer = first_loft
         first_loft = False
         # The upstream worker requests fork, unavailable on Windows.
         if sys.platform != "win32" and not (outer and used_rings):
-            return kompas_build.loft(rings,ruled)
+            return kompas_build.loft(rings,ruled,deg)
         if not (outer and used_rings):
             rings = old_align(rings)
-        return cq.Solid.makeLoft([stock._wire(p,z) for p,z in rings],ruled)
+        if deg is None and outer and used_rings:
+            return cq.Solid.makeLoft([stock._wire(p,z) for p,z in rings],ruled)
+        if not (outer and used_rings):
+            return kompas_build.loft(rings,ruled,deg)
+        from OCP.BRepOffsetAPI import BRepOffsetAPI_ThruSections
+
+        tool = BRepOffsetAPI_ThruSections(True,False,1e-6)
+        tool.SetMaxDegree(deg)
+        tool.CheckCompatibility(False)
+        for points,z in rings:
+            tool.AddWire(stock._wire(points,z).wrapped)
+        tool.Build()
+        return cq.Solid(tool.Shape())
 
     stock.top_surface,stock.cut_above,stock.loft = top_surface,cut_above,loft
     stock.align = align

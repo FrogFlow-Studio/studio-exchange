@@ -1,27 +1,15 @@
 """Task 56. Fit a periodic transverse profile and a regularized axial field."""
 import cadquery as cq
 import numpy as np
-from scipy.interpolate import make_smoothing_spline
-
-from ring_fit import correspond
+from wall_profiles import fit_profiles
 
 
-def periodic_wall(contours, z, *, count=96, modes=28, axial_penalty=.008):
+def periodic_wall(contours, z, *, count=96, modes=28, axial_penalty=.008, degree=None):
     """Use common rays and smooth the radial field in both directions."""
     z = np.asarray(z,dtype=float)
-    rings = correspond(contours,z,count=count,smooth=0.)
-    if rings is None:
+    filtered = fit_profiles(contours,z,count=count,modes=modes,axial_penalty=axial_penalty)
+    if filtered is None:
         return None
-    center = rings.mean(axis=(0,1))
-    coefficients = np.fft.rfft(rings-center,axis=1)
-    frequency = np.arange(coefficients.shape[1])
-    weights = 1/(1+(frequency/max(1,modes))**8)
-    coefficients *= weights[None,:,None]
-    filtered = np.fft.irfft(coefficients,n=count,axis=1)+center
-    shape = filtered.shape
-    flat = filtered.reshape(len(z),-1)
-    filtered = np.column_stack([make_smoothing_spline(z,col,lam=axial_penalty)(z)
-                                for col in flat.T]).reshape(shape)
     take = np.unique(np.linspace(0,len(z)-1,min(9,len(z))).round().astype(int))
     wires = []
     for i in take:
@@ -29,7 +17,18 @@ def periodic_wall(contours, z, *, count=96, modes=28, axial_penalty=.008):
                                   periodic=True)
         wires.append(cq.Wire.assembleEdges([edge]))
     try:
-        body = cq.Solid.makeLoft(wires)
+        if degree is None:
+            body = cq.Solid.makeLoft(wires)
+        else:
+            from OCP.BRepOffsetAPI import BRepOffsetAPI_ThruSections
+
+            tool = BRepOffsetAPI_ThruSections(True,False,1e-6)
+            tool.SetMaxDegree(degree)
+            tool.CheckCompatibility(False)
+            for wire in wires:
+                tool.AddWire(wire.wrapped)
+            tool.Build()
+            body = cq.Solid(tool.Shape())
         if body.isValid() and len(body.Solids())==1:
             return body,filtered
     except (ValueError,RuntimeError):

@@ -6,6 +6,7 @@
 заплатка не должна выгибаться горбом."""
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 
 import numpy as np
@@ -132,6 +133,95 @@ def _same_boundary(face, vertices, loops):
         expected.remove(key)
         explorer.Next()
     return None if expected else tolerance
+
+
+def _lsq_face(boundaries, xyz, normals):
+    """Гладкая грань без MakeFilling: поверхность высот z(u,v) над средней плоскостью пятна по методу
+    наименьших квадратов (мало узлов — поверхность не повторяет мелкие кочки), обрезанная границей пятна.
+    Только для пятен, которые видны с одной стороны (все нормали в пределах 70° от средней)."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeWire
+    from OCP.Geom import Geom_BSplineSurface
+    from OCP.ShapeFix import ShapeFix_Face
+    from OCP.TColgp import TColgp_Array2OfPnt
+    from OCP.TColStd import TColStd_Array1OfInteger, TColStd_Array1OfReal
+    from scipy.interpolate import LSQBivariateSpline
+
+    # точки: вершины и точки внутри каждого треугольника пятна, плюс густые точки по границе с большим
+    # весом (граница общая с соседями, поверхность должна пройти по ней)
+    bary = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1 / 3, 1 / 3, 1 / 3], [.6, .2, .2], [.2, .6, .2], [.2, .2, .6]])
+    inner = np.einsum("bk,tkd->tbd", bary, xyz).reshape(-1, 3)
+    edge_pts = []
+    for loop in boundaries:
+        nxt = np.roll(loop, -1, axis=0)
+        for t in (0., .25, .5, .75):
+            edge_pts.append(loop + t * (nxt - loop))
+    edge_pts = np.vstack(edge_pts)
+    allp = np.vstack([inner, edge_pts])
+    weight = np.r_[np.ones(len(inner)), np.full(len(edge_pts), 8.0)]
+    c = allp.mean(axis=0)
+    n = normals.mean(axis=0)
+    if np.linalg.norm(n) < 1e-9:
+        return None
+    n /= np.linalg.norm(n)
+    if np.min(normals @ n) < np.cos(np.radians(70)):
+        return None
+    e1 = np.linalg.svd(allp - c, full_matrices=False)[2][0]
+    e1 -= (e1 @ n) * n
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(n, e1)
+    d = allp - c
+    u, v, z = d @ e1, d @ e2, d @ n
+    pad = 0.05 * max(np.ptp(u), np.ptp(v)) + 1e-3
+    a, b, cc, dd = u.min() - pad, u.max() + pad, v.min() - pad, v.max() + pad
+    step = float(os.environ.get("CAD_PATCH_LSQ_STEP", "4.0"))      # мм между узлами: крупнее — глаже
+    kx = max(0, min(4, int(np.ptp(u) / step)))
+    ky = max(0, min(4, int(np.ptp(v) / step)))
+    tx = np.linspace(a, b, kx + 2)[1:-1]
+    ty = np.linspace(cc, dd, ky + 2)[1:-1]
+    if len(allp) < (kx + 4) * (ky + 4) + 4:
+        return None
+    try:
+        spl = LSQBivariateSpline(u, v, z, tx, ty, w=weight, bbox=[a, b, cc, dd], kx=3, ky=3)
+    except Exception:  # noqa: BLE001
+        return None
+    full_x, full_y = spl.get_knots()
+    coef = spl.get_coeffs().reshape(len(full_x) - 4, len(full_y) - 4)
+    gx = np.array([full_x[i + 1:i + 4].mean() for i in range(coef.shape[0])])
+    gy = np.array([full_y[j + 1:j + 4].mean() for j in range(coef.shape[1])])
+    poles = TColgp_Array2OfPnt(1, coef.shape[0], 1, coef.shape[1])
+    for i in range(coef.shape[0]):
+        for j in range(coef.shape[1]):
+            poles.SetValue(i + 1, j + 1, _pnt(c + gx[i] * e1 + gy[j] * e2 + coef[i, j] * n))
+
+    def knots(vals):
+        uniq = np.r_[vals[0], vals[4:-4], vals[-1]]
+        k = TColStd_Array1OfReal(1, len(uniq))
+        m = TColStd_Array1OfInteger(1, len(uniq))
+        for i, val in enumerate(uniq):
+            k.SetValue(i + 1, float(val))
+            m.SetValue(i + 1, 4 if i in (0, len(uniq) - 1) else 1)
+        return k, m
+
+    ku, mu = knots(full_x)
+    kv, mv = knots(full_y)
+    surface = Geom_BSplineSurface(poles, ku, kv, mu, mv, 3, 3)
+    wires = []
+    for loop in boundaries:
+        wire = BRepBuilderAPI_MakeWire()
+        for edge in _edges(loop):
+            wire.Add(edge)
+        if not wire.IsDone():
+            return None
+        wires.append(wire.Wire())
+    maker = BRepBuilderAPI_MakeFace(surface, wires[0], False)
+    for w in wires[1:]:
+        maker.Add(w)
+    if not maker.IsDone():
+        return None
+    fix = ShapeFix_Face(maker.Face())
+    fix.SetPrecision(SEW_TOL / 2)
+    fix.Perform()
+    return TopoDS.Face_s(fix.Face())
 
 
 def _verify(face, points, xyz, cross, tol):
@@ -271,7 +361,20 @@ def patch(V, F, faces_of_zone, tol, edge_tol=None):
     try:
         bounds = [V[loop] for loop in loops]
         seeds = _samples(interior, 16)
+        # CAD_PATCH_LSQ=1: сначала поверхность высот по МНК (опыт 13.11: на кнопке гладких 26→34%, но точность
+        # при 0,3 мм 99,0→98,0% и гранёность почти та же), по умолчанию выключено
+        lsq = os.environ.get("CAD_PATCH_LSQ", "0") == "1"
         for attempt in range(6):
+            face = _lsq_face(bounds, xyz, cross / np.linalg.norm(cross, axis=1, keepdims=True)) \
+                if lsq and attempt == 0 else None
+            if face is not None:
+                edge_tolerance = _same_boundary(face, V, loops)
+                ok = edge_tolerance is not None and edge_tolerance <= (tol / 4 if edge_tol is None else edge_tol)
+                if ok:
+                    checked, rep = _verify(face, interior, xyz, cross, tol)
+                    if checked is not None:
+                        face, report = checked, {**rep, "surface": "lsq"}
+                        break
             face = _fill(bounds, seeds)
             if face is None:
                 return None, {"reason": "fill_failed", "boundary_edges": count}

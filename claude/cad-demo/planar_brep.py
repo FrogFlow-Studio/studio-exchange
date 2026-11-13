@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+import os
+
 import numpy as np
 import trimesh
 
@@ -144,7 +146,7 @@ def _area(P, n):
 
 def build(V, F, label, regions, *, sew_tol: float = 1e-3, min_faces: int = 3,
           straight: float = 1e-5, smooth_tol: float | None = None, smooth_budget: float = 300.0,
-          smooth_edge_tol: float | None = None):
+          smooth_edge_tol: float | None = None, _skip: frozenset = frozenset()):
     """Возвращает (тело CadQuery, сведения). regions — как у regions.segment (нужны только плоскости)."""
     import cadquery as cq
     from OCP.BRepBuilderAPI import (BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon, BRepBuilderAPI_MakeSolid,
@@ -282,19 +284,36 @@ def build(V, F, label, regions, *, sew_tol: float = 1e-3, min_faces: int = 3,
             ids = np.flatnonzero(zone_comp == z)
             if len(ids) < 2:
                 continue
-            parts.extend(p for p in patch_faces.split_zones(V, F, ids) if len(p) >= 2)
-        for part, face, reason in _patches(V, F, parts, smooth_tol, smooth_edge_tol,
-                                           started + smooth_budget):
-            if face is None:
-                if reason is not None:
-                    smooth_fail += 1
-                    why[reason] += len(part)
-                continue
-            sew.Add(face)
-            rest[part] = False
-            smooth += 1
-            smooth_tris += len(part)
-            smooth_area += float(tri_area[part].sum())
+            parts.extend(p for p in patch_faces.split_zones(V, F, ids) if len(p) >= 2 and int(p.min()) not in _skip)
+        # CAD_PATCH_SPLIT=N: пятно, на котором заплатка не вышла, делится пополам и пробуется снова (до N раз):
+        # мелкие пятна с короткой границей строятся гораздо чаще, и вместо фасета из треугольников
+        # остаётся гладкая поверхность. По умолчанию выключено: мелкие заплатки повторяют кочки скана и
+        # поверхность выглядит мятой (кнопка 13.11), а на кронштейне тело с ними выходило невалидным.
+        split_levels = int(os.environ.get("CAD_PATCH_SPLIT", "0"))
+        built_parts = []
+        level = 0
+        while parts:
+            retry = []
+            for part, face, reason in _patches(V, F, parts, smooth_tol, smooth_edge_tol,
+                                               started + smooth_budget):
+                if face is None:
+                    if reason is not None and level < split_levels and len(part) >= 6:
+                        halves = [h for h in patch_faces.split_zones(V, F, part, max_triangles=len(part) // 2 + 1)
+                                  if len(h) >= 2]
+                        if len(halves) >= 2:
+                            retry.extend(halves)
+                            continue
+                    if reason is not None:
+                        smooth_fail += 1
+                        why[reason] += len(part)
+                    continue
+                sew.Add(face)
+                built_parts.append(part)
+                rest[part] = False
+                smooth += 1
+                smooth_tris += len(part)
+                smooth_area += float(tri_area[part].sum())
+            parts, level = retry, level + 1
     tris = 0
     for fi in np.flatnonzero(rest):
         a, b, c = F[fi]
@@ -320,12 +339,59 @@ def build(V, F, label, regions, *, sew_tol: float = 1e-3, min_faces: int = 3,
     if not solids:
         raise RuntimeError("сетку не удалось сшить в тело")
     body = max(solids, key=lambda s: abs(s.Volume()))
+    if smooth and not _skip:
+        # Грань, верная сама по себе, после сшивки может не разбиваться в сетку (в окне и STL — дыра,
+        # кнопка 13.11: 171 мм² без единого треугольника). Такие пятна — один раз заново треугольниками.
+        bad = _unmeshed_parts(body, V, F, built_parts)
+        if bad:
+            body, again = build(V, F, label, regions, sew_tol=sew_tol, min_faces=min_faces, straight=straight,
+                                smooth_tol=smooth_tol, smooth_budget=smooth_budget, smooth_edge_tol=smooth_edge_tol,
+                                _skip=frozenset(bad))
+            again["smooth_unmeshed"] = len(bad)
+            return body, again
     return body, {"planar_faces": planar, "triangle_faces": tris, "faces": len(body.Faces()),
                   "valid": bool(body.isValid()), "free_edges": int(sew.NbFreeEdges()),
                   "rejected_faces": rejected, "smooth_faces": smooth, "smooth_triangles": smooth_tris,
                   "smooth_rejected": smooth_fail, "smooth_rejected_triangles": dict(why) if smooth_tol else {},
                   "smooth_area_share": float(smooth_area / max(1e-9, trimesh.Trimesh(V, F, process=False).area)),
                   "planar_area_share": float(planar_area / max(1e-9, trimesh.Trimesh(V, F, process=False).area))}
+
+
+def _unmeshed_parts(body, V, F, parts):
+    """Пятна, чья гладкая грань в сшитом теле не закрывается сеткой (покрытие < 98%)."""
+    import patch_faces
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+
+    if not parts:
+        return []
+    centers = np.array([V[F[p]].reshape(-1, 3).mean(axis=0) for p in parts])
+    areas = np.array([0.5 * np.linalg.norm(np.cross(V[F[p][:, 1]] - V[F[p][:, 0]], V[F[p][:, 2]] - V[F[p][:, 0]]),
+                                           axis=1).sum() for p in parts])
+    import os
+    import tempfile
+
+    import cadquery as cq
+
+    # Проверяется тело после записи в STEP и чтения обратно: так его видят окно и Компас, и именно после
+    # этого круга грань может перестать разбиваться в сетку.
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "check.step")
+        cq.exporters.export(body, path)
+        again = cq.importers.importStep(path).val()
+    bad = []
+    for face in again.Faces():
+        if face.geomType() != "BSPLINE":
+            continue
+        props = GProp_GProps()
+        BRepGProp.SurfaceProperties_s(face.wrapped, props)
+        area = props.Mass()
+        if area <= 0 or patch_faces._mesh_cover(face.wrapped, area) >= .98:
+            continue
+        c = np.array(face.Center().toTuple())
+        score = np.linalg.norm(centers - c, axis=1) + 10 * np.abs(np.log(np.maximum(areas, 1e-9) / area))
+        bad.append(int(parts[int(np.argmin(score))].min()))
+    return sorted(set(bad))
 
 
 _PV = _PF = None
@@ -388,17 +454,31 @@ def _patches_pool(V, F, parts, tol, edge_tol, deadline, workers):
     from OCP.TopoDS import TopoDS, TopoDS_Shape
 
     out = []
-    with tempfile.TemporaryDirectory() as tmp, \
-            ProcessPoolExecutor(workers, initializer=_patch_init, initargs=(V, F)) as pool:
-        jobs = [pool.submit(_patch_one, part, tol, edge_tol, f"{tmp}/{i}.brep") for i, part in enumerate(parts)]
-        wait(jobs, timeout=max(0.0, deadline - time.perf_counter()))
-        for job in jobs:
-            job.cancel()
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = ProcessPoolExecutor(workers, initializer=_patch_init, initargs=(V, F))
+        jobs = []
+        try:
+            jobs = [pool.submit(_patch_one, part, tol, edge_tol, f"{tmp}/{i}.brep") for i, part in enumerate(parts)]
+            wait(jobs, timeout=max(0.0, deadline - time.perf_counter()))
+        finally:
+            # Зависшая заплатка (OCC иногда не выходит из подгонки) не должна держать сборку: после срока
+            # рабочие процессы убиваются, а не ждутся.
+            stuck = [job for job in jobs if not job.done()]
+            for job in jobs:
+                job.cancel()
+            if stuck:
+                for proc in list((pool._processes or {}).values()):
+                    proc.kill()
+            pool.shutdown(wait=not stuck, cancel_futures=True)
         for part, job in zip(parts, jobs):
             if not job.done() or job.cancelled():
                 out.append((part, None, None))
                 continue
-            path, reason = job.result()
+            try:
+                path, reason = job.result()
+            except Exception:  # noqa: BLE001  (рабочий процесс убит по сроку)
+                out.append((part, None, None))
+                continue
             if path is None:
                 out.append((part, None, reason))
                 continue

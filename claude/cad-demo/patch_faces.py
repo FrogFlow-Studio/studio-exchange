@@ -143,6 +143,11 @@ def _verify(face, points, xyz, cross, tol):
     area_ratio = props.Mass() / mesh_area
     if not .78 <= area_ratio <= 1.22:
         return None, {"reason": "area_changed", "area_ratio": area_ratio}
+    covered = _mesh_cover(face, props.Mass())
+    if covered < .98:
+        # Грань верна по BRepCheck, но сетка по ней закрывает не всё (складка поверхности или обрезка
+        # в UV не совпадает с краем): в окне и в STL на этом месте видна дыра.
+        return None, {"reason": "mesh_gap", "mesh_cover": covered}
     surface = BRep_Tool.Surface_s(face)
     uv = BRepTools.UVBounds_s(face)
     project = GeomAPI_ProjectPointOnSurf()
@@ -191,6 +196,30 @@ def _verify(face, points, xyz, cross, tol):
         face = TopoDS.Face_s(face.Reversed())
     return face, {"reason": "accepted", "vertex_max_mm": maximum, "surface_max_mm": away, "area_ratio": area_ratio,
                   "min_normal_dot": float(np.min(sign * aligned))}
+
+
+def _mesh_cover(face, area: float) -> float:
+    """Доля площади грани, которую закрывает её сетка (на копии, чтобы не оставлять сетку на грани).
+    Сетка такой грани зависит от шага, поэтому берётся худшее из трёх разбиений: двух абсолютных и
+    относительного, как при выгрузке STL (cad_runner)."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.TopLoc import TopLoc_Location
+    if area <= 0:
+        return 0.
+    worst = 1.
+    for deflection, relative, angle in ((0.05, False, 0.3), (0.01, False, 0.2), (0.02, True, 0.1)):
+        copy = TopoDS.Face_s(BRepBuilderAPI_Copy(face).Shape())
+        # без потоков: в дочернем процессе пула они виснут
+        BRepMesh_IncrementalMesh(copy, deflection, relative, angle, False)
+        tri = BRep_Tool.Triangulation_s(copy, TopLoc_Location())
+        if tri is None or tri.NbTriangles() == 0:
+            return 0.
+        nodes = np.array([tri.Node(i).Coord() for i in range(1, tri.NbNodes() + 1)])
+        tris = np.array([tri.Triangle(i).Get() for i in range(1, tri.NbTriangles() + 1)]) - 1
+        a, b, c = nodes[tris[:, 0]], nodes[tris[:, 1]], nodes[tris[:, 2]]
+        worst = min(worst, float(np.linalg.norm(np.cross(b - a, c - a), axis=1).sum() / 2 / area))
+    return worst
 
 
 def _surface_away(face, surface, uv, classifier, xyz, tol, grid: int = 14):

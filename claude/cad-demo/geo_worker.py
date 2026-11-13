@@ -519,6 +519,16 @@ def main() -> None:
         t = time.perf_counter()
         fit = float(info["fit_tol"])
         V, F, label = planar_brep.collapse_degenerate(mesh.vertices, mesh.faces, info["label"], 1e-3)
+        fair_info = {}
+        if os.environ.get("CAD_STRAIGHT_FAIR", "1") != "0":
+            # свободные зоны без кочек и зубчатых границ (fairing.py); CAD_STRAIGHT_FAIR=0 — без этого
+            try:
+                import fairing
+
+                V, fair_info = fairing.fair(V, F, label, info["regions"], 0.8 * fit)
+            except Exception as error:  # noqa: BLE001
+                print(f"    выглаживание свободных зон не вышло ({type(error).__name__}: {error})", flush=True)
+            timings["fair"] = time.perf_counter() - t
         # Пятна треугольников вне плоскостей — одной гладкой гранью по той же границе (задача 27 Севера).
         # CAD_STRAIGHT_SMOOTH=0 — без них.
         smooth = os.environ.get("CAD_STRAIGHT_SMOOTH", "1") != "0"
@@ -544,28 +554,34 @@ def main() -> None:
             builder = planar_brep_cyl
         try:
             extra = {"tol": fit} if builder is not planar_brep else {}
+            # Гладкая заплатка ложится на выпрямленную сетку, а та сама отходит от скана до fit: при допуске
+            # заплатки fit отход от скана складывается до 2·fit. Мелкие заплатки (пятна делятся, пока не
+            # выйдут) держат и две трети fit без потери гладкой доли (кнопка: 75% площади при 0,2 и 0,3 мм).
+            patch_tol = fit * 2 / 3
             if smooth and os.environ.get("CAD_STRAIGHT_REPAIR", "1") != "0":
                 # опыт: смятые места, найденные defects, освобождаются и закрываются гладкими гранями
                 # (задача 36 Севера); не больше двух проходов, принимается только без потерь
                 import repair
 
                 def rebuild(*state, **_):
-                    return builder.build(*state, smooth_tol=fit, smooth_edge_tol=fit, smooth_budget=180.0, **extra)
+                    return builder.build(*state, smooth_tol=patch_tol, smooth_edge_tol=fit, smooth_budget=180.0,
+                                         **extra)
 
                 body, built = repair.repair_build(V, F, label, info["regions"], source, fit, build=rebuild)
                 built["repair_passes"] = [{k: v for k, v in p.items() if not hasattr(v, "shape")}
                                           for p in built.get("repair_passes", [])]
             else:
-                body, built = builder.build(V, F, label, info["regions"], smooth_tol=fit if smooth else None,
+                body, built = builder.build(V, F, label, info["regions"], smooth_tol=patch_tol if smooth else None,
                                             smooth_edge_tol=fit, smooth_budget=180.0, **extra)
             if smooth and not built["valid"]:
                 raise RuntimeError("тело с гладкими гранями невалидно")
         except Exception as error:  # noqa: BLE001
             if not smooth:
                 raise
-            print(f"    гладкие грани не подошли ({type(error).__name__}): только ровные грани", flush=True)
+            print(f"    гладкие грани не подошли ({type(error).__name__}: {error}): только ровные грани", flush=True)
             body, built = planar_brep.build(V, F, label, info["regions"])
         built.update(plus)
+        built.update(fair_info)
         timings["brep"] = time.perf_counter() - t
         t = time.perf_counter()
         cut = 0

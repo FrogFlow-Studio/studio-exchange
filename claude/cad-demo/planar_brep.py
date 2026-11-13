@@ -277,28 +277,24 @@ def build(V, F, label, regions, *, sew_tol: float = 1e-3, min_faces: int = 3,
         zl = np.asarray([int(l) if l >= 0 and regions[l]["kind"] != "plane" else -1 for l in own])
         zone_comp = _components(F, np.where(rest, np.where(zl >= 0, zl, len(regions)), -1))
         tri_area = 0.5 * np.linalg.norm(tri_n, axis=1)
+        parts = []
         for z in np.unique(zone_comp[zone_comp >= 0]):
             ids = np.flatnonzero(zone_comp == z)
             if len(ids) < 2:
                 continue
-            for part in patch_faces.split_zones(V, F, ids):
-                if time.perf_counter() - started > smooth_budget:
-                    break
-                if len(part) < 2:
-                    continue
-                try:
-                    face, rep = patch_faces.patch(V, F, part, smooth_tol, smooth_edge_tol)
-                except Exception:  # noqa: BLE001
-                    face, rep = None, None
-                if face is None:
+            parts.extend(p for p in patch_faces.split_zones(V, F, ids) if len(p) >= 2)
+        for part, face, reason in _patches(V, F, parts, smooth_tol, smooth_edge_tol,
+                                           started + smooth_budget):
+            if face is None:
+                if reason is not None:
                     smooth_fail += 1
-                    why[str((rep or {}).get("reason", "error"))] += len(part)
-                    continue
-                sew.Add(face)
-                rest[part] = False
-                smooth += 1
-                smooth_tris += len(part)
-                smooth_area += float(tri_area[part].sum())
+                    why[reason] += len(part)
+                continue
+            sew.Add(face)
+            rest[part] = False
+            smooth += 1
+            smooth_tris += len(part)
+            smooth_area += float(tri_area[part].sum())
     tris = 0
     for fi in np.flatnonzero(rest):
         a, b, c = F[fi]
@@ -330,3 +326,83 @@ def build(V, F, label, regions, *, sew_tol: float = 1e-3, min_faces: int = 3,
                   "smooth_rejected": smooth_fail, "smooth_rejected_triangles": dict(why) if smooth_tol else {},
                   "smooth_area_share": float(smooth_area / max(1e-9, trimesh.Trimesh(V, F, process=False).area)),
                   "planar_area_share": float(planar_area / max(1e-9, trimesh.Trimesh(V, F, process=False).area))}
+
+
+_PV = _PF = None
+
+
+def _patch_init(V, F):
+    global _PV, _PF
+    _PV, _PF = V, F
+
+
+def _patch_one(part, tol, edge_tol, path):
+    """Одна гладкая заплатка в отдельном процессе; грань возвращается файлом BRep."""
+    import patch_faces
+    from OCP.BRepTools import BRepTools
+
+    try:
+        face, rep = patch_faces.patch(_PV, _PF, part, tol, edge_tol)
+    except Exception:  # noqa: BLE001
+        return None, "error"
+    if face is None:
+        return None, str((rep or {}).get("reason", "error"))
+    BRepTools.Write_s(face, path)
+    return path, None
+
+
+def _patches(V, F, parts, tol, edge_tol, deadline):
+    """Заплатки независимы друг от друга, поэтому считаются в нескольких процессах (CAD_PATCH_WORKERS,
+    по умолчанию до 4). Порядок и результат те же, что при счёте подряд; что не успело к сроку —
+    остаётся треугольниками (reason None). При любой ошибке пула — счёт подряд."""
+    import os
+    import time
+
+    import patch_faces
+
+    workers = int(os.environ.get("CAD_PATCH_WORKERS", str(min(4, os.cpu_count() or 1))))
+    if workers > 1 and len(parts) > 8:
+        try:
+            yield from _patches_pool(V, F, parts, tol, edge_tol, deadline, workers)
+            return
+        except Exception as error:  # noqa: BLE001
+            print(f"    параллельные заплатки не вышли ({type(error).__name__}): считаю подряд", flush=True)
+    for part in parts:
+        if time.perf_counter() > deadline:
+            yield part, None, None
+            continue
+        try:
+            face, rep = patch_faces.patch(V, F, part, tol, edge_tol)
+        except Exception:  # noqa: BLE001
+            face, rep = None, None
+        yield part, face, (None if face is not None else str((rep or {}).get("reason", "error")))
+
+
+def _patches_pool(V, F, parts, tol, edge_tol, deadline, workers):
+    import tempfile
+    import time
+    from concurrent.futures import ProcessPoolExecutor, wait
+
+    from OCP.BRep import BRep_Builder
+    from OCP.BRepTools import BRepTools
+    from OCP.TopoDS import TopoDS, TopoDS_Shape
+
+    out = []
+    with tempfile.TemporaryDirectory() as tmp, \
+            ProcessPoolExecutor(workers, initializer=_patch_init, initargs=(V, F)) as pool:
+        jobs = [pool.submit(_patch_one, part, tol, edge_tol, f"{tmp}/{i}.brep") for i, part in enumerate(parts)]
+        wait(jobs, timeout=max(0.0, deadline - time.perf_counter()))
+        for job in jobs:
+            job.cancel()
+        for part, job in zip(parts, jobs):
+            if not job.done() or job.cancelled():
+                out.append((part, None, None))
+                continue
+            path, reason = job.result()
+            if path is None:
+                out.append((part, None, reason))
+                continue
+            shape = TopoDS_Shape()
+            BRepTools.Read_s(shape, path, BRep_Builder())
+            out.append((part, TopoDS.Face_s(shape), None))
+    yield from out

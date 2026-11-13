@@ -309,10 +309,12 @@ def _new_walls_off_scan(body, scan: trimesh.Trimesh, spec, away: float = 0.5) ->
             if abs(cyl.Radius() - r) > 1e-3 or abs(ax.X() * d[0] + ax.Y() * d[1] + ax.Z() * d[2]) < 0.999:
                 continue
         elif kind == "PLANE":      # дно: плоскость поперёк оси точно на торце инструмента, внутри его круга
-            n = np.array(f.normalAt().toTuple())
+            pln = f._geomAdaptor().Pln()            # дёшево: без расчёта центра и нормали по грани
+            ax, loc = pln.Axis().Direction(), pln.Location()
+            n = np.array([ax.X(), ax.Y(), ax.Z()])
             if abs(float(n @ d)) < 0.999:
                 continue
-            along = float((np.array(f.Vertices()[0].toTuple()) - c) @ d)
+            along = float((np.array([loc.X(), loc.Y(), loc.Z()]) - c) @ d)
             if min(abs(along), abs(along - h)) > 0.02:
                 continue
             rel = np.array(f.Center().toTuple()) - c

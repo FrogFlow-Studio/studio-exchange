@@ -440,6 +440,8 @@ def idealize(scan: trimesh.Trimesh, tol: float = 0.3, noise: float = 0.0, *, seg
     # перевёрнутые треугольники (вершина перескочила через соседа): у самой сдвинутой вершины снимается
     # последняя поверхность — она остаётся на своей плоскости, но не скользит вдоль неё к линии пересечения
     adj = trimesh.Trimesh(V, F, process=False).face_adjacency
+    # острый край, который был и в скане (кромка тоньше угла 120°), складкой не считается
+    sharp0 = np.einsum("ij,ij->i", ref_n[adj[:, 0]], ref_n[adj[:, 1]]) < -0.3
 
     def flips():
         tri = V[F]
@@ -449,7 +451,8 @@ def idealize(scan: trimesh.Trimesh, tol: float = 0.3, noise: float = 0.0, *, seg
         ln = np.linalg.norm(nn, axis=1)
         ok = ln > 1e-6
         un = nn / np.maximum(ln, 1e-300)[:, None]
-        fold = (np.einsum("ij,ij->i", un[adj[:, 0]], un[adj[:, 1]]) < -0.5) & ok[adj[:, 0]] & ok[adj[:, 1]]
+        fold = ((np.einsum("ij,ij->i", un[adj[:, 0]], un[adj[:, 1]]) < -0.5) & ok[adj[:, 0]] & ok[adj[:, 1]]
+                & ~sharp0)
         bad[adj[fold].ravel()] = True
         return bad
 

@@ -1,0 +1,484 @@
+[
+  {
+    "case": "block",
+    "noise": 0.0,
+    "growth": [
+      {
+        "region": 9,
+        "before_triangles": 94,
+        "after_triangles": 94,
+        "axis_span_mm": [
+          10.0,
+          10.0
+        ],
+        "boundary_loops": 1,
+        "accepted": false,
+        "end_contacts": [
+          -1,
+          0,
+          1
+        ],
+        "merged_fragments": []
+      },
+      {
+        "region": 10,
+        "before_triangles": 50,
+        "after_triangles": 50,
+        "axis_span_mm": [
+          10.0,
+          10.0
+        ],
+        "boundary_loops": 1,
+        "accepted": false,
+        "end_contacts": [
+          -1,
+          0,
+          1
+        ],
+        "merged_fragments": []
+      },
+      {
+        "region": 11,
+        "before_triangles": 24,
+        "after_triangles": 50,
+        "axis_span_mm": [
+          10.0,
+          10.0
+        ],
+        "boundary_loops": 1,
+        "accepted": true,
+        "end_contacts": [
+          0,
+          1
+        ],
+        "merged_fragments": []
+      }
+    ],
+    "refit": {
+      "fold_area_mm2": 6.989674093194324,
+      "coverage": [
+        0.9967,
+        0.994
+      ],
+      "valid": true,
+      "cylinders": 1,
+      "rejected": {
+        "9": "end must be a plane",
+        "10": "end must be a plane"
+      }
+    },
+    "trim": [
+      {
+        "region": 10,
+        "cuts": 22,
+        "accepted": true
+      },
+      {
+        "region": 11,
+        "cuts": 22,
+        "accepted": true
+      }
+    ],
+    "stock": {
+      "fold_area_mm2": 5.498660341782598,
+      "coverage": [
+        0.998,
+        0.996
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {}
+    },
+    "37": {
+      "fold_area_mm2": 5.498660341782598,
+      "coverage": [
+        0.998,
+        0.996
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {
+        "9": "end must be a plane",
+        "10": "end must be a plane",
+        "11": "invalid cylindrical trim"
+      }
+    },
+    "40": {
+      "fold_area_mm2": 6.989674093194324,
+      "coverage": [
+        0.9957,
+        0.994
+      ],
+      "valid": true,
+      "cylinders": 1,
+      "rejected": {
+        "9": "end must be a plane",
+        "10": "fillet needs four distinct planar rails and ends"
+      }
+    },
+    "selected": "stock"
+  },
+  {
+    "case": "block",
+    "noise": 0.1,
+    "growth": [],
+    "refit": {
+      "fold_area_mm2": 5.562187870594698,
+      "coverage": [
+        0.9917,
+        0.9887
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {}
+    },
+    "trim": [],
+    "stock": {
+      "fold_area_mm2": 5.562187870594698,
+      "coverage": [
+        0.9917,
+        0.9887
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {}
+    },
+    "37": {
+      "fold_area_mm2": 5.562187870594698,
+      "coverage": [
+        0.9917,
+        0.9887
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {}
+    },
+    "40": {
+      "fold_area_mm2": 5.562187870594698,
+      "coverage": [
+        0.9917,
+        0.9887
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {}
+    },
+    "selected": "stock"
+  },
+  {
+    "case": "block",
+    "noise": 0.2,
+    "growth": [
+      {
+        "region": 19,
+        "before_triangles": 42,
+        "after_triangles": 104,
+        "axis_span_mm": [
+          5.647233241620695,
+          10.125916375645748
+        ],
+        "boundary_loops": 1,
+        "accepted": true,
+        "end_contacts": [
+          -1,
+          2,
+          3
+        ],
+        "merged_fragments": []
+      }
+    ],
+    "refit": {
+      "fold_area_mm2": 2.564475339321973,
+      "coverage": [
+        0.9697,
+        0.9757
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {
+        "19": "fillet needs four distinct planar rails and ends"
+      }
+    },
+    "trim": [
+      {
+        "region": 19,
+        "cuts": 44,
+        "accepted": true
+      }
+    ],
+    "stock": {
+      "fold_area_mm2": 2.0514995892982695,
+      "coverage": [
+        0.9693,
+        0.974
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {}
+    },
+    "37": {
+      "fold_area_mm2": 2.564475339321973,
+      "coverage": [
+        0.9697,
+        0.9757
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {
+        "19": "fillet needs four distinct planar rails and ends"
+      }
+    },
+    "40": {
+      "fold_area_mm2": 2.0514995892982695,
+      "coverage": [
+        0.9693,
+        0.9767
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {
+        "19": "fillet needs four distinct planar rails and ends"
+      }
+    },
+    "selected": "stock"
+  },
+  {
+    "case": "angle",
+    "noise": 0.0,
+    "growth": [
+      {
+        "region": 9,
+        "before_triangles": 210,
+        "after_triangles": 210,
+        "axis_span_mm": [
+          10.0,
+          10.0
+        ],
+        "boundary_loops": 1,
+        "accepted": false,
+        "end_contacts": [
+          -1,
+          0,
+          1
+        ],
+        "merged_fragments": []
+      },
+      {
+        "region": 10,
+        "before_triangles": 4,
+        "after_triangles": 30,
+        "axis_span_mm": [
+          10.0,
+          10.0
+        ],
+        "boundary_loops": 1,
+        "accepted": true,
+        "end_contacts": [
+          0,
+          1
+        ],
+        "merged_fragments": []
+      }
+    ],
+    "refit": {
+      "fold_area_mm2": 23.67216866180231,
+      "coverage": [
+        0.9953,
+        0.991
+      ],
+      "valid": true,
+      "cylinders": 1,
+      "rejected": {
+        "9": "end must be a plane"
+      }
+    },
+    "trim": [
+      {
+        "region": 10,
+        "cuts": 14,
+        "accepted": true
+      }
+    ],
+    "stock": {
+      "fold_area_mm2": 5.477700381739307,
+      "coverage": [
+        0.9963,
+        0.9947
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {},
+      "far_centers": {
+        "count": 17,
+        "mean": [
+          8.70405567099411,
+          -4.336150318777153,
+          5.882688210201415
+        ]
+      },
+      "cylinder_centers": []
+    },
+    "37": {
+      "fold_area_mm2": 23.67216866180231,
+      "coverage": [
+        0.9953,
+        0.991
+      ],
+      "valid": true,
+      "cylinders": 1,
+      "rejected": {
+        "9": "end must be a plane"
+      }
+    },
+    "40": {
+      "fold_area_mm2": 21.41056288214554,
+      "coverage": [
+        0.9953,
+        0.991
+      ],
+      "valid": true,
+      "cylinders": 1,
+      "rejected": {
+        "9": "end must be a plane"
+      },
+      "far_centers": {
+        "count": 218,
+        "mean": [
+          11.611100391996768,
+          0.16857231749781726,
+          5.196699836026381
+        ]
+      },
+      "cylinder_centers": [
+        [
+          -11.287839393268822,
+          -8.252930276031966,
+          5.0
+        ]
+      ]
+    },
+    "selected": "stock"
+  },
+  {
+    "case": "angle",
+    "noise": 0.1,
+    "growth": [
+      {
+        "region": 11,
+        "before_triangles": 19,
+        "after_triangles": 57,
+        "axis_span_mm": [
+          9.991539390933955,
+          9.991539390933955
+        ],
+        "boundary_loops": 1,
+        "accepted": true,
+        "end_contacts": [
+          -1,
+          1,
+          2
+        ],
+        "merged_fragments": []
+      }
+    ],
+    "refit": {
+      "fold_area_mm2": 2.7232207636300494,
+      "coverage": [
+        0.992,
+        0.989
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {
+        "11": "fillet needs four distinct planar rails and ends"
+      }
+    },
+    "trim": [
+      {
+        "region": 11,
+        "cuts": 37,
+        "accepted": true
+      }
+    ],
+    "stock": {
+      "fold_area_mm2": 2.7232207636300494,
+      "coverage": [
+        0.992,
+        0.989
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {}
+    },
+    "37": {
+      "fold_area_mm2": 2.7232207636300494,
+      "coverage": [
+        0.992,
+        0.989
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {
+        "11": "fillet needs four distinct planar rails and ends"
+      }
+    },
+    "40": {
+      "fold_area_mm2": 4.90323619373751,
+      "coverage": [
+        0.9933,
+        0.99
+      ],
+      "valid": true,
+      "cylinders": 1,
+      "rejected": {}
+    },
+    "selected": "40"
+  },
+  {
+    "case": "angle",
+    "noise": 0.2,
+    "growth": [],
+    "refit": {
+      "fold_area_mm2": 17.799501977570195,
+      "coverage": [
+        0.9613,
+        0.9623
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {}
+    },
+    "trim": [],
+    "stock": {
+      "fold_area_mm2": 17.799501977570195,
+      "coverage": [
+        0.9613,
+        0.9623
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {}
+    },
+    "37": {
+      "fold_area_mm2": 17.799501977570195,
+      "coverage": [
+        0.9613,
+        0.9623
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {}
+    },
+    "40": {
+      "fold_area_mm2": 17.799501977570195,
+      "coverage": [
+        0.9613,
+        0.9623
+      ],
+      "valid": true,
+      "cylinders": 0,
+      "rejected": {}
+    },
+    "selected": "stock"
+  }
+]

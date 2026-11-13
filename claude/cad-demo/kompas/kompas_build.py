@@ -910,7 +910,7 @@ def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=floa
 
 
 def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RIB_T", "0.45")),
-                    min_area=float(os.environ.get("THIN_RIB_MIN", "0.06"))):
+                    min_area=float(os.environ.get("THIN_RIB_MIN", "0.06")), cut=False):
     """тонкое ребро (язычок защёлки, перегородка): по каждому сечению — тонкая часть «скан минус модель»
     (толщина 2A/L < tmax), прилегающая к модели; выдавливание ровно на высоту слоя многоугольником с
     прямыми сторонами, без сплайна по 32 точкам (сплайн и сглаживание 0,12 мм съедали полоску 0,2 мм)"""
@@ -924,15 +924,22 @@ def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RI
     for z in np.arange(z0 + dz, z1 - dz / 2, dz):
         a, b = sec(model_mesh, z), sec(scan, z)
         if a.is_empty or b.is_empty: continue
-        D = b.difference(a).buffer(-0.01).buffer(0.01)
+        # cut=True — наоборот: тонкий клин материала модели там, где в скане пусто (острие V-канавки)
+        D = (a.difference(b) if cut else b.difference(a)).buffer(-0.01).buffer(0.01)
         ext = max(getattr(a, "geoms", [a]), key=lambda q: q.area).exterior
+        ref = b.boundary if cut else a.boundary
         for g in getattr(D, "geoms", [D]):
             if g.is_empty or g.geom_type != "Polygon" or g.area < min_area: continue
             if 2 * g.area / g.length > tmax: continue          # толстое — дело CORR_ADD
-            if g.distance(a.boundary) > 0.03: continue          # висит в воздухе — шум скана
+            if g.distance(ref) > 0.03: continue                  # висит в воздухе — шум скана
             if g.distance(ext) < 0.05: continue                  # корка по наружной стенке — не ребро
             from shapely.geometry import Point
-            if max(a.boundary.distance(Point(c)) for c in g.exterior.coords) < 0.3: continue  # и так в допуске
+            if cut:
+                # дно выреза модели здесь, а скан уходит глубже: слоем выше у модели уже пусто
+                if sec(model_mesh, z + dz).intersection(g).area > 0.3 * g.area: continue
+                # и скан пуст ещё слоем ниже: канавка глубже дна модели больше чем на допуск
+                if sec(model_mesh, z - dz).difference(sec(scan, z - dz)).intersection(g.buffer(0.05)).area < 0.02: continue
+            elif max(ref.distance(Point(c)) for c in g.exterior.coords) < 0.3: continue  # и так в допуске
             L = g.length / 2
             if L < 0.5: continue                                 # короче 0,5 мм — не ребро
             try:
@@ -1210,6 +1217,20 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
                 except Exception:  # noqa: BLE001
                     pass
             info["thin_ribs"] = nt
+            body = body.clean()
+        if os.environ.get("THIN_CUT", "0") == "1":
+            # острие узкой канавки (клин у основания бобышки) — тоньше порога поправочных вырезов
+            write_stl_checked(body.wrapped, tf, 0.03, True, 0.15, tol=0.1)
+            mm = trimesh.load(tf, force="mesh")
+            nt = 0
+            for v in thin_rib_prisms(scan, mm, cut=True):
+                try:
+                    nb = body.cut(v)
+                    if nb.isValid() and len(nb.Solids()) == 1 and nb.Volume() > 0.98 * body.Volume():
+                        body = nb; nt += 1
+                except Exception:  # noqa: BLE001
+                    pass
+            info["thin_cuts"] = nt
             body = body.clean()
         body = body.clean()
         try:

@@ -1,7 +1,9 @@
 """Replace a smooth triangular zone with a face sharing its straight boundary.
 
 Взято из задачи 27 Севера (chatgpt-1/cad-intelligence/cad-straight-patches-2026-11-13); здесь добавлен
-параметр edge_tol — допуск между прямым ребром и его следом на гладкой поверхности."""
+параметр edge_tol — допуск между прямым ребром и его следом на гладкой поверхности, и обратная проверка:
+точки самой поверхности (сетка по u, v) не дальше допуска от треугольников зоны — между вершинами скана
+заплатка не должна выгибаться горбом."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -182,10 +184,32 @@ def _verify(face, points, xyz, cross, tol):
     sign = -1 if np.median(aligned) < 0 else 1
     if np.any(sign * aligned <= 0):
         return None, {"reason": "flipped_normal", "min_normal_dot": float(np.min(sign * aligned))}
+    away = _surface_away(face, surface, uv, classifier, xyz)
+    if away > tol:
+        return None, {"reason": "surface_away", "surface_max_mm": away}
     if (sign < 0) != (face.Orientation() == TopAbs_REVERSED):
         face = TopoDS.Face_s(face.Reversed())
-    return face, {"reason": "accepted", "vertex_max_mm": maximum, "area_ratio": area_ratio,
+    return face, {"reason": "accepted", "vertex_max_mm": maximum, "surface_max_mm": away, "area_ratio": area_ratio,
                   "min_normal_dot": float(np.min(sign * aligned))}
+
+
+def _surface_away(face, surface, uv, classifier, xyz, grid: int = 14):
+    """Наибольшее расстояние от точек поверхности внутри грани до треугольников зоны."""
+    import trimesh
+
+    u0, u1, v0, v1 = uv
+    pts = []
+    for u in np.linspace(u0, u1, grid):
+        for v in np.linspace(v0, v1, grid):
+            classifier.Perform(face, gp_Pnt2d(u, v), 1e-6)
+            if classifier.State() in (TopAbs_IN, TopAbs_ON):
+                p = surface.Value(u, v)
+                pts.append((p.X(), p.Y(), p.Z()))
+    if not pts:
+        return 0.
+    zone = trimesh.Trimesh(xyz.reshape(-1, 3), np.arange(len(xyz) * 3).reshape(-1, 3), process=False)
+    _, d, _ = trimesh.proximity.closest_point(zone, np.asarray(pts))
+    return float(d.max())
 
 
 def patch(V, F, faces_of_zone, tol, edge_tol=None):

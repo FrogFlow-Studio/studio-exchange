@@ -188,6 +188,41 @@ def regularize_cylinders(regions, vertices, faces, label, angle_deg: float = 3.0
     return done
 
 
+def drop_weak_cylinders(regions, vertices, faces, label):
+    """Цилиндр, который держится в допуске только потому, что область узкая (дуга скругления тора,
+    принятая за прямой цилиндр поперёк), посадка ломает: вершины тянутся на ложную ось. Признак —
+    нормали треугольников области смотрят мимо радиуса цилиндра заметно сильнее, чем нормали
+    плоских областей того же скана мимо своей плоскости (это шум нормалей скана). Такая область
+    становится свободной (её закроет гладкая грань). Возвращает число снятых."""
+    tri = vertices[faces]
+    fn = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-12)
+    fc = tri.mean(axis=1)
+
+    def spread(cos):
+        return float(np.degrees(np.arccos(np.clip(np.median(np.abs(cos)), 0.0, 1.0))))
+
+    floor = [spread(fn[label == i] @ np.asarray(r["normal"], float))
+             for i, r in enumerate(regions) if r["kind"] == "plane" and (label == i).any()]
+    limit = max(15.0, 2.5 * float(np.median(floor))) if floor else 15.0
+    dropped = 0
+    for i, r in enumerate(regions):
+        m = label == i
+        if r["kind"] != "cylinder" or m.sum() < 6:
+            continue
+        ax = np.asarray(r["axis"], float)
+        ax = ax / np.linalg.norm(ax)
+        q = fc[m] - np.asarray(r["origin"], float)
+        rd = q - np.outer(q @ ax, ax)
+        rd /= np.maximum(np.linalg.norm(rd, axis=1, keepdims=True), 1e-12)
+        dev = spread(np.einsum("ij,ij->i", fn[m], rd))
+        if dev > limit:
+            label[m] = -1
+            r["dropped"] = round(dev, 1)
+            dropped += 1
+    return dropped
+
+
 def _project(x0, cons, iters: int = 6):
     """Ближайшая к x0 точка на пересечении поверхностей вершины: плоскости решаются разом
     (псевдообратная гасит почти параллельные), цилиндры — чередованием проекций."""
@@ -232,6 +267,8 @@ def idealize(scan: trimesh.Trimesh, tol: float = 0.3, noise: float = 0.0, *, seg
     F = np.asarray(scan.faces)
     aligned, axes = regularize(regs, V, F, label, angle_deg, fit)
     label, merged = merge_coplanar(regs, V, F, label, angle_deg, fit)
+    label = label.copy()
+    weak_cyl = drop_weak_cylinders(regs, V, F, label)
     aligned_cyl = regularize_cylinders(regs, V, F, label, angle_deg, fit)
 
     # поверхности каждой вершины — области её треугольников
@@ -490,7 +527,7 @@ def idealize(scan: trimesh.Trimesh, tol: float = 0.3, noise: float = 0.0, *, seg
     was = np.array([regs[i]["kind"] if i >= 0 else "free" for i in np.asarray(seg["label"])])
     info = {
         "fit_tol": fit, "planes": int(sum(r["kind"] == "plane" for r in regs)),
-        "cylinders": int(sum(r["kind"] == "cylinder" for r in regs)), "aligned_planes": int(aligned), "merged_planes": int(merged), "aligned_cylinders": int(aligned_cyl),
+        "cylinders": int(sum(r["kind"] == "cylinder" for r in regs)), "aligned_planes": int(aligned), "merged_planes": int(merged), "aligned_cylinders": int(aligned_cyl), "weak_cylinders": int(weak_cyl),
         "plane_share": float(area[kinds == "plane"].sum() / area.sum()),
         "cylinder_share": float(area[kinds == "cylinder"].sum() / area.sum()),
         "plane_share_before": float(scan.area_faces[was == "plane"].sum() / scan.area),

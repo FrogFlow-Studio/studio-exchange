@@ -1,0 +1,170 @@
+[
+  {
+    "radius": 40.0,
+    "noise_mm": 0.05,
+    "seed": 32,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 40.0,
+    "noise_mm": 0.2,
+    "seed": 32,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 100.0,
+    "noise_mm": 0.05,
+    "seed": 32,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 100.0,
+    "noise_mm": 0.2,
+    "seed": 32,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 200.0,
+    "noise_mm": 0.05,
+    "seed": 32,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 200.0,
+    "noise_mm": 0.2,
+    "seed": 32,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 40.0,
+    "noise_mm": 0.05,
+    "seed": 39,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 40.0,
+    "noise_mm": 0.2,
+    "seed": 39,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 100.0,
+    "noise_mm": 0.05,
+    "seed": 39,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 100.0,
+    "noise_mm": 0.2,
+    "seed": 39,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 200.0,
+    "noise_mm": 0.05,
+    "seed": 39,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 200.0,
+    "noise_mm": 0.2,
+    "seed": 39,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 40.0,
+    "noise_mm": 0.05,
+    "seed": 82,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 40.0,
+    "noise_mm": 0.2,
+    "seed": 82,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 100.0,
+    "noise_mm": 0.05,
+    "seed": 82,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 100.0,
+    "noise_mm": 0.2,
+    "seed": 82,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 200.0,
+    "noise_mm": 0.05,
+    "seed": 82,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 200.0,
+    "noise_mm": 0.2,
+    "seed": 82,
+    "arc": 1,
+    "polygon": 1
+  },
+  {
+    "radius": 40.0,
+    "noise_mm": 0.05,
+    "seed": 101,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 40.0,
+    "noise_mm": 0.2,
+    "seed": 101,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 100.0,
+    "noise_mm": 0.05,
+    "seed": 101,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 100.0,
+    "noise_mm": 0.2,
+    "seed": 101,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 200.0,
+    "noise_mm": 0.05,
+    "seed": 101,
+    "arc": 1,
+    "polygon": 0
+  },
+  {
+    "radius": 200.0,
+    "noise_mm": 0.2,
+    "seed": 101,
+    "arc": 1,
+    "polygon": 0
+  }
+]

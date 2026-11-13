@@ -1,0 +1,648 @@
+[
+  {
+    "case": "block",
+    "noise_mm": 0.0,
+    "growth": [
+      {
+        "region": 9,
+        "before_triangles": 94,
+        "after_triangles": 94,
+        "axis_span_mm": [
+          10.0,
+          10.0
+        ],
+        "boundary_loops": 1,
+        "accepted": false,
+        "end_contacts": [
+          -1,
+          0,
+          1
+        ],
+        "merged_fragments": []
+      },
+      {
+        "region": 10,
+        "before_triangles": 50,
+        "after_triangles": 50,
+        "axis_span_mm": [
+          10.0,
+          10.0
+        ],
+        "boundary_loops": 1,
+        "accepted": false,
+        "end_contacts": [
+          -1,
+          0,
+          1
+        ],
+        "merged_fragments": []
+      },
+      {
+        "region": 11,
+        "before_triangles": 24,
+        "after_triangles": 50,
+        "axis_span_mm": [
+          10.0,
+          10.0
+        ],
+        "boundary_loops": 1,
+        "accepted": true,
+        "end_contacts": [
+          0,
+          1
+        ],
+        "merged_fragments": []
+      }
+    ],
+    "stock": {
+      "planar_faces": 6,
+      "triangle_faces": 446,
+      "faces": 453,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 1,
+      "smooth_triangles": 50,
+      "smooth_rejected": 3,
+      "smooth_rejected_triangles": {
+        "area_changed": 257,
+        "boundary_surface_tolerance": 189
+      },
+      "smooth_area_share": 0.02863250783254592,
+      "planar_area_share": 0.815933651798237,
+      "fold_area_mm2": 5.498660341782598,
+      "coverage": [
+        0.998,
+        0.996
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "before": {
+      "planar_faces": 6,
+      "triangle_faces": 446,
+      "faces": 453,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 1,
+      "smooth_triangles": 50,
+      "smooth_rejected": 3,
+      "smooth_rejected_triangles": {
+        "area_changed": 257,
+        "boundary_surface_tolerance": 189
+      },
+      "smooth_area_share": 0.02863250783254592,
+      "planar_area_share": 0.815933651798237,
+      "exact_fillets": 0,
+      "exact_curved_walls": 0,
+      "fillets_rejected": {
+        "9": "end must be a plane",
+        "10": "end must be a plane",
+        "11": "end must be a plane"
+      },
+      "fold_area_mm2": 5.498660341782598,
+      "coverage": [
+        0.998,
+        0.996
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "after": {
+      "planar_faces": 6,
+      "triangle_faces": 446,
+      "faces": 453,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 1,
+      "smooth_triangles": 50,
+      "smooth_rejected": 3,
+      "smooth_rejected_triangles": {
+        "area_changed": 257,
+        "boundary_surface_tolerance": 189
+      },
+      "smooth_area_share": 0.02863250783254592,
+      "planar_area_share": 0.815933651798237,
+      "exact_fillets": 0,
+      "exact_curved_walls": 0,
+      "fillets_rejected": {
+        "9": "end must be a plane",
+        "10": "end must be a plane",
+        "11": "invalid cylindrical trim"
+      },
+      "fold_area_mm2": 5.498660341782598,
+      "coverage": [
+        0.998,
+        0.996
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "coverage_gate": true,
+    "selected": "after"
+  },
+  {
+    "case": "block",
+    "noise_mm": 0.1,
+    "growth": [],
+    "stock": {
+      "planar_faces": 13,
+      "triangle_faces": 75,
+      "faces": 95,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 7,
+      "smooth_triangles": 372,
+      "smooth_rejected": 1,
+      "smooth_rejected_triangles": {
+        "boundary_surface_tolerance": 69
+      },
+      "smooth_area_share": 0.1158013835487799,
+      "planar_area_share": 0.8431584222269181,
+      "fold_area_mm2": 5.562187870594698,
+      "coverage": [
+        0.9917,
+        0.9887
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "before": {
+      "planar_faces": 13,
+      "triangle_faces": 75,
+      "faces": 95,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 7,
+      "smooth_triangles": 372,
+      "smooth_rejected": 1,
+      "smooth_rejected_triangles": {
+        "boundary_surface_tolerance": 69
+      },
+      "smooth_area_share": 0.1158013835487799,
+      "planar_area_share": 0.8431584222269181,
+      "exact_fillets": 0,
+      "exact_curved_walls": 0,
+      "fillets_rejected": {},
+      "fold_area_mm2": 5.562187870594698,
+      "coverage": [
+        0.9917,
+        0.9887
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "after": {
+      "planar_faces": 13,
+      "triangle_faces": 75,
+      "faces": 95,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 7,
+      "smooth_triangles": 372,
+      "smooth_rejected": 1,
+      "smooth_rejected_triangles": {
+        "boundary_surface_tolerance": 69
+      },
+      "smooth_area_share": 0.1158013835487799,
+      "planar_area_share": 0.8431584222269181,
+      "exact_fillets": 0,
+      "exact_curved_walls": 0,
+      "fillets_rejected": {},
+      "fold_area_mm2": 5.562187870594698,
+      "coverage": [
+        0.9917,
+        0.9887
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "coverage_gate": true,
+    "selected": "after"
+  },
+  {
+    "case": "block",
+    "noise_mm": 0.2,
+    "growth": [
+      {
+        "region": 19,
+        "before_triangles": 42,
+        "after_triangles": 104,
+        "axis_span_mm": [
+          5.647233241620695,
+          10.125916375645748
+        ],
+        "boundary_loops": 1,
+        "accepted": true,
+        "end_contacts": [
+          -1,
+          2,
+          3
+        ],
+        "merged_fragments": []
+      }
+    ],
+    "stock": {
+      "planar_faces": 20,
+      "triangle_faces": 377,
+      "faces": 410,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 13,
+      "smooth_triangles": 377,
+      "smooth_rejected": 4,
+      "smooth_rejected_triangles": {
+        "boundary_surface_tolerance": 261,
+        "area_changed": 14,
+        "invalid_boundary": 88
+      },
+      "smooth_area_share": 0.09140578286173999,
+      "planar_area_share": 0.7176538791285272,
+      "fold_area_mm2": 2.0514995892982695,
+      "coverage": [
+        0.9693,
+        0.974
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "before": {
+      "planar_faces": 20,
+      "triangle_faces": 377,
+      "faces": 410,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 13,
+      "smooth_triangles": 377,
+      "smooth_rejected": 4,
+      "smooth_rejected_triangles": {
+        "boundary_surface_tolerance": 261,
+        "area_changed": 14,
+        "invalid_boundary": 88
+      },
+      "smooth_area_share": 0.09140578286173999,
+      "planar_area_share": 0.7176538791285272,
+      "exact_fillets": 0,
+      "exact_curved_walls": 0,
+      "fillets_rejected": {
+        "19": "fillet needs four distinct planar rails and ends"
+      },
+      "fold_area_mm2": 2.0514995892982695,
+      "coverage": [
+        0.9693,
+        0.974
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "after": {
+      "planar_faces": 21,
+      "triangle_faces": 274,
+      "faces": 312,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 17,
+      "smooth_triangles": 500,
+      "smooth_rejected": 2,
+      "smooth_rejected_triangles": {
+        "boundary_surface_tolerance": 266
+      },
+      "smooth_area_share": 0.1343954353668647,
+      "planar_area_share": 0.7142616715378074,
+      "exact_fillets": 0,
+      "exact_curved_walls": 0,
+      "fillets_rejected": {
+        "19": "fillet needs four distinct planar rails and ends"
+      },
+      "fold_area_mm2": 2.564475339321973,
+      "coverage": [
+        0.9697,
+        0.9757
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "coverage_gate": true,
+    "selected": "after"
+  },
+  {
+    "case": "angle",
+    "noise_mm": 0.0,
+    "growth": [
+      {
+        "region": 9,
+        "before_triangles": 210,
+        "after_triangles": 210,
+        "axis_span_mm": [
+          10.0,
+          10.0
+        ],
+        "boundary_loops": 1,
+        "accepted": false,
+        "end_contacts": [
+          -1,
+          0,
+          1
+        ],
+        "merged_fragments": []
+      },
+      {
+        "region": 10,
+        "before_triangles": 4,
+        "after_triangles": 30,
+        "axis_span_mm": [
+          10.0,
+          10.0
+        ],
+        "boundary_loops": 1,
+        "accepted": true,
+        "end_contacts": [
+          0,
+          1
+        ],
+        "merged_fragments": []
+      }
+    ],
+    "stock": {
+      "planar_faces": 5,
+      "triangle_faces": 122,
+      "faces": 132,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 5,
+      "smooth_triangles": 512,
+      "smooth_rejected": 1,
+      "smooth_rejected_triangles": {
+        "area_changed": 122
+      },
+      "smooth_area_share": 0.1478560835003997,
+      "planar_area_share": 0.7813863999279508,
+      "fold_area_mm2": 5.477700381739307,
+      "coverage": [
+        0.9963,
+        0.9947
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "before": {
+      "planar_faces": 5,
+      "triangle_faces": 122,
+      "faces": 132,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 5,
+      "smooth_triangles": 512,
+      "smooth_rejected": 1,
+      "smooth_rejected_triangles": {
+        "area_changed": 122
+      },
+      "smooth_area_share": 0.1478560835003997,
+      "planar_area_share": 0.7813863999279508,
+      "exact_fillets": 0,
+      "exact_curved_walls": 0,
+      "fillets_rejected": {
+        "9": "end must be a plane",
+        "10": "fillet needs one closed loop"
+      },
+      "fold_area_mm2": 5.477700381739307,
+      "coverage": [
+        0.9963,
+        0.9947
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "after": {
+      "smooth_faces": 12,
+      "smooth_triangles": 604,
+      "smooth_rejected": 0,
+      "smooth_area_share": 0.19962003850465915,
+      "smooth_rejected_triangles": {},
+      "valid": true,
+      "free_edges": 0,
+      "faces": 18,
+      "triangle_faces": 0,
+      "planar_faces": 5,
+      "exact_fillets": 1,
+      "exact_curved_walls": 0,
+      "fillet_vertex_max_mm": {
+        "10": 0.015983376758769107
+      },
+      "fillets_rejected": {
+        "9": "end must be a plane"
+      },
+      "fold_area_mm2": 23.67216866180231,
+      "coverage": [
+        0.9953,
+        0.991
+      ],
+      "step_valid": true,
+      "step_cylinders": 1
+    },
+    "coverage_gate": false,
+    "selected": "stock"
+  },
+  {
+    "case": "angle",
+    "noise_mm": 0.1,
+    "growth": [
+      {
+        "region": 11,
+        "before_triangles": 19,
+        "after_triangles": 57,
+        "axis_span_mm": [
+          9.991539390933955,
+          9.991539390933955
+        ],
+        "boundary_loops": 1,
+        "accepted": true,
+        "end_contacts": [
+          -1,
+          1,
+          2
+        ],
+        "merged_fragments": []
+      }
+    ],
+    "stock": {
+      "planar_faces": 10,
+      "triangle_faces": 185,
+      "faces": 198,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 3,
+      "smooth_triangles": 242,
+      "smooth_rejected": 4,
+      "smooth_rejected_triangles": {
+        "area_changed": 11,
+        "invalid_boundary": 173
+      },
+      "smooth_area_share": 0.08460986035927397,
+      "planar_area_share": 0.8777614120439728,
+      "fold_area_mm2": 2.7232207636300494,
+      "coverage": [
+        0.992,
+        0.989
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "before": {
+      "planar_faces": 10,
+      "triangle_faces": 185,
+      "faces": 198,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 3,
+      "smooth_triangles": 242,
+      "smooth_rejected": 4,
+      "smooth_rejected_triangles": {
+        "area_changed": 11,
+        "invalid_boundary": 173
+      },
+      "smooth_area_share": 0.08460986035927397,
+      "planar_area_share": 0.8777614120439728,
+      "exact_fillets": 0,
+      "exact_curved_walls": 0,
+      "fillets_rejected": {
+        "11": "fillet needs one closed loop"
+      },
+      "fold_area_mm2": 2.7232207636300494,
+      "coverage": [
+        0.992,
+        0.989
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "after": {
+      "planar_faces": 10,
+      "triangle_faces": 185,
+      "faces": 198,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 3,
+      "smooth_triangles": 245,
+      "smooth_rejected": 4,
+      "smooth_rejected_triangles": {
+        "area_changed": 11,
+        "invalid_boundary": 173
+      },
+      "smooth_area_share": 0.08530826058671911,
+      "planar_area_share": 0.8770630118165277,
+      "exact_fillets": 0,
+      "exact_curved_walls": 0,
+      "fillets_rejected": {
+        "11": "fillet needs four distinct planar rails and ends"
+      },
+      "fold_area_mm2": 2.7232207636300494,
+      "coverage": [
+        0.992,
+        0.989
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "coverage_gate": true,
+    "selected": "after"
+  },
+  {
+    "case": "angle",
+    "noise_mm": 0.2,
+    "growth": [],
+    "stock": {
+      "planar_faces": 12,
+      "triangle_faces": 170,
+      "faces": 190,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 8,
+      "smooth_triangles": 38,
+      "smooth_rejected": 2,
+      "smooth_rejected_triangles": {
+        "invalid_boundary": 77,
+        "boundary_surface_tolerance": 84
+      },
+      "smooth_area_share": 0.020193455227106732,
+      "planar_area_share": 0.9140221079281862,
+      "fold_area_mm2": 17.799501977570195,
+      "coverage": [
+        0.9613,
+        0.9623
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "before": {
+      "planar_faces": 12,
+      "triangle_faces": 170,
+      "faces": 190,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 8,
+      "smooth_triangles": 38,
+      "smooth_rejected": 2,
+      "smooth_rejected_triangles": {
+        "invalid_boundary": 77,
+        "boundary_surface_tolerance": 84
+      },
+      "smooth_area_share": 0.020193455227106732,
+      "planar_area_share": 0.9140221079281862,
+      "exact_fillets": 0,
+      "exact_curved_walls": 0,
+      "fillets_rejected": {},
+      "fold_area_mm2": 17.799501977570195,
+      "coverage": [
+        0.9613,
+        0.9623
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "after": {
+      "planar_faces": 12,
+      "triangle_faces": 170,
+      "faces": 190,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 8,
+      "smooth_triangles": 38,
+      "smooth_rejected": 2,
+      "smooth_rejected_triangles": {
+        "invalid_boundary": 77,
+        "boundary_surface_tolerance": 84
+      },
+      "smooth_area_share": 0.020193455227106732,
+      "planar_area_share": 0.9140221079281862,
+      "exact_fillets": 0,
+      "exact_curved_walls": 0,
+      "fillets_rejected": {},
+      "fold_area_mm2": 17.799501977570195,
+      "coverage": [
+        0.9613,
+        0.9623
+      ],
+      "step_valid": true,
+      "step_cylinders": 0
+    },
+    "coverage_gate": true,
+    "selected": "after"
+  }
+]

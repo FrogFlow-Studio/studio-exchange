@@ -1,0 +1,750 @@
+[
+  {
+    "radius": 10,
+    "turn_deg": 90,
+    "noise_mm": 0.0,
+    "before": {
+      "planar_faces": 6,
+      "triangle_faces": 0,
+      "faces": 8,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 2,
+      "smooth_triangles": 271,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.09554633226895687,
+      "planar_area_share": 0.9044536677310431,
+      "fold_area_mm2": 51.44454564194535,
+      "coverage": [
+        0.9963,
+        0.995
+      ]
+    },
+    "after": {
+      "planar_faces": 6,
+      "triangle_faces": 0,
+      "faces": 8,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 2,
+      "smooth_triangles": 271,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.09554633226895687,
+      "planar_area_share": 0.9044536677310431,
+      "coverage": [
+        0.9963,
+        0.995
+      ],
+      "repair_passes": [
+        {
+          "no_movable_vertices": 3,
+          "accepted": false
+        }
+      ],
+      "baseline_coverage": [
+        0.9963,
+        0.995
+      ],
+      "defects": [
+        {
+          "type": "смятая поверхность",
+          "center": [
+            -9.049330394581435,
+            0.003110044469777148,
+            0.0025106055173877437
+          ],
+          "area_mm2": 30.697611691234627,
+          "max_deviation_mm": 0.15644123874712132,
+          "description": "Резкая смена нормалей без соответствующего сгиба на скане",
+          "source": "model"
+        },
+        {
+          "type": "смятая поверхность",
+          "center": [
+            0.19129597712256077,
+            7.135973411878615,
+            13.992701397024744
+          ],
+          "area_mm2": 10.465924623887272,
+          "max_deviation_mm": 0.17336628014983546,
+          "description": "Резкая смена нормалей без соответствующего сгиба на скане",
+          "source": "model"
+        },
+        {
+          "type": "смятая поверхность",
+          "center": [
+            0.27570105706290476,
+            7.091238371326056,
+            0.0022988820882529548
+          ],
+          "area_mm2": 10.281009326823458,
+          "max_deviation_mm": 0.09243438180607345,
+          "description": "Резкая смена нормалей без соответствующего сгиба на скане",
+          "source": "model"
+        }
+      ],
+      "fold_area_mm2": 51.44454564194535
+    }
+  },
+  {
+    "radius": 10,
+    "turn_deg": 90,
+    "noise_mm": 0.1,
+    "before": {
+      "planar_faces": 6,
+      "triangle_faces": 93,
+      "faces": 101,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 2,
+      "smooth_triangles": 251,
+      "smooth_rejected": 3,
+      "smooth_rejected_triangles": {
+        "area_changed": 93
+      },
+      "smooth_area_share": 0.09007828916805169,
+      "planar_area_share": 0.8978910362372989,
+      "fold_area_mm2": 0,
+      "coverage": [
+        0.99,
+        0.991
+      ]
+    },
+    "after": {
+      "planar_faces": 6,
+      "triangle_faces": 93,
+      "faces": 101,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 2,
+      "smooth_triangles": 251,
+      "smooth_rejected": 3,
+      "smooth_rejected_triangles": {
+        "area_changed": 93
+      },
+      "smooth_area_share": 0.09007828916805169,
+      "planar_area_share": 0.8978910362372989,
+      "coverage": [
+        0.99,
+        0.991
+      ],
+      "repair_passes": [],
+      "baseline_coverage": [
+        0.99,
+        0.991
+      ],
+      "defects": [],
+      "fold_area_mm2": 0
+    }
+  },
+  {
+    "radius": 10,
+    "turn_deg": 90,
+    "noise_mm": 0.2,
+    "before": {
+      "planar_faces": 7,
+      "triangle_faces": 2,
+      "faces": 11,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 2,
+      "smooth_triangles": 8,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.002683654176715745,
+      "planar_area_share": 0.9964564601715946,
+      "fold_area_mm2": 36.097846136259314,
+      "coverage": [
+        0.9487,
+        0.9577
+      ]
+    },
+    "after": {
+      "planar_faces": 7,
+      "triangle_faces": 2,
+      "faces": 11,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 2,
+      "smooth_triangles": 8,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.002683654176715745,
+      "planar_area_share": 0.9964564601715946,
+      "coverage": [
+        0.9487,
+        0.9577
+      ],
+      "repair_passes": [
+        {
+          "no_movable_vertices": 3,
+          "accepted": false
+        }
+      ],
+      "baseline_coverage": [
+        0.9487,
+        0.9577
+      ],
+      "defects": [
+        {
+          "type": "смятая поверхность",
+          "center": [
+            -3.403290612238647,
+            10.07217558792064,
+            0.4828612351837632
+          ],
+          "area_mm2": 12.662107068524357,
+          "max_deviation_mm": 0.3613007954638829,
+          "description": "Резкая смена нормалей без соответствующего сгиба на скане",
+          "source": "model"
+        },
+        {
+          "type": "смятая поверхность",
+          "center": [
+            3.8195348539575553,
+            9.866262084828358,
+            5.118284412617455
+          ],
+          "area_mm2": 11.770628312793466,
+          "max_deviation_mm": 0.7171319804817459,
+          "description": "Резкая смена нормалей без соответствующего сгиба на скане",
+          "source": "model"
+        },
+        {
+          "type": "выступ над сканом",
+          "center": [
+            3.8214474180454117,
+            9.866032301829465,
+            5.142189213123674
+          ],
+          "area_mm2": 11.695037431879726,
+          "max_deviation_mm": 0.7171319804817459,
+          "description": "Модель выступает за поверхность скана",
+          "source": "model"
+        },
+        {
+          "type": "смятая поверхность",
+          "center": [
+            9.679987583045001,
+            4.356697636863832,
+            8.911920572824407
+          ],
+          "area_mm2": 11.665110754941491,
+          "max_deviation_mm": 0.6118361840742521,
+          "description": "Резкая смена нормалей без соответствующего сгиба на скане",
+          "source": "model"
+        },
+        {
+          "type": "выступ над сканом",
+          "center": [
+            9.896536724806102,
+            3.996055869102828,
+            9.25844991763903
+          ],
+          "area_mm2": 3.9869413153778823,
+          "max_deviation_mm": 0.7856662807186078,
+          "description": "Модель выступает за поверхность скана",
+          "source": "model"
+        }
+      ],
+      "fold_area_mm2": 36.097846136259314
+    }
+  },
+  {
+    "radius": 20,
+    "turn_deg": 60,
+    "noise_mm": 0.0,
+    "before": {
+      "planar_faces": 7,
+      "triangle_faces": 1,
+      "faces": 16,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 8,
+      "smooth_triangles": 1242,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.11861951126713872,
+      "planar_area_share": 0.8812857266688773,
+      "fold_area_mm2": 0,
+      "coverage": [
+        1.0,
+        1.0
+      ]
+    },
+    "after": {
+      "planar_faces": 7,
+      "triangle_faces": 1,
+      "faces": 16,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 8,
+      "smooth_triangles": 1242,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.11861951126713872,
+      "planar_area_share": 0.8812857266688773,
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "repair_passes": [],
+      "baseline_coverage": [
+        1.0,
+        1.0
+      ],
+      "defects": [],
+      "fold_area_mm2": 0
+    }
+  },
+  {
+    "radius": 20,
+    "turn_deg": 60,
+    "noise_mm": 0.1,
+    "before": {
+      "planar_faces": 19,
+      "triangle_faces": 74,
+      "faces": 104,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 11,
+      "smooth_triangles": 333,
+      "smooth_rejected": 3,
+      "smooth_rejected_triangles": {
+        "boundary_surface_tolerance": 59,
+        "area_changed": 10
+      },
+      "smooth_area_share": 0.0573546254155759,
+      "planar_area_share": 0.9362297590353058,
+      "fold_area_mm2": 0,
+      "coverage": [
+        0.999,
+        0.999
+      ]
+    },
+    "after": {
+      "planar_faces": 19,
+      "triangle_faces": 74,
+      "faces": 104,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 11,
+      "smooth_triangles": 333,
+      "smooth_rejected": 3,
+      "smooth_rejected_triangles": {
+        "boundary_surface_tolerance": 59,
+        "area_changed": 10
+      },
+      "smooth_area_share": 0.0573546254155759,
+      "planar_area_share": 0.9362297590353058,
+      "coverage": [
+        0.999,
+        0.999
+      ],
+      "repair_passes": [],
+      "baseline_coverage": [
+        0.999,
+        0.999
+      ],
+      "defects": [],
+      "fold_area_mm2": 0
+    }
+  },
+  {
+    "radius": 20,
+    "turn_deg": 60,
+    "noise_mm": 0.2,
+    "before": {
+      "planar_faces": 19,
+      "triangle_faces": 437,
+      "faces": 493,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 37,
+      "smooth_triangles": 285,
+      "smooth_rejected": 11,
+      "smooth_rejected_triangles": {
+        "invalid_boundary": 141,
+        "boundary_surface_tolerance": 52,
+        "area_changed": 144,
+        "invalid_face": 82
+      },
+      "smooth_area_share": 0.024235617582999535,
+      "planar_area_share": 0.9334529205675709,
+      "fold_area_mm2": 23.74726163506917,
+      "coverage": [
+        0.956,
+        0.965
+      ]
+    },
+    "after": {
+      "planar_faces": 19,
+      "triangle_faces": 420,
+      "faces": 475,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 36,
+      "smooth_triangles": 350,
+      "smooth_rejected": 10,
+      "smooth_rejected_triangles": {
+        "boundary_surface_tolerance": 154,
+        "area_changed": 160,
+        "invalid_face": 90
+      },
+      "smooth_area_share": 0.030203829814277574,
+      "planar_area_share": 0.9301186688280123,
+      "coverage": [
+        0.956,
+        0.9703
+      ],
+      "repair_passes": [
+        {
+          "no_movable_vertices": 1,
+          "repaired_zones": 3,
+          "moved_vertices": 10,
+          "accepted": true,
+          "fold_area_mm2": [
+            23.74726163506917,
+            9.437595534448487
+          ],
+          "coverage": [
+            0.9557,
+            0.97
+          ],
+          "coverage_ok": true
+        },
+        {
+          "repaired_zones": 2,
+          "moved_vertices": 17,
+          "accepted": true,
+          "fold_area_mm2": [
+            9.437595534448487,
+            4.848553299784415
+          ],
+          "coverage": [
+            0.956,
+            0.9703
+          ],
+          "coverage_ok": true
+        }
+      ],
+      "baseline_coverage": [
+        0.956,
+        0.965
+      ],
+      "defects": [
+        {
+          "type": "смятая поверхность",
+          "center": [
+            5.818056768163773,
+            19.334526075443836,
+            5.931512784878064
+          ],
+          "area_mm2": 2.4825396973580367,
+          "max_deviation_mm": 0.6034997555116189,
+          "description": "Резкая смена нормалей без соответствующего сгиба на скане",
+          "source": "model"
+        },
+        {
+          "type": "смятая поверхность",
+          "center": [
+            5.943126700450642,
+            19.355952382337275,
+            4.262016908297195
+          ],
+          "area_mm2": 2.366013602426378,
+          "max_deviation_mm": 0.5193390619042502,
+          "description": "Резкая смена нормалей без соответствующего сгиба на скане",
+          "source": "model"
+        }
+      ],
+      "fold_area_mm2": 4.848553299784415
+    }
+  },
+  {
+    "radius": 30,
+    "turn_deg": 30,
+    "noise_mm": 0.0,
+    "before": {
+      "planar_faces": 6,
+      "triangle_faces": 0,
+      "faces": 14,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 8,
+      "smooth_triangles": 1020,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.17358649048318558,
+      "planar_area_share": 0.8264135095168146,
+      "fold_area_mm2": 49.10986951017602,
+      "coverage": [
+        0.987,
+        0.9853
+      ]
+    },
+    "after": {
+      "planar_faces": 6,
+      "triangle_faces": 0,
+      "faces": 14,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 8,
+      "smooth_triangles": 1020,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.17358649048318558,
+      "planar_area_share": 0.8264135095168146,
+      "coverage": [
+        0.987,
+        0.9853
+      ],
+      "repair_passes": [
+        {
+          "no_movable_vertices": 3,
+          "accepted": false
+        }
+      ],
+      "baseline_coverage": [
+        0.987,
+        0.9853
+      ],
+      "defects": [
+        {
+          "type": "смятая поверхность",
+          "center": [
+            -10.119829451914866,
+            23.68367287777213,
+            13.995791872978506
+          ],
+          "area_mm2": 32.38596458471063,
+          "max_deviation_mm": 0.1854027949348218,
+          "description": "Резкая смена нормалей без соответствующего сгиба на скане",
+          "source": "model"
+        },
+        {
+          "type": "смятая поверхность",
+          "center": [
+            -9.501448562525177,
+            23.63513884381101,
+            0.00232625864218855
+          ],
+          "area_mm2": 13.838000111127185,
+          "max_deviation_mm": 0.11714858193771938,
+          "description": "Резкая смена нормалей без соответствующего сгиба на скане",
+          "source": "model"
+        },
+        {
+          "type": "смятая поверхность",
+          "center": [
+            21.836642385313063,
+            18.67581191330595,
+            0.009161767938604563
+          ],
+          "area_mm2": 2.8859048143382084,
+          "max_deviation_mm": 0.1493671289916165,
+          "description": "Резкая смена нормалей без соответствующего сгиба на скане",
+          "source": "model"
+        }
+      ],
+      "fold_area_mm2": 49.10986951017602
+    }
+  },
+  {
+    "radius": 30,
+    "turn_deg": 30,
+    "noise_mm": 0.1,
+    "before": {
+      "planar_faces": 16,
+      "triangle_faces": 190,
+      "faces": 212,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 6,
+      "smooth_triangles": 334,
+      "smooth_rejected": 2,
+      "smooth_rejected_triangles": {
+        "invalid_face": 62,
+        "boundary_surface_tolerance": 127
+      },
+      "smooth_area_share": 0.04448830856836447,
+      "planar_area_share": 0.9072845686564626,
+      "fold_area_mm2": 0,
+      "coverage": [
+        0.9997,
+        1.0
+      ]
+    },
+    "after": {
+      "planar_faces": 16,
+      "triangle_faces": 190,
+      "faces": 212,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 6,
+      "smooth_triangles": 334,
+      "smooth_rejected": 2,
+      "smooth_rejected_triangles": {
+        "invalid_face": 62,
+        "boundary_surface_tolerance": 127
+      },
+      "smooth_area_share": 0.04448830856836447,
+      "planar_area_share": 0.9072845686564626,
+      "coverage": [
+        0.9997,
+        1.0
+      ],
+      "repair_passes": [],
+      "baseline_coverage": [
+        0.9997,
+        1.0
+      ],
+      "defects": [],
+      "fold_area_mm2": 0
+    }
+  },
+  {
+    "radius": 30,
+    "turn_deg": 30,
+    "noise_mm": 0.2,
+    "before": {
+      "planar_faces": 38,
+      "triangle_faces": 398,
+      "faces": 459,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 23,
+      "smooth_triangles": 534,
+      "smooth_rejected": 9,
+      "smooth_rejected_triangles": {
+        "area_changed": 76,
+        "surface_away": 120,
+        "boundary_surface_tolerance": 127,
+        "invalid_face": 65
+      },
+      "smooth_area_share": 0.1105191661685238,
+      "planar_area_share": 0.8145658474375236,
+      "fold_area_mm2": 21.691974405457366,
+      "coverage": [
+        0.978,
+        0.9833
+      ]
+    },
+    "after": {
+      "planar_faces": 38,
+      "triangle_faces": 559,
+      "faces": 619,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 22,
+      "smooth_triangles": 417,
+      "smooth_rejected": 10,
+      "smooth_rejected_triangles": {
+        "area_changed": 74,
+        "surface_away": 120,
+        "boundary_surface_tolerance": 204,
+        "invalid_face": 145
+      },
+      "smooth_area_share": 0.08182222839593231,
+      "planar_area_share": 0.8042154599564757,
+      "coverage": [
+        0.9783,
+        0.982
+      ],
+      "repair_passes": [
+        {
+          "no_movable_vertices": 1,
+          "repaired_zones": 3,
+          "moved_vertices": 10,
+          "accepted": true,
+          "fold_area_mm2": [
+            21.691974405457366,
+            12.565464947894842
+          ],
+          "coverage": [
+            0.9783,
+            0.982
+          ],
+          "coverage_ok": true
+        },
+        {
+          "no_movable_vertices": 1,
+          "repaired_zones": 1,
+          "moved_vertices": 2,
+          "accepted": true,
+          "fold_area_mm2": [
+            12.565464947894842,
+            12.430180639293036
+          ],
+          "coverage": [
+            0.9783,
+            0.982
+          ],
+          "coverage_ok": true
+        }
+      ],
+      "baseline_coverage": [
+        0.978,
+        0.9833
+      ],
+      "defects": [
+        {
+          "type": "смятая поверхность",
+          "center": [
+            10.145168043373594,
+            21.970871803135186,
+            13.989066630280062
+          ],
+          "area_mm2": 9.537095571244736,
+          "max_deviation_mm": 0.20197969871780502,
+          "description": "Резкая смена нормалей без соответствующего сгиба на скане",
+          "source": "model"
+        },
+        {
+          "type": "смятая поверхность",
+          "center": [
+            -14.79318981044684,
+            26.829465092596738,
+            13.182369159899553
+          ],
+          "area_mm2": 2.893085068048301,
+          "max_deviation_mm": 0.09445661095174986,
+          "description": "Резкая смена нормалей без соответствующего сгиба на скане",
+          "source": "model"
+        }
+      ],
+      "fold_area_mm2": 12.430180639293036
+    }
+  },
+  {
+    "case": "isolated_fold",
+    "fold_area_mm2": [
+      58.79759739902727,
+      0
+    ],
+    "audit": {
+      "repaired_zones": 1,
+      "moved_vertices": 121
+    }
+  }
+]

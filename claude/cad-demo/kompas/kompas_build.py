@@ -517,7 +517,18 @@ def void_chains(voids, dz, n, zb, jump=0.5):
                     if sol.Volume() <= 0: raise RuntimeError("negative")
             else:
                 sol = prism(rings_c[len(it) // 2], z0 - 0.02, z1 + 0.02)
-            cut.append(sol if isinstance(sol, cq.Shape) else cq.Workplane().add(sol).val())
+            sol = sol if isinstance(sol, cq.Shape) else cq.Workplane().add(sol).val()
+            vdeg = int(os.environ.get("VOID_DEG", "0"))
+            if vdeg and len(it) >= 3:
+                # квадратичный лофт кармана: на его кромках строятся скругления; если вырез им не
+                # удастся, при вычитании берётся прежний лофт (_fallback)
+                try:
+                    s2 = loft(lv, deg=vdeg); b2 = s2.BoundingBox()
+                    if s2.isValid() and s2.Volume() > 0 and b2.zmin >= z0 - 0.3 and b2.zmax <= lv[-1][1] + 0.3:
+                        s2._fallback = sol; sol = s2
+                except Exception:  # noqa: BLE001
+                    pass
+            cut.append(sol)
             print("void chain", round(z0, 2), round(z1, 2), len(it), flush=True)
         except Exception as e:
             print("void chain fail", round(z0, 2), str(e)[:50], flush=True)
@@ -901,10 +912,20 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False):
     skipped = 0
     trace = os.environ.get("CAD_KOMPAS_TRACE", "0") == "1"
     void_checks = []
+    def _cut_try(body, v):
+        try:
+            nb = body.cut(v)
+            if nb.isValid() and nb.Volume() > 0.5 * body.Volume():
+                return nb
+        except Exception:  # noqa: BLE001
+            pass
+        fb = getattr(v, "_fallback", None)
+        return body.cut(fb) if fb is not None else body.cut(v)
+
     for v in sorted(cut, key=lambda c: -c.Volume()):
         try:
             before = body.Volume() if trace else None
-            nb = body.cut(v)
+            nb = _cut_try(body, v)
             if nb.isValid() and nb.Volume() > 0.5 * body.Volume():
                 body = nb
                 reason = "accepted"

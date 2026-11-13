@@ -4,7 +4,10 @@ from scipy.interpolate import make_smoothing_spline
 from shapely.geometry import Polygon
 
 
-def fit_profiles(contours, z, *, count=96, modes=28, axial_penalty=.008):
+def fit_profiles(contours, z, *, count=None, modes=None, axial_penalty=.008):
+    import os
+    count = count or int(os.environ.get("WALL_PROFILE_COUNT", "96"))  # точек на кольцо; меньше — проще поверхность стенки
+    modes = modes or int(os.environ.get("WALL_PROFILE_MODES", "28"))  # гармоник по кругу; меньше — глаже
     z = np.asarray(z,dtype=float)
     if len(z)<5 or len(z)!=len(contours) or np.any(np.diff(z)<=0):
         return None

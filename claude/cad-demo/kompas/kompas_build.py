@@ -858,7 +858,7 @@ if __name__ == "__main__":
     cq.exporters.export(body, sys.argv[2] + ".stl", tolerance=0.01, angularTolerance=0.1)
 
 
-def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=float(os.environ.get("CORR_MIN", "0.6")), shrink=0.12,
+def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=float(os.environ.get("CORR_MIN", "0.2")), shrink=0.12,
                       skin=float(os.environ.get("CORR_SKIN", "0.6"))):
     """поправка по сечениям: где в модели есть материал, а в скане нет (пазы, канавки), — вырез;
     при extra=True наоборот — где в скане есть, а в модели нет — добавка. Слои по перекрытию, выдавливание."""
@@ -1087,6 +1087,21 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None):
             except Exception:  # noqa: BLE001
                 pass
         info["correction_cuts"] = nc
+        if os.environ.get("CORR_ADD", "1") == "1":
+            # обратная поправка: где в скане материал есть, а в модели нет (язычок защёлки, тонкая
+            # перегородка) — выдавливание по сечениям скана
+            write_stl_checked(body.wrapped, tf, 0.03, True, 0.15, tol=0.1)
+            mm = trimesh.load(tf, force="mesh")
+            na = 0
+            for v in sorted(correction_prisms(scan, mm, extra=True), key=lambda c: -c.Volume()):
+                try:
+                    nb = body.fuse(v)
+                    if nb.isValid() and len(nb.Solids()) == 1 and nb.Volume() < 1.05 * body.Volume():
+                        body = nb; na += 1
+                except Exception:  # noqa: BLE001
+                    pass
+            info["correction_adds"] = na
+            body = body.clean()
         body = body.clean()
         try:
             os.remove(tf)

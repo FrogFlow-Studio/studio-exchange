@@ -1,0 +1,239 @@
+[
+  {
+    "task": 52,
+    "sigma": 0.0,
+    "hits": {
+      "corner_cut": true,
+      "bump": true,
+      "rim_shift": true
+    },
+    "false": 0,
+    "counts": {
+      "corner_cut": 2,
+      "bump": 2,
+      "rim_shift": 2
+    },
+    "seconds": 1.6234843999991426
+  },
+  {
+    "task": 50,
+    "sigma": 0.0,
+    "max_rim_mm": 0.029151098367448114,
+    "max_brep_rim_mm": 0.012890014312755937,
+    "coverage": [
+      1.0,
+      1.0
+    ],
+    "faces": 54,
+    "valid": true,
+    "mesh_volume_ratio": 0.9990265682355478,
+    "seconds": 0.33546070000738837
+  },
+  {
+    "task": 49,
+    "sigma": 0.0,
+    "radius_mm": 0.5037069812550045,
+    "rounded": true,
+    "baseline_coverage": [
+      1.0,
+      1.0
+    ],
+    "coverage": [
+      1.0,
+      1.0
+    ],
+    "faces": 54,
+    "valid": true,
+    "mesh_volume_ratio": 0.9989614311692603,
+    "seconds": 0.15826120000565425
+  },
+  {
+    "task": 51,
+    "sigma": 0.0,
+    "p99_before": 30.713014152866826,
+    "p99_after": 0.00015031427084897793,
+    "max_before": 46.304598302882084,
+    "max_after": 0.00870320169818172,
+    "seconds": 0.1438019999914104,
+    "asymmetric": {
+      "before": {
+        "coverage": [
+          1.0,
+          1.0
+        ],
+        "faces": 3,
+        "valid": true,
+        "mesh_volume_ratio": 0.9772980669279739,
+        "seconds": 0.0
+      },
+      "after": {
+        "coverage": [
+          1.0,
+          1.0
+        ],
+        "faces": 3,
+        "valid": true,
+        "mesh_volume_ratio": 1.0200748229462318,
+        "seconds": 0.0
+      }
+    }
+  },
+  {
+    "task": 52,
+    "sigma": 0.05,
+    "hits": {
+      "corner_cut": true,
+      "bump": true,
+      "rim_shift": true
+    },
+    "false": 0,
+    "counts": {
+      "corner_cut": 2,
+      "bump": 2,
+      "rim_shift": 2
+    },
+    "seconds": 3.7696376999956556
+  },
+  {
+    "task": 50,
+    "sigma": 0.05,
+    "max_rim_mm": 0.02978223192745766,
+    "max_brep_rim_mm": 0.013061203750233119,
+    "coverage": [
+      1.0,
+      1.0
+    ],
+    "faces": 54,
+    "valid": true,
+    "mesh_volume_ratio": 0.999075827583384,
+    "seconds": 0.2203927999944426
+  },
+  {
+    "task": 49,
+    "sigma": 0.05,
+    "radius_mm": 0.5166756689318677,
+    "rounded": true,
+    "baseline_coverage": [
+      1.0,
+      1.0
+    ],
+    "coverage": [
+      1.0,
+      1.0
+    ],
+    "faces": 54,
+    "valid": true,
+    "mesh_volume_ratio": 0.9989592413852939,
+    "seconds": 0.15201109999907203
+  },
+  {
+    "task": 51,
+    "sigma": 0.05,
+    "p99_before": 15.661982509589965,
+    "p99_after": 0.16422173322530048,
+    "max_before": 17.84785268008341,
+    "max_after": 0.8468477311861922,
+    "seconds": 0.14234869999927469,
+    "asymmetric": {
+      "before": {
+        "coverage": [
+          1.0,
+          1.0
+        ],
+        "faces": 3,
+        "valid": true,
+        "mesh_volume_ratio": 1.003971136764052,
+        "seconds": 0.0
+      },
+      "after": {
+        "coverage": [
+          1.0,
+          1.0
+        ],
+        "faces": 3,
+        "valid": true,
+        "mesh_volume_ratio": 1.020616243951404,
+        "seconds": 0.0
+      }
+    }
+  },
+  {
+    "task": 52,
+    "sigma": 0.1,
+    "hits": {
+      "corner_cut": true,
+      "bump": true,
+      "rim_shift": true
+    },
+    "false": 0,
+    "counts": {
+      "corner_cut": 2,
+      "bump": 2,
+      "rim_shift": 2
+    },
+    "seconds": 1.5275620000029448
+  },
+  {
+    "task": 50,
+    "sigma": 0.1,
+    "max_rim_mm": 0.025724710026775455,
+    "max_brep_rim_mm": 0.0191917775922974,
+    "coverage": [
+      1.0,
+      1.0
+    ],
+    "faces": 54,
+    "valid": true,
+    "mesh_volume_ratio": 0.9990352765929444,
+    "seconds": 0.2495245000027353
+  },
+  {
+    "task": 49,
+    "sigma": 0.1,
+    "radius_mm": 0.4512031772009905,
+    "rounded": true,
+    "baseline_coverage": [
+      1.0,
+      1.0
+    ],
+    "coverage": [
+      1.0,
+      1.0
+    ],
+    "faces": 54,
+    "valid": true,
+    "mesh_volume_ratio": 0.9989697871160026,
+    "seconds": 0.13928560000204016
+  },
+  {
+    "task": 51,
+    "sigma": 0.1,
+    "p99_before": 16.495862881612155,
+    "p99_after": 0.38082086074287286,
+    "max_before": 19.618861276944013,
+    "max_after": 4.187726033663837,
+    "seconds": 0.1364581000088947,
+    "asymmetric": {
+      "before": {
+        "coverage": [
+          0.9997,
+          0.9999
+        ],
+        "faces": 3,
+        "valid": true,
+        "mesh_volume_ratio": 1.0244977519458325,
+        "seconds": 0.0
+      },
+      "after": {
+        "coverage": [
+          1.0,
+          1.0
+        ],
+        "faces": 3,
+        "valid": true,
+        "mesh_volume_ratio": 1.0208979033860917,
+        "seconds": 0.0
+      }
+    }
+  }
+]

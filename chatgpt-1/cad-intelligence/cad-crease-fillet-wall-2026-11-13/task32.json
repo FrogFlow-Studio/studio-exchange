@@ -1,0 +1,248 @@
+[
+  {
+    "radius_mm": 40.0,
+    "noise_mm": 0.05,
+    "false_polygon_groups": 0,
+    "false_noisy_polygon_groups": 0,
+    "curved_faces_unlabelled": 400,
+    "curved_triangles": 400,
+    "true_planes_unlabelled": 0,
+    "groups": [
+      40.00611518777788
+    ],
+    "before": {
+      "planar_faces": 10,
+      "triangle_faces": 0,
+      "faces": 14,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 4,
+      "smooth_triangles": 64,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.03416151158741098,
+      "planar_area_share": 0.9658384884125889,
+      "score": 95.36
+    },
+    "after": {
+      "valid": true,
+      "free_edges": 0,
+      "faces": 6,
+      "triangle_faces": 0,
+      "planar_faces": 5,
+      "exact_fillets": 0,
+      "exact_curved_walls": 1,
+      "fillet_vertex_max_mm": {
+        "5": 0.12086715818873946
+      },
+      "fillets_rejected": {},
+      "score": 100.0
+    }
+  },
+  {
+    "radius_mm": 40.0,
+    "noise_mm": 0.2,
+    "false_polygon_groups": 0,
+    "false_noisy_polygon_groups": 0,
+    "curved_faces_unlabelled": 400,
+    "curved_triangles": 400,
+    "true_planes_unlabelled": 0,
+    "groups": [
+      40.007538187506086
+    ],
+    "before": {
+      "planar_faces": 10,
+      "triangle_faces": 0,
+      "faces": 14,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 4,
+      "smooth_triangles": 64,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.034280643290184515,
+      "planar_area_share": 0.9657193567098156,
+      "score": 95.55
+    },
+    "after": {
+      "valid": true,
+      "free_edges": 0,
+      "faces": 6,
+      "triangle_faces": 0,
+      "planar_faces": 5,
+      "exact_fillets": 0,
+      "exact_curved_walls": 1,
+      "fillet_vertex_max_mm": {
+        "5": 0.48318090461896407
+      },
+      "fillets_rejected": {},
+      "score": 100.0
+    }
+  },
+  {
+    "radius_mm": 100.0,
+    "noise_mm": 0.05,
+    "false_polygon_groups": 0,
+    "false_noisy_polygon_groups": 0,
+    "curved_faces_unlabelled": 400,
+    "curved_triangles": 400,
+    "true_planes_unlabelled": 0,
+    "groups": [
+      100.03763120052145
+    ],
+    "before": {
+      "planar_faces": 10,
+      "triangle_faces": 0,
+      "faces": 14,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 4,
+      "smooth_triangles": 64,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.03688957959104716,
+      "planar_area_share": 0.9631104204089528,
+      "score": 95.84
+    },
+    "after": {
+      "valid": true,
+      "free_edges": 0,
+      "faces": 6,
+      "triangle_faces": 0,
+      "planar_faces": 5,
+      "exact_fillets": 0,
+      "exact_curved_walls": 1,
+      "fillet_vertex_max_mm": {
+        "5": 0.12591275165214297
+      },
+      "fillets_rejected": {},
+      "score": 100.0
+    }
+  },
+  {
+    "radius_mm": 100.0,
+    "noise_mm": 0.2,
+    "false_polygon_groups": 0,
+    "false_noisy_polygon_groups": 1,
+    "curved_faces_unlabelled": 400,
+    "curved_triangles": 400,
+    "true_planes_unlabelled": 0,
+    "groups": [
+      100.07713721932171
+    ],
+    "before": {
+      "planar_faces": 10,
+      "triangle_faces": 0,
+      "faces": 14,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 4,
+      "smooth_triangles": 64,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.03694339617190923,
+      "planar_area_share": 0.9630566038280908,
+      "score": 96.1
+    },
+    "after": {
+      "valid": true,
+      "free_edges": 0,
+      "faces": 6,
+      "triangle_faces": 0,
+      "planar_faces": 5,
+      "exact_fillets": 0,
+      "exact_curved_walls": 1,
+      "fillet_vertex_max_mm": {
+        "5": 0.5029745670979116
+      },
+      "fillets_rejected": {},
+      "score": 100.0
+    }
+  },
+  {
+    "radius_mm": 200.0,
+    "noise_mm": 0.05,
+    "false_polygon_groups": 0,
+    "false_noisy_polygon_groups": 0,
+    "curved_faces_unlabelled": 400,
+    "curved_triangles": 400,
+    "true_planes_unlabelled": 0,
+    "groups": [
+      200.15496115667557
+    ],
+    "before": {
+      "planar_faces": 8,
+      "triangle_faces": 0,
+      "faces": 10,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 2,
+      "smooth_triangles": 32,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.019146806178826487,
+      "planar_area_share": 0.9808531938211735,
+      "score": 95.99
+    },
+    "after": {
+      "valid": true,
+      "free_edges": 0,
+      "faces": 6,
+      "triangle_faces": 0,
+      "planar_faces": 5,
+      "exact_fillets": 0,
+      "exact_curved_walls": 1,
+      "fillet_vertex_max_mm": {
+        "5": 0.12702534728655343
+      },
+      "fillets_rejected": {},
+      "score": 100.0
+    }
+  },
+  {
+    "radius_mm": 200.0,
+    "noise_mm": 0.2,
+    "false_polygon_groups": 0,
+    "false_noisy_polygon_groups": 1,
+    "curved_faces_unlabelled": 400,
+    "curved_triangles": 400,
+    "true_planes_unlabelled": 0,
+    "groups": [
+      200.4275131992518
+    ],
+    "before": {
+      "planar_faces": 9,
+      "triangle_faces": 0,
+      "faces": 12,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 3,
+      "smooth_triangles": 48,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.02865824295880681,
+      "planar_area_share": 0.9713417570411932,
+      "score": 97.01
+    },
+    "after": {
+      "valid": true,
+      "free_edges": 0,
+      "faces": 6,
+      "triangle_faces": 0,
+      "planar_faces": 5,
+      "exact_fillets": 0,
+      "exact_curved_walls": 1,
+      "fillet_vertex_max_mm": {
+        "5": 0.5077088615894922
+      },
+      "fillets_rejected": {},
+      "score": 100.0
+    }
+  }
+]

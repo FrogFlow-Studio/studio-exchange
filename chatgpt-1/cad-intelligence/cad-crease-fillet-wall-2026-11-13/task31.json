@@ -1,0 +1,242 @@
+[
+  {
+    "case": "block",
+    "noise_mm": 0.0,
+    "expected_fillets": 4,
+    "before": {
+      "planar_faces": 6,
+      "triangle_faces": 304,
+      "faces": 310,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.9196828777611121,
+      "score": 86.67,
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "sharp_edges": 8,
+      "sharp_probe_count": 40,
+      "sharp_probe_within_0p3": 40,
+      "sharp_p95_mm": 0.0
+    },
+    "after": {
+      "valid": true,
+      "free_edges": 0,
+      "faces": 10,
+      "triangle_faces": 0,
+      "planar_faces": 6,
+      "exact_fillets": 4,
+      "exact_curved_walls": 0,
+      "fillet_vertex_max_mm": {
+        "2": 1.7763568394002505e-15,
+        "3": 1.7763568394002505e-15,
+        "7": 1.7763568394002505e-15,
+        "8": 1.7763568394002505e-15
+      },
+      "fillets_rejected": {},
+      "step_reopened_valid": true,
+      "step_cylinders": 4,
+      "score": 100.0,
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "sharp_edges": 8,
+      "sharp_probe_count": 40,
+      "sharp_probe_within_0p3": 40,
+      "sharp_p95_mm": 0.0
+    },
+    "unlabelled_cap_control": {
+      "planar_faces": 4,
+      "triangle_faces": 2030,
+      "faces": 2034,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.37714368366971146,
+      "exact_fillets": 0,
+      "exact_curved_walls": 0,
+      "fillets_rejected": {
+        "2": "fillet needs four distinct planar rails and ends",
+        "3": "fillet needs four distinct planar rails and ends",
+        "7": "fillet needs four distinct planar rails and ends",
+        "8": "fillet needs four distinct planar rails and ends"
+      }
+    }
+  },
+  {
+    "case": "block",
+    "noise_mm": 0.1,
+    "expected_fillets": 4,
+    "before": {
+      "planar_faces": 6,
+      "triangle_faces": 304,
+      "faces": 310,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.9192462817022707,
+      "score": 83.09,
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "sharp_edges": 8,
+      "sharp_probe_count": 40,
+      "sharp_probe_within_0p3": 40,
+      "sharp_p95_mm": 0.011367286722136652
+    },
+    "after": {
+      "valid": true,
+      "free_edges": 0,
+      "faces": 10,
+      "triangle_faces": 0,
+      "planar_faces": 6,
+      "exact_fillets": 4,
+      "exact_curved_walls": 0,
+      "fillet_vertex_max_mm": {
+        "2": 0.21360951148321758,
+        "3": 0.2342329290050759,
+        "7": 0.2059298016430468,
+        "8": 0.22706392852263685
+      },
+      "fillets_rejected": {},
+      "step_reopened_valid": true,
+      "step_cylinders": 4,
+      "score": 100.0,
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "sharp_edges": 8,
+      "sharp_probe_count": 40,
+      "sharp_probe_within_0p3": 40,
+      "sharp_p95_mm": 0.011367286722136652
+    }
+  },
+  {
+    "case": "oblique",
+    "noise_mm": 0.0,
+    "expected_fillets": 3,
+    "before": {
+      "planar_faces": 6,
+      "triangle_faces": 234,
+      "faces": 240,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.9364681550343169,
+      "score": 84.15,
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "sharp_edges": 9,
+      "sharp_probe_count": 45,
+      "sharp_probe_within_0p3": 45,
+      "sharp_p95_mm": 2.8238038036517607e-13
+    },
+    "after": {
+      "valid": true,
+      "free_edges": 0,
+      "faces": 9,
+      "triangle_faces": 0,
+      "planar_faces": 6,
+      "exact_fillets": 3,
+      "exact_curved_walls": 0,
+      "fillet_vertex_max_mm": {
+        "2": 1.3376842318467316e-10,
+        "4": 1.329689954502373e-09,
+        "8": 1.4935061090914365e-10
+      },
+      "fillets_rejected": {},
+      "step_reopened_valid": true,
+      "step_cylinders": 3,
+      "score": 98.97,
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "sharp_edges": 9,
+      "sharp_probe_count": 45,
+      "sharp_probe_within_0p3": 45,
+      "sharp_p95_mm": 2.8126580201987774e-13
+    }
+  },
+  {
+    "case": "oblique",
+    "noise_mm": 0.1,
+    "expected_fillets": 3,
+    "before": {
+      "planar_faces": 6,
+      "triangle_faces": 234,
+      "faces": 240,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.9360234918031044,
+      "score": 84.67,
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "sharp_edges": 9,
+      "sharp_probe_count": 45,
+      "sharp_probe_within_0p3": 45,
+      "sharp_p95_mm": 0.014288799598940593
+    },
+    "after": {
+      "valid": true,
+      "free_edges": 0,
+      "faces": 9,
+      "triangle_faces": 0,
+      "planar_faces": 6,
+      "exact_fillets": 3,
+      "exact_curved_walls": 0,
+      "fillet_vertex_max_mm": {
+        "2": 0.22704731205595355,
+        "4": 0.14742619303420326,
+        "8": 0.25126853346843775
+      },
+      "fillets_rejected": {},
+      "step_reopened_valid": true,
+      "step_cylinders": 3,
+      "score": 98.95,
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "sharp_edges": 9,
+      "sharp_probe_count": 45,
+      "sharp_probe_within_0p3": 45,
+      "sharp_p95_mm": 0.014288799598940591
+    }
+  }
+]

@@ -1,0 +1,293 @@
+[
+  {
+    "case": "angle",
+    "seed": 27,
+    "noise_mm": 0.05,
+    "params": {
+      "width": 38.37,
+      "depth": 27.14,
+      "fillet": 1.5,
+      "web_height": 16.0,
+      "hole_diameter": 4.0
+    },
+    "classification": {
+      "proposed": 1,
+      "fillet": 1
+    },
+    "free_area_mm2": [
+      116.43474384528238,
+      83.9258262679355
+    ],
+    "before": {
+      "planar_faces": 9,
+      "triangle_faces": 424,
+      "faces": 433,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.9283370981428242,
+      "score": 89.19,
+      "coverage": [
+        0.9995,
+        0.998
+      ],
+      "sharp_edges": 12,
+      "sharp_probe_count": 60,
+      "sharp_probe_within_0p3": 58,
+      "sharp_p95_mm": 0.12822705239617194
+    },
+    "after": {
+      "planar_faces": 9,
+      "triangle_faces": 424,
+      "faces": 433,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.9283370981428242,
+      "score": 89.19,
+      "coverage": [
+        0.9995,
+        0.998
+      ],
+      "sharp_edges": 12,
+      "sharp_probe_count": 60,
+      "sharp_probe_within_0p3": 58,
+      "sharp_p95_mm": 0.12822705239617194
+    }
+  },
+  {
+    "case": "angle",
+    "seed": 27,
+    "noise_mm": 0.2,
+    "params": {
+      "width": 38.37,
+      "depth": 27.14,
+      "fillet": 1.5,
+      "web_height": 16.0,
+      "hole_diameter": 4.0
+    },
+    "classification": {
+      "proposed": 0
+    },
+    "free_area_mm2": [
+      229.46889659811248,
+      229.46889659811248
+    ],
+    "before": {
+      "planar_faces": 6,
+      "triangle_faces": 807,
+      "faces": 813,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.8721355484964713,
+      "score": 86.48,
+      "coverage": [
+        0.994,
+        0.9865
+      ],
+      "sharp_edges": 12,
+      "sharp_probe_count": 60,
+      "sharp_probe_within_0p3": 54,
+      "sharp_p95_mm": 12.490618131449002
+    },
+    "after": {
+      "planar_faces": 6,
+      "triangle_faces": 807,
+      "faces": 813,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.8721355484964713,
+      "score": 86.48,
+      "coverage": [
+        0.994,
+        0.9865
+      ],
+      "sharp_edges": 12,
+      "sharp_probe_count": 60,
+      "sharp_probe_within_0p3": 54,
+      "sharp_p95_mm": 12.490618131449002
+    }
+  },
+  {
+    "case": "ribbed",
+    "seed": 27,
+    "noise_mm": 0.05,
+    "params": {
+      "width": 38.37,
+      "depth": 27.14,
+      "thickness": [
+        1.05,
+        1.48,
+        2.76
+      ],
+      "height": 7.16
+    },
+    "classification": {
+      "proposed": 0
+    },
+    "free_area_mm2": [
+      7.632052427879999,
+      7.632052427879999
+    ],
+    "before": {
+      "planar_faces": 20,
+      "triangle_faces": 16,
+      "faces": 36,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.9978898243899118,
+      "score": 99.21,
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "sharp_edges": 48,
+      "sharp_probe_count": 240,
+      "sharp_probe_within_0p3": 240,
+      "sharp_p95_mm": 0.042430813371623397
+    },
+    "after": {
+      "planar_faces": 20,
+      "triangle_faces": 16,
+      "faces": 36,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.9978898243899118,
+      "score": 99.21,
+      "coverage": [
+        1.0,
+        1.0
+      ],
+      "sharp_edges": 48,
+      "sharp_probe_count": 240,
+      "sharp_probe_within_0p3": 240,
+      "sharp_p95_mm": 0.042430813371623397
+    }
+  },
+  {
+    "case": "ribbed",
+    "seed": 27,
+    "noise_mm": 0.2,
+    "params": {
+      "width": 38.37,
+      "depth": 27.14,
+      "thickness": [
+        1.05,
+        1.48,
+        2.76
+      ],
+      "height": 7.16
+    },
+    "classification": {
+      "proposed": 0
+    },
+    "free_area_mm2": [
+      444.44492513128864,
+      444.44492513128864
+    ],
+    "before": {
+      "planar_faces": 15,
+      "triangle_faces": 635,
+      "faces": 650,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.8772316376070691,
+      "score": 83.03,
+      "coverage": [
+        0.9975,
+        0.9955
+      ],
+      "sharp_edges": 48,
+      "sharp_probe_count": 240,
+      "sharp_probe_within_0p3": 187,
+      "sharp_p95_mm": 7.152814784421161
+    },
+    "after": {
+      "planar_faces": 15,
+      "triangle_faces": 635,
+      "faces": 650,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 0.8772316376070691,
+      "score": 83.03,
+      "coverage": [
+        0.9975,
+        0.9955
+      ],
+      "sharp_edges": 48,
+      "sharp_probe_count": 240,
+      "sharp_probe_within_0p3": 187,
+      "sharp_p95_mm": 7.152814784421161
+    }
+  },
+  {
+    "case": "sharp_control",
+    "noise_mm": 0,
+    "classification": {
+      "proposed": 1,
+      "sharp": 1
+    },
+    "remaining_free": 0,
+    "watertight": true,
+    "after": {
+      "planar_faces": 6,
+      "triangle_faces": 0,
+      "faces": 6,
+      "valid": true,
+      "free_edges": 0,
+      "rejected_faces": 0,
+      "smooth_faces": 0,
+      "smooth_triangles": 0,
+      "smooth_rejected": 0,
+      "smooth_rejected_triangles": {},
+      "smooth_area_share": 0.0,
+      "planar_area_share": 1.0
+    }
+  }
+]

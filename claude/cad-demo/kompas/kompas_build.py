@@ -580,7 +580,12 @@ def void_chains(voids, dz, n, zb, jump=0.5):
             if cur[-1][1].hausdorff_distance(g) > float(os.environ.get("VOID_JUMP", "2.0")):
                 segs.append((cur, cur[-1][0] + dz / 2)); cur = []
             cur.append((z, g))
-        segs.append((cur, top_of(k) + dz / 2))
+        if os.environ.get("VOID_MERGE_TOP", "1") == "1":
+            segs.append((cur, top_of(k) + dz / 2))
+        else:
+            # отделение, слившееся выше с большим, продолжается только на слой внахлёст: выше его стенки
+            # ведёт общая цепочка, а прямая призма до верха давала рядом с её стенками тонкие полоски
+            segs.append((cur, cur[-1][0] + dz / 2 + (dz if c["into"] is not None else 0)))
     if os.environ.get("VOID_TIP", "1") == "1" and RAW_VOIDS:
         segs = [(_extend_down(it, dz), z1) for it, z1 in segs]
     cut = []
@@ -928,7 +933,7 @@ def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RI
         if s is None: return Polygon()
         P, _ = s.to_2D(to_2D=np.eye(4))
         return shapely.union_all([p.buffer(0) for p in P.polygons_full])
-    out = []
+    out = []; found = []
     for z in np.arange(z0 + dz, z1 - dz / 2, dz):
         a, b = sec(model_mesh, z), sec(scan, z)
         if a.is_empty or b.is_empty: continue
@@ -950,10 +955,39 @@ def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RI
             elif max(ref.distance(Point(c)) for c in g.exterior.coords) < 0.3: continue  # и так в допуске
             L = g.length / 2
             if L < 0.5: continue                                 # короче 0,5 мм — не ребро
+            found.append((float(z), g.buffer(0.02, join_style=2)))
+    if os.environ.get("THIN_RIB_LOFT", "1") == "1" and not cut:
+        # одно ребро на язычок: сечения соседних слоёв, которые перекрываются, — одна цепочка и один
+        # лофт по ним (как операция «по сечениям» в Компасе), а не стопка брусков высотой в слой
+        groups = []
+        for z, g in found:
+            for G in groups:
+                if abs(G[-1][0] - (z - dz)) < 1e-6 and G[-1][1].buffer(0.1).intersects(g):
+                    G.append((z, g)); break
+            else:
+                groups.append([(z, g)])
+        for G in groups:
             try:
-                out.append(prism_poly(g.buffer(0.02, join_style=2), z - dz / 2 - 0.01, z + dz / 2 + 0.01, tol=0.02))
+                if len(G) < 2:
+                    raise ValueError("one level")
+                rings = [(ring_pts(q.exterior.coords, 24, 0.01), z) for z, q in G]
+                lv = [(rings[0][0], G[0][0] - dz / 2 - 0.01)] + rings + [(rings[-1][0], G[-1][0] + dz / 2 + 0.01)]
+                sol = loft(lv, ruled=True)
+                if not sol.isValid() or sol.Volume() <= 0:
+                    raise ValueError("bad loft")
+                out.append(sol)
             except Exception:  # noqa: BLE001
-                pass
+                for z, q in G:
+                    try:
+                        out.append(prism_poly(q, z - dz / 2 - 0.01, z + dz / 2 + 0.01, tol=0.02))
+                    except Exception:  # noqa: BLE001
+                        pass
+        return out
+    for z, q in found:
+        try:
+            out.append(prism_poly(q, z - dz / 2 - 0.01, z + dz / 2 + 0.01, tol=0.02))
+        except Exception:  # noqa: BLE001
+            pass
     return out
 
 

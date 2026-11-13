@@ -72,6 +72,13 @@ def wire3d(pts2, z):
     curve = GeomAPI_PointsToBSpline(arr, 3, 8, GeomAbs_C2, 1e-3).Curve()
     return BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(curve).Edge()).Wire()
 
+def prism_poly(poly, za, zb, tol=0.08):
+    """выдавливание многоугольника с прямыми сторонами (паз, шпонка): углы остаются острыми, без сплайна"""
+    q = poly.simplify(tol, preserve_topology=True)
+    pts = [tuple(map(float, p)) for p in list(q.exterior.coords)[:-1]]
+    w = cq.Workplane("XY").workplane(offset=float(za)).polyline(pts).close()
+    return w.extrude(float(zb - za)).val()
+
 def prism(pts2, za, zb):
     w = cq.Workplane("XY").workplane(offset=float(za)).spline([tuple(map(float, p)) for p in pts2], periodic=True).close()
     return w.extrude(float(zb - za)).val()
@@ -484,7 +491,8 @@ def _boss_slots(sol, ref, ps, dz, n, min_area=0.4, shrink=0.12):
             if g.buffer(-0.3).is_empty:  # щель уже 0.6 мм — шум сечения, не паз
                 continue
             for r in runs:
-                if abs(r["z1"] - z) < dz * 1.5 and r["g"][-1].intersection(g).area > 0.4 * min(r["g"][-1].area, g.area):
+                a0 = r["g"][-1].area
+                if abs(r["z1"] - z) < dz * 1.5 and 0.75 < g.area / a0 < 1.33 and r["g"][-1].intersection(g).area > 0.4 * min(a0, g.area):
                     r["z1"] = z; r["g"].append(g); break
             else:
                 runs.append({"z0": z, "z1": z, "g": [g]})
@@ -496,38 +504,52 @@ def _boss_slots(sol, ref, ps, dz, n, min_area=0.4, shrink=0.12):
         for z in sorted(byz):
             T = shapely.union_all(byz[z]).buffer(0).intersection(H).buffer(-shrink).buffer(shrink)
             for g in getattr(T, "geoms", [T]):
-                if g.is_empty or g.geom_type != "Polygon" or g.area < min_area or g.buffer(-0.3).is_empty or g.area > 0.5 * H.area:
+                if g.is_empty or g.geom_type != "Polygon" or g.area < 0.25 or g.buffer(-0.15).is_empty or g.area > 0.5 * H.area:
                     continue
                 for r in tabs:
-                    if abs(r["z1"] - z) < dz * 1.5 and r["g"][-1].intersection(g).area > 0.4 * min(r["g"][-1].area, g.area):
-                        r["z1"] = z; r["g"].append(g); break
+                    a0 = r["g"][-1].area
+                    if abs(r["z1"] - z) < dz * 1.5 and r["g"][-1].intersection(g).area > 0.3 * min(a0, g.area):
+                        r["z1"] = z; r["g"].append(g); r["z"].append(z); break
                 else:
-                    tabs.append({"z0": z, "z1": z, "g": [g], "H": H})
+                    tabs.append({"z0": z, "z1": z, "g": [g], "z": [z], "H": H})
     k = 0
     for r in tabs:
-        if len(r["g"]) < 3: continue
-        g = shapely.intersection_all(r["g"])
-        if g.is_empty or g.area < min_area: g = r["g"][len(r["g"]) // 2]
-        if g.geom_type != "Polygon": g = max(g.geoms, key=lambda q: q.area)
-        # выступ врастает в стенку отверстия
-        g = g.buffer(0.2, join_style=2).intersection(r["H"].buffer(0.2)).buffer(0)
-        if g.geom_type != "Polygon": continue
+        if len(r["g"]) < 2: continue
+        # выступ врастает в стенку отверстия; меняется по высоте (скос защёлки) — лофт по уровням, а не ступеньки
+        gs = []
+        for g in r["g"]:
+            g = g.buffer(0.2, join_style=2).intersection(r["H"].buffer(0.2)).buffer(0)
+            if g.geom_type != "Polygon": g = max(getattr(g, "geoms", [g]), key=lambda q: q.area)
+            gs.append(g)
         try:
-            add = cq.Workplane().add(prism(ring_pts(g.exterior.coords, n, 0.02), r["z0"] - dz / 2, r["z1"] + dz / 2))
+            if os.environ.get("TAB_RAMP", "1") == "1":
+                # скос защёлки: на уровень ниже и выше выступ сходит на нет к стенке отверстия
+                from shapely.affinity import scale
+                from shapely.ops import nearest_points
+                lv = [(ring_pts(q.exterior.coords, n, 0.01), z) for q, z in zip(gs, r["z"])]
+                def tip(q):
+                    o = nearest_points(r["H"].exterior, q.centroid)[0]
+                    return ring_pts(scale(q, 0.2, 0.2, origin=o).exterior.coords, n, 0.01)
+                lv = [(tip(gs[0]), r["z0"] - dz)] + lv + [(tip(gs[-1]), r["z1"] + dz)]
+                add = cq.Workplane().add(loft(lv, ruled=True))
+            else:
+                g = shapely.intersection_all(gs)
+                if g.is_empty or g.geom_type != "Polygon": g = gs[len(gs) // 2]
+                add = cq.Workplane().add(prism_poly(g, r["z0"] - dz / 2, r["z1"] + dz / 2))
             nb = sol.union(add)
             if nb.val().isValid() and len(nb.val().Solids()) == 1:
                 sol = nb; k += 1
         except Exception:
             pass
     for r in runs:
-        if len(r["g"]) < 3: continue
+        if len(r["g"]) < 2: continue
         g = shapely.intersection_all(r["g"])
         if g.is_empty or g.area < min_area: g = r["g"][len(r["g"]) // 2]
         if g.geom_type != "Polygon": g = max(g.geoms, key=lambda q: q.area)
         # паз, выходящий на край бобышки, продлеваем наружу, чтобы не осталось плёнки
         g = g.buffer(0.15, join_style=2)
         try:
-            cutter = cq.Workplane().add(prism(ring_pts(g.exterior.coords, n, 0.02), r["z0"] - dz / 2, r["z1"] + dz / 2))
+            cutter = cq.Workplane().add(prism_poly(g, r["z0"] - dz / 2 - 0.1, r["z1"] + dz / 2 + 0.1))
             nb = sol.cut(cutter)
             if nb.val().isValid() and nb.val().Volume() > 0.7 * sol.val().Volume():
                 sol = nb; k += 1

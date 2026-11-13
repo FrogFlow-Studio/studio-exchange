@@ -114,7 +114,45 @@ def _array(values, cls):
     return result
 
 
-def fit_surface(points, chart, span=12., smoothing=.001, tol=.3):
+def _second_difference(greville):
+    out = np.zeros((len(greville)-2,len(greville)))
+    for i in range(len(out)):
+        a,b = np.diff(greville[i:i+3])
+        out[i,i:i+3] = np.array([1/a,-1/a-1/b,1/b])*(a+b)/2
+    return out
+
+
+def parametric_surface(uv, xyz, size, *, span=10., smoothing=.002, tol=.3):
+    """Fit all three coordinates on one regularized tensor-product surface."""
+    bu, ku, gu = _axis(size[0], span)
+    bv, kv, gv = _axis(size[1], span)
+    if len(gu)*len(gv) > 4096:
+        raise ValueError("chart exceeds the control-point budget")
+    basis = _basis(uv, ku, kv)
+    nu, nv = len(gu), len(gv)
+    du, dv = _second_difference(gu), _second_difference(gv)
+    regularizer = vstack([kron(du,eye(nv)),kron(eye(nu),dv)]).tocsr()
+    regularizer *= np.sqrt(smoothing*len(uv)/basis.shape[1])
+    weights = np.ones(len(uv))
+    for _ in range(3):
+        matrix = vstack([basis.multiply(weights[:,None]),regularizer]).tocsr()
+        targets = np.vstack([xyz*weights[:,None],np.zeros((regularizer.shape[0],3))])
+        solutions = [lsqr(matrix, targets[:,axis], atol=1e-9, btol=1e-9, iter_lim=1400) for axis in range(3)]
+        if any(result[1] not in (0,1,2,4,5) for result in solutions):
+            raise ValueError("least squares did not converge")
+        coeff = np.column_stack([result[0] for result in solutions])
+        residual = np.linalg.norm(basis@coeff-xyz, axis=1)
+        weights = np.sqrt(np.minimum(1.,tol/2/np.maximum(residual,1e-12)))
+    poles = TColgp_Array2OfPnt(1,nu,1,nv)
+    for i,j in np.ndindex(nu,nv):
+        poles.SetValue(i+1,j+1,gp_Pnt(*coeff[i*nv+j]))
+    surface = Geom_BSplineSurface(poles,_array(bu,TColStd_Array1OfReal),_array(bv,TColStd_Array1OfReal),
+                                 _array([4]+[1]*(len(bu)-2)+[4],TColStd_Array1OfInteger),
+                                 _array([4]+[1]*(len(bv)-2)+[4],TColStd_Array1OfInteger),3,3)
+    return surface
+
+
+def fit_surface(points, chart, span=12., smoothing=.001, tol=.3, *, sample_weights=None):
     """Area-balanced, robust least squares with a second-difference penalty."""
     if not 5 <= span <= 15 or not np.isfinite(smoothing) or smoothing <= 0 or not np.isfinite(tol) or tol <= 0:
         raise ValueError("invalid fit parameters")
@@ -141,20 +179,17 @@ def fit_surface(points, chart, span=12., smoothing=.001, tol=.3):
     cells=np.minimum((uv*[len(bu)-1,len(bv)-1]).astype(int),[len(bu)-2,len(bv)-2])
     cell_ids=cells[:,0]*(len(bv)-1)+cells[:,1]
     counts=np.bincount(cell_ids,minlength=(len(bu)-1)*(len(bv)-1))
-    if not counts.all():
+    if sample_weights is None and not counts.all():
         raise ValueError("unsupported quadrilateral cell")
-    base=np.sqrt(np.median(counts)/counts[cell_ids])
+    base=np.sqrt(np.median(counts[counts>0])/counts[cell_ids])
+    if sample_weights is not None:
+        sample_weights = np.asarray(sample_weights, dtype=float)
+        if sample_weights.shape != h.shape or not np.isfinite(sample_weights).all() or np.any(sample_weights <= 0):
+            raise ValueError("invalid sample weights")
+        base *= sample_weights
     A=_basis(uv,ku,kv)
     # Normalize the finite difference at repeated end knots using pole coordinates.
-    def regularizer(g):
-        out=[]
-        for i in range(len(g)-2):
-            row=np.zeros(len(g))
-            a,b=np.diff(g[i:i+3])
-            row[i:i+3]=[1/a,-1/a-1/b,1/b]
-            out.append(row*(a+b)/2)
-        return np.asarray(out)
-    du,dv=regularizer(gu),regularizer(gv)
+    du,dv=_second_difference(gu),_second_difference(gv)
     penalty=vstack([kron(du,eye(len(gv))),kron(eye(len(gu)),dv)]).tocsr()
     penalty*=np.sqrt(smoothing*len(points)/A.shape[1])
     weights=base

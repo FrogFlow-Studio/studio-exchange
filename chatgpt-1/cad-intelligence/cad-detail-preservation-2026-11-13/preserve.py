@@ -18,11 +18,27 @@ def relief(scan, segmentation, noise=0.):
         n = np.asarray(row["normal"])
         h = (points[ids] - row["origin"]) @ n
         h -= np.median(h)
-        # Seed with significant tilt and a coherent height departure.
-        tilt = np.abs(scan.face_normals[ids] @ n) < np.cos(np.radians(8))
+        # Smooth over a physical neighborhood, not a fixed number of faces.
+        # Local height averaging rejects isolated noise while retaining
+        # spatially coherent features.
+        if noise > 0:
+            projected = points[ids] - np.outer(h, n)
+            tree = cKDTree(projected)
+            radius = min(.6, max(.3, 2 * step))
+            distances, nearby = tree.query(projected, k=min(24, len(ids)),
+                                           distance_upper_bound=radius)
+            inside = np.isfinite(distances)
+            nearby = np.minimum(nearby, len(ids) - 1)
+            weights = np.exp(-2 * (distances / radius)**2) * scan.area_faces[ids[nearby]]
+            heights = (h[nearby] * weights).sum(axis=1) / weights.sum(axis=1)
+            local_slope = abs(heights[nearby] - heights[:, None]) / np.maximum(distances, .1)
+            tilt = np.any((local_slope > np.tan(np.radians(8))) & inside, axis=1)
+        else:
+            heights = h
+            tilt = np.abs(scan.face_normals[ids] @ n) < np.cos(np.radians(8))
         for side in (1,-1):
             mask = np.zeros(len(labels),bool)
-            mask[ids] = (side*h > max(.075,1.3*noise)) & (side*h < 1.1)
+            mask[ids] = (side*heights > max(.075, .9*noise)) & (side*heights < 1.1)
             for zone in _clusters(scan,mask):
                 own = np.isin(ids,zone)
                 area = scan.area_faces[zone].sum()
@@ -52,7 +68,7 @@ def curvature(model, scan, segmentation, findings):
     candidate = support[near] & (distance < 1.8*step) & (label >= 0)
     for k in np.unique(label[candidate]):
         own = label == k
-        if regs[k]["kind"] == "plane" and scan.area_faces[own & candidate].sum() >= .12*scan.area_faces[own].sum():
+        if regs[k]["kind"] == "plane" and scan.area_faces[own & candidate].sum() >= .05*scan.area_faces[own].sum():
             released |= own
     label[released] = -1
     return {**segmentation,"label":label,"regions":regs}, np.flatnonzero(released)

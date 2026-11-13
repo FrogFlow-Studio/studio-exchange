@@ -40,11 +40,13 @@ def find_details(model, scan, tol=.3):
         across -= np.einsum("ij,ij->i",across,axis)[:,None]*axis
         across /= np.maximum(1e-12,np.linalg.norm(across,axis=1))[:,None]
         tree = cKDTree(scan.triangles_center)
-        radius = max(.75*step,tol)
+        radius = max(1.25*step,tol)
         means=[]
         for sign in (-1,1):
-            _, nearby = tree.query(mid+sign*radius*across,k=min(12,len(scan.faces)))
-            normals=scan.face_normals[nearby].mean(axis=1)
+            _, nearby = tree.query(mid+sign*radius*across,k=min(48,len(scan.faces)))
+            # Summing oriented area vectors suppresses roughness more reliably
+            # than weighting each noisy, potentially tiny triangle equally.
+            normals=np.sum(scan.face_normals[nearby]*scan.area_faces[nearby,None],axis=1)
             means.append(normals/np.maximum(np.linalg.norm(normals,axis=1),1e-12)[:,None])
         jump=np.degrees(np.arccos(np.clip(np.einsum("ij,ij->i",*means),-1,1)))
         distance,_=tree.query(mid)

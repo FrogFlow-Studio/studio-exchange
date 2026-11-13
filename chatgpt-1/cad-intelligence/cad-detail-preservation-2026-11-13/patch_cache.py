@@ -11,7 +11,7 @@ import planar_brep
 class CachedBuilder:
     """Load an isolated builder so the shared CAD-demo module stays untouched."""
 
-    def __init__(self, capacity=256):
+    def __init__(self, capacity=1024):
         self.capacity = capacity
         self.cache = OrderedDict()
         self.hits = 0
@@ -19,11 +19,15 @@ class CachedBuilder:
         spec = importlib.util.spec_from_file_location("isolated_planar_brep", Path(planar_brep.__file__))
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
+        # ProcessPoolExecutor on Windows must import its callables by name.
+        # Only the parent-side dispatcher needs the isolated builder.
+        self.module._patches_pool = planar_brep._patches_pool
         self.original = self.module._patches
         self.module._patches = self._patches
 
     def _patches(self, vertices, faces, parts, tol, edge_tol, deadline):
         keys = {}
+        hits = {}
         missing = []
         for part in parts:
             ids, local = np.unique(faces[part], return_inverse=True)
@@ -32,6 +36,8 @@ class CachedBuilder:
             keys[int(part.min())] = key
             if key in self.cache:
                 self.hits += 1
+                hits[int(part.min())] = self.cache[key]
+                self.cache.move_to_end(key)
             else:
                 self.misses += 1
                 missing.append(part)
@@ -40,9 +46,8 @@ class CachedBuilder:
         for part in parts:
             index = int(part.min())
             key = keys[index]
-            if key in self.cache:
-                self.cache.move_to_end(key)
-                face, reason = self.cache[key]
+            if index in hits:
+                face, reason = hits[index]
             else:
                 face, reason = fresh.get(index,(None,None))
                 if face is not None or reason is not None:

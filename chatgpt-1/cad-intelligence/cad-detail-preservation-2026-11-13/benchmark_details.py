@@ -113,8 +113,16 @@ def main():
         points[ids]=scan.vertices[ids]
         result=trimesh.Trimesh(points,scan.faces,process=False)
         after=find_details(result,scan)
+        against_truth=find_details(result,source)
+        true_relief=abs(source.triangles_center[:,2])>.001
+        selected=changed["label"]<0
+        projected_area=flat.area_faces
         row=dict(case="preserve_relief",noise=noise,patches=len(patches),area=float(scan.area_faces[changed["label"]<0].sum()),
-                 defects=sum(r["type"]=="сплющенная мелочь" for r in after))
+                 defects=sum(r["type"]=="сплющенная мелочь" for r in after),
+                 defects_vs_clean=sum(r["type"]=="сплющенная мелочь" for r in against_truth),
+                 true_relief_mm2=float(projected_area[true_relief].sum()),
+                 released_flat_mm2=float(projected_area[selected & ~true_relief].sum()),
+                 missed_relief_mm2=float(projected_area[true_relief & ~selected].sum()))
         if not a.mesh_only and noise==0:
             if a.progress:
                 print("relief B-rep",noise,flush=True)

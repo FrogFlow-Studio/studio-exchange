@@ -36,6 +36,16 @@ $task = "$c/cad-detail-preservation-2026-11-13"
 $env:PYTHONPATH = "$task;claude/cad-demo;$c/cad-repair-followup-2026-11-13;$c/cad-local-repair-2026-11-13;$c/cad-fillet-defects-2026-11-13;$c/cad-crease-fillet-wall-2026-11-13;$c/cad-clean-geometry-2026-11-13;$c/cad-straight-patches-2026-11-13"
 python "$task/benchmark_details.py" --out "$env:TEMP/detail-results.json"
 python "$task/benchmark_repair.py" --work "$env:TEMP/sever44" --cache
+python "$task/studio_repair.py" aligned-bracket.stl --out "$env:TEMP/studio-repair.json"
+python "$task/studio_details.py" aligned-button.stl baseline.step --out "$env:TEMP/studio-details.json"
 python "$c/cad-repair-followup-2026-11-13/benchmark_followup.py" 40 --work "$env:TEMP/sever40"
 python "$task/benchmark_splice.py" "$env:TEMP/sever40" --out "$env:TEMP/task45.json"
 ```
+
+## Повторная проверка на локальных сканах
+
+Для 42 нормали усредняются с весами по площади треугольников. На шумном синтетическом стенде освобождение полос сработало на 11 из 12 сочетаний формы и шума σ 0,1–0,2 мм. Исключение — R50 при σ 0,2 мм. На чистых гранёных сетках, сравниваемых с собой, ложных находок нет. Для шумных сочетаний здесь проверена разметка, полный цикл B-rep проверен для чистого R50.
+
+Для 43 высота сглаживается в окрестности с радиусом в миллиметрах. На пластине при σ 0,05 и 0,1 мм сеточная проверка дала ноль находок сплющивания и против шумного скана, и против чистого эталона. При σ 0,1 мм освобождено 3,49 мм² плоского фона и пропущено 11,09 мм² из 128,50 мм² проекции рельефа. B-rep чистой пластины валиден, без свободных рёбер и без находок сплющивания.
+
+На локальном скане кнопки (10 260 треугольников) освобождены две зоны рельефа площадью 25,76 мм². После записи и открытия STEP покрытие при 0,3 мм составило 99,54% и 99,51% в двух направлениях. У штатного STEP было 99,54% в обе стороны. Площадь находок гранёной кривизны изменилась с 438,10 до 417,93 мм², площадь сплющенного рельефа с 560,59 до 558,85 мм². Целевое снижение не достигнуто.

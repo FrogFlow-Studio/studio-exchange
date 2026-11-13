@@ -1,0 +1,818 @@
+[
+  {
+    "seed": 36,
+    "radius": 10,
+    "noise": 0.0,
+    "before": {
+      "fold_area_mm2": 0,
+      "coverage": [
+        0.9977,
+        0.997
+      ]
+    },
+    "after": {
+      "fold_area_mm2": 0,
+      "coverage": [
+        0.9977,
+        0.997
+      ]
+    },
+    "valid": true,
+    "passes": []
+  },
+  {
+    "seed": 36,
+    "radius": 10,
+    "noise": 0.2,
+    "before": {
+      "fold_area_mm2": 36.097846136259314,
+      "coverage": [
+        0.9487,
+        0.9577
+      ]
+    },
+    "after": {
+      "fold_area_mm2": 36.097846136259314,
+      "coverage": [
+        0.9487,
+        0.9577
+      ]
+    },
+    "valid": true,
+    "passes": [
+      {
+        "attempts": [
+          {
+            "expansion_rings": 9,
+            "repaired_zones": 3,
+            "moved_vertices": 110,
+            "method": "expanded",
+            "accepted": false,
+            "fold_area_mm2": [
+              36.097846136259314,
+              10.121181229198896
+            ],
+            "coverage": [
+              0.9633,
+              0.975
+            ],
+            "coverage_ok": true,
+            "material_ok": false,
+            "valid_body": true,
+            "build_seconds": 0.3377846999937901,
+            "evaluation_seconds": 0.5509557000041241,
+            "free_edges": 0,
+            "material_growth": [
+              {
+                "type": "выступ над сканом",
+                "area_mm2": 2.9420372064166425,
+                "center": [
+                  9.769669755832968,
+                  4.128823939190987,
+                  3.122164423950715
+                ]
+              }
+            ]
+          },
+          {
+            "no_movable_vertices": 3,
+            "method": "local",
+            "accepted": false
+          },
+          {
+            "expansion_rings": 6,
+            "repaired_zones": 3,
+            "moved_vertices": 80,
+            "method": "two_rings",
+            "accepted": false,
+            "fold_area_mm2": [
+              36.097846136259314,
+              11.936507416700014
+            ],
+            "coverage": [
+              0.961,
+              0.974
+            ],
+            "coverage_ok": true,
+            "material_ok": false,
+            "valid_body": true,
+            "build_seconds": 0.4302008999948157,
+            "evaluation_seconds": 0.6390480999980355,
+            "free_edges": 0,
+            "material_growth": [
+              {
+                "type": "выступ над сканом",
+                "area_mm2": 2.976400342731274,
+                "center": [
+                  3.8282867187392773,
+                  9.869532642804575,
+                  10.553408500881083
+                ]
+              },
+              {
+                "type": "выступ над сканом",
+                "area_mm2": 2.6532729570150417,
+                "center": [
+                  9.756724562509323,
+                  4.185103158446455,
+                  3.334482183797312
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "seed": 36,
+    "radius": 20,
+    "noise": 0.2,
+    "before": {
+      "fold_area_mm2": 23.74726163506917,
+      "coverage": [
+        0.956,
+        0.965
+      ]
+    },
+    "after": {
+      "fold_area_mm2": 2.877169227235766,
+      "coverage": [
+        0.9583,
+        0.972
+      ]
+    },
+    "valid": true,
+    "passes": [
+      {
+        "attempts": [
+          {
+            "expansion_rings": 9,
+            "repaired_zones": 4,
+            "moved_vertices": 75,
+            "method": "expanded",
+            "accepted": true,
+            "fold_area_mm2": [
+              23.74726163506917,
+              13.684552105116234
+            ],
+            "coverage": [
+              0.9593,
+              0.9742999999999999
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 6.271842200003448,
+            "evaluation_seconds": 6.791360400005942,
+            "free_edges": 0,
+            "material_growth": []
+          },
+          {
+            "no_movable_vertices": 1,
+            "repaired_zones": 3,
+            "moved_vertices": 10,
+            "method": "local",
+            "accepted": true,
+            "fold_area_mm2": [
+              23.74726163506917,
+              9.399534608876355
+            ],
+            "coverage": [
+              0.9563,
+              0.9717
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 6.113092100000358,
+            "evaluation_seconds": 6.636524199988344,
+            "free_edges": 0,
+            "material_growth": []
+          },
+          {
+            "expansion_rings": 6,
+            "repaired_zones": 4,
+            "moved_vertices": 57,
+            "method": "two_rings",
+            "accepted": true,
+            "fold_area_mm2": [
+              23.74726163506917,
+              13.09176389039463
+            ],
+            "coverage": [
+              0.958,
+              0.97
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 6.471779700004845,
+            "evaluation_seconds": 7.053551599994535,
+            "free_edges": 0,
+            "material_growth": []
+          }
+        ],
+        "selected": "local"
+      },
+      {
+        "attempts": [
+          {
+            "expansion_rings": 6,
+            "repaired_zones": 2,
+            "moved_vertices": 40,
+            "method": "expanded",
+            "accepted": true,
+            "fold_area_mm2": [
+              9.399534608876355,
+              2.877169227235766
+            ],
+            "coverage": [
+              0.9583,
+              0.972
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 4.261973599990597,
+            "evaluation_seconds": 4.767495499996585,
+            "free_edges": 0,
+            "material_growth": []
+          },
+          {
+            "repaired_zones": 2,
+            "moved_vertices": 17,
+            "method": "local",
+            "accepted": true,
+            "fold_area_mm2": [
+              9.399534608876355,
+              4.848553299784415
+            ],
+            "coverage": [
+              0.956,
+              0.9703
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 11.71025199998985,
+            "evaluation_seconds": 12.20894069998758,
+            "free_edges": 0,
+            "material_growth": []
+          }
+        ],
+        "selected": "expanded"
+      }
+    ]
+  },
+  {
+    "seed": 36,
+    "radius": 30,
+    "noise": 0.0,
+    "before": {
+      "fold_area_mm2": 49.10986951017602,
+      "coverage": [
+        0.987,
+        0.9853
+      ]
+    },
+    "after": {
+      "fold_area_mm2": 49.10986951017602,
+      "coverage": [
+        0.987,
+        0.9853
+      ]
+    },
+    "valid": true,
+    "passes": [
+      {
+        "attempts": [
+          {
+            "no_movable_vertices": 3,
+            "method": "expanded",
+            "accepted": false
+          },
+          {
+            "no_movable_vertices": 3,
+            "method": "local",
+            "accepted": false
+          },
+          {
+            "no_movable_vertices": 3,
+            "method": "two_rings",
+            "accepted": false
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "seed": 36,
+    "radius": 30,
+    "noise": 0.2,
+    "before": {
+      "fold_area_mm2": 21.691974405457366,
+      "coverage": [
+        0.9783,
+        0.9797
+      ]
+    },
+    "after": {
+      "fold_area_mm2": 9.537095571244736,
+      "coverage": [
+        0.9783,
+        0.9813
+      ]
+    },
+    "valid": true,
+    "passes": [
+      {
+        "attempts": [
+          {
+            "no_movable_vertices": 2,
+            "expansion_rings": 9,
+            "repaired_zones": 2,
+            "moved_vertices": 20,
+            "method": "expanded",
+            "accepted": true,
+            "fold_area_mm2": [
+              21.691974405457366,
+              18.407284673995886
+            ],
+            "coverage": [
+              0.978,
+              0.9807
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 5.36640690000786,
+            "evaluation_seconds": 5.717113000006066,
+            "free_edges": 0,
+            "material_growth": []
+          },
+          {
+            "no_movable_vertices": 1,
+            "repaired_zones": 3,
+            "moved_vertices": 10,
+            "method": "local",
+            "accepted": true,
+            "fold_area_mm2": [
+              21.691974405457366,
+              12.565464947894842
+            ],
+            "coverage": [
+              0.9783,
+              0.982
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 4.6817522999917855,
+            "evaluation_seconds": 5.116287500000908,
+            "free_edges": 0,
+            "material_growth": []
+          },
+          {
+            "no_movable_vertices": 2,
+            "expansion_rings": 6,
+            "repaired_zones": 2,
+            "moved_vertices": 13,
+            "method": "two_rings",
+            "accepted": true,
+            "fold_area_mm2": [
+              21.691974405457366,
+              18.407284673995886
+            ],
+            "coverage": [
+              0.978,
+              0.9813
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 4.305221900009201,
+            "evaluation_seconds": 4.650825700009591,
+            "free_edges": 0,
+            "material_growth": []
+          }
+        ],
+        "selected": "local"
+      },
+      {
+        "attempts": [
+          {
+            "no_movable_vertices": 1,
+            "expansion_rings": 3,
+            "repaired_zones": 1,
+            "moved_vertices": 8,
+            "method": "expanded",
+            "accepted": true,
+            "fold_area_mm2": [
+              12.565464947894842,
+              9.537095571244736
+            ],
+            "coverage": [
+              0.9783,
+              0.9813
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 3.885615899998811,
+            "evaluation_seconds": 4.259103499993216,
+            "free_edges": 0,
+            "material_growth": []
+          },
+          {
+            "no_movable_vertices": 1,
+            "repaired_zones": 1,
+            "moved_vertices": 2,
+            "method": "local",
+            "accepted": true,
+            "fold_area_mm2": [
+              12.565464947894842,
+              12.430180639293036
+            ],
+            "coverage": [
+              0.9783,
+              0.982
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 3.729306599998381,
+            "evaluation_seconds": 4.0747600000031525,
+            "free_edges": 0,
+            "material_growth": []
+          }
+        ],
+        "selected": "expanded"
+      }
+    ]
+  },
+  {
+    "seed": 49,
+    "radius": 10,
+    "noise": 0.2,
+    "before": {
+      "fold_area_mm2": 3.4003589136665826,
+      "coverage": [
+        0.966,
+        0.9833
+      ]
+    },
+    "after": {
+      "fold_area_mm2": 0,
+      "coverage": [
+        0.967,
+        0.9847
+      ]
+    },
+    "valid": true,
+    "passes": [
+      {
+        "attempts": [
+          {
+            "expansion_rings": 3,
+            "repaired_zones": 1,
+            "moved_vertices": 5,
+            "method": "expanded",
+            "accepted": true,
+            "fold_area_mm2": [
+              3.4003589136665826,
+              2.60462551957019
+            ],
+            "coverage": [
+              0.967,
+              0.984
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 2.8270260999997845,
+            "evaluation_seconds": 3.1927396000101,
+            "free_edges": 0,
+            "material_growth": []
+          },
+          {
+            "no_movable_vertices": 1,
+            "method": "local",
+            "accepted": false
+          },
+          {
+            "expansion_rings": 2,
+            "repaired_zones": 1,
+            "moved_vertices": 4,
+            "method": "two_rings",
+            "accepted": true,
+            "fold_area_mm2": [
+              3.4003589136665826,
+              2.60462551957019
+            ],
+            "coverage": [
+              0.9667,
+              0.9853
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 3.056301500007976,
+            "evaluation_seconds": 3.4722677000099793,
+            "free_edges": 0,
+            "material_growth": []
+          }
+        ],
+        "selected": "expanded"
+      },
+      {
+        "attempts": [
+          {
+            "expansion_rings": 3,
+            "repaired_zones": 1,
+            "moved_vertices": 4,
+            "method": "expanded",
+            "accepted": true,
+            "fold_area_mm2": [
+              2.60462551957019,
+              2.6043507487789967
+            ],
+            "coverage": [
+              0.967,
+              0.9837
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 2.045062000004691,
+            "evaluation_seconds": 2.4762572000036016,
+            "free_edges": 0,
+            "material_growth": []
+          },
+          {
+            "repaired_zones": 1,
+            "moved_vertices": 2,
+            "method": "local",
+            "accepted": true,
+            "fold_area_mm2": [
+              2.60462551957019,
+              0
+            ],
+            "coverage": [
+              0.967,
+              0.9847
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 2.3069404999987455,
+            "evaluation_seconds": 2.6504610999982106,
+            "free_edges": 0,
+            "material_growth": []
+          }
+        ],
+        "selected": "local"
+      }
+    ]
+  },
+  {
+    "seed": 61,
+    "radius": 20,
+    "noise": 0.2,
+    "before": {
+      "fold_area_mm2": 5.924662740886366,
+      "coverage": [
+        0.966,
+        0.9797
+      ]
+    },
+    "after": {
+      "fold_area_mm2": 3.2618048459937246,
+      "coverage": [
+        0.966,
+        0.9777
+      ]
+    },
+    "valid": true,
+    "passes": [
+      {
+        "attempts": [
+          {
+            "expansion_rings": 6,
+            "no_movable_vertices": 1,
+            "repaired_zones": 1,
+            "moved_vertices": 18,
+            "method": "expanded",
+            "accepted": true,
+            "fold_area_mm2": [
+              5.924662740886366,
+              3.2618048459937246
+            ],
+            "coverage": [
+              0.966,
+              0.9777
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 1.471784800000023,
+            "evaluation_seconds": 1.7852542999899015,
+            "free_edges": 0,
+            "material_growth": []
+          },
+          {
+            "repaired_zones": 2,
+            "moved_vertices": 3,
+            "method": "local",
+            "accepted": false,
+            "fold_area_mm2": [
+              5.924662740886366,
+              0
+            ],
+            "coverage": [
+              0.9663,
+              0.9742999999999999
+            ],
+            "coverage_ok": false,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 2.9967211999901338,
+            "evaluation_seconds": 3.366273199993884,
+            "free_edges": 0,
+            "material_growth": [],
+            "deviation_clusters": {
+              "clusters_outside": [],
+              "clusters_inside": [],
+              "clusters_added": []
+            }
+          },
+          {
+            "expansion_rings": 4,
+            "no_movable_vertices": 1,
+            "repaired_zones": 1,
+            "moved_vertices": 10,
+            "method": "two_rings",
+            "accepted": true,
+            "fold_area_mm2": [
+              5.924662740886366,
+              3.2618048459937246
+            ],
+            "coverage": [
+              0.9663,
+              0.9777
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 3.1242939999938244,
+            "evaluation_seconds": 3.4258131999959005,
+            "free_edges": 0,
+            "material_growth": []
+          }
+        ],
+        "selected": "expanded"
+      },
+      {
+        "attempts": [
+          {
+            "expansion_rings": 3,
+            "no_movable_vertices": 1,
+            "method": "expanded",
+            "accepted": false
+          },
+          {
+            "repaired_zones": 1,
+            "moved_vertices": 1,
+            "method": "local",
+            "accepted": false,
+            "fold_area_mm2": [
+              3.2618048459937246,
+              0
+            ],
+            "coverage": [
+              0.966,
+              0.976
+            ],
+            "coverage_ok": false,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 4.613199300001725,
+            "evaluation_seconds": 4.942784799990477,
+            "free_edges": 0,
+            "material_growth": [],
+            "deviation_clusters": {
+              "clusters_outside": [],
+              "clusters_inside": [],
+              "clusters_added": []
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "seed": 79,
+    "radius": 30,
+    "noise": 0.2,
+    "before": {
+      "fold_area_mm2": 8.23461775611162,
+      "coverage": [
+        0.9607,
+        0.9757
+      ]
+    },
+    "after": {
+      "fold_area_mm2": 0,
+      "coverage": [
+        0.9613,
+        0.9747
+      ]
+    },
+    "valid": true,
+    "passes": [
+      {
+        "attempts": [
+          {
+            "expansion_rings": 6,
+            "repaired_zones": 2,
+            "moved_vertices": 9,
+            "method": "expanded",
+            "accepted": false,
+            "fold_area_mm2": [
+              8.23461775611162,
+              8.656574508594542
+            ],
+            "coverage": [
+              0.9613,
+              0.9777
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 0.651606500003254,
+            "evaluation_seconds": 0.8350791999982903,
+            "free_edges": 0,
+            "material_growth": []
+          },
+          {
+            "repaired_zones": 2,
+            "moved_vertices": 6,
+            "method": "local",
+            "accepted": true,
+            "fold_area_mm2": [
+              8.23461775611162,
+              0
+            ],
+            "coverage": [
+              0.9613,
+              0.9747
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 0.6435832000133814,
+            "evaluation_seconds": 0.826515400010976,
+            "free_edges": 0,
+            "material_growth": []
+          },
+          {
+            "expansion_rings": 4,
+            "repaired_zones": 2,
+            "moved_vertices": 6,
+            "method": "two_rings",
+            "accepted": false,
+            "fold_area_mm2": [
+              8.23461775611162,
+              8.6459561271329
+            ],
+            "coverage": [
+              0.961,
+              0.9757
+            ],
+            "coverage_ok": true,
+            "material_ok": true,
+            "valid_body": true,
+            "build_seconds": 0.6217525999963982,
+            "evaluation_seconds": 0.7890477999899304,
+            "free_edges": 0,
+            "material_growth": []
+          }
+        ],
+        "selected": "local"
+      }
+    ]
+  },
+  {
+    "timing_triangles": 50000,
+    "seconds": 0.374008299986599,
+    "audit": {
+      "expansion_rings": 3,
+      "repaired_zones": 1,
+      "moved_vertices": 787
+    }
+  },
+  {
+    "cache_hits": 895,
+    "cache_misses": 251
+  }
+]

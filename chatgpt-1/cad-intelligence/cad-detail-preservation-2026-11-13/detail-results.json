@@ -1,0 +1,333 @@
+[
+  {
+    "case": "relief",
+    "seconds": 0.22651390000828542,
+    "findings": [
+      {
+        "type": "сплющенная мелочь",
+        "source": "scan",
+        "area_mm2": 54.958631801820296,
+        "center": [
+          9.00368711077484,
+          3.9961468877805704,
+          0.5684911773989703
+        ],
+        "max_deviation_mm": 0.8000000000000002,
+        "description": "сплющенная мелочь",
+        "relief_height_mm": 0.8000000000000002
+      },
+      {
+        "type": "сплющенная мелочь",
+        "source": "scan",
+        "area_mm2": 29.563571694135085,
+        "center": [
+          9.177198020921e-16,
+          -4.000000000000014,
+          0.3905792765951621
+        ],
+        "max_deviation_mm": 0.45,
+        "description": "сплющенная мелочь",
+        "relief_height_mm": 0.45
+      },
+      {
+        "type": "сплющенная мелочь",
+        "source": "scan",
+        "area_mm2": 20.48197957732653,
+        "center": [
+          0.4941176470588258,
+          3.9999999999999916,
+          0.29583942717938283
+        ],
+        "max_deviation_mm": 0.4000000000000001,
+        "description": "сплющенная мелочь",
+        "relief_height_mm": 0.4000000000000001
+      },
+      {
+        "type": "сплющенная мелочь",
+        "source": "scan",
+        "area_mm2": 15.008045357587704,
+        "center": [
+          16.016532526848735,
+          -3.993769700754342,
+          0.25793295630499524
+        ],
+        "max_deviation_mm": 0.3499999999999999,
+        "description": "сплющенная мелочь",
+        "relief_height_mm": 0.34999999999999987
+      },
+      {
+        "type": "сплющенная мелочь",
+        "source": "scan",
+        "area_mm2": 11.783564058604108,
+        "center": [
+          -8.002862068360736,
+          4.008748909628237,
+          0.259926683003528
+        ],
+        "max_deviation_mm": 0.3,
+        "description": "сплющенная мелочь",
+        "relief_height_mm": 0.3
+      },
+      {
+        "type": "сплющенная мелочь",
+        "source": "scan",
+        "area_mm2": 5.496140669846668,
+        "center": [
+          -15.015752550498378,
+          -4.001527967718419,
+          0.17849025543241043
+        ],
+        "max_deviation_mm": 0.20000000000000007,
+        "description": "сплющенная мелочь",
+        "relief_height_mm": 0.20000000000000007
+      }
+    ],
+    "errors": [
+      0.015826482001774483,
+      0.009205153718683428,
+      1.4240456501521676e-14,
+      0.005333034749694961,
+      0.01766751461566093,
+      0.005882352941174174
+    ],
+    "correct": 0
+  },
+  {
+    "case": "preserve_relief",
+    "noise": 0,
+    "patches": 6,
+    "area": 141.0051123194713,
+    "defects": 0,
+    "brep": {
+      "valid": true,
+      "free_edges": 0,
+      "smooth_faces": 5,
+      "defects": 0
+    }
+  },
+  {
+    "case": "preserve_relief",
+    "noise": 0.05,
+    "patches": 6,
+    "area": 147.09837986903156,
+    "defects": 0
+  },
+  {
+    "case": "preserve_relief",
+    "noise": 0.1,
+    "patches": 6,
+    "area": 148.65955649287838,
+    "defects": 0
+  },
+  {
+    "case": "arc",
+    "radius": 50,
+    "strips": 6,
+    "noise": 0.0,
+    "area": 109.73287766815639,
+    "seams": 5,
+    "released_area": 527.7857191325679,
+    "correct": 0,
+    "true_polygon": 0,
+    "brep": {
+      "valid": true,
+      "free_edges": 0,
+      "smooth_faces": 16,
+      "coverage": 1.0,
+      "area": 0
+    }
+  },
+  {
+    "case": "arc",
+    "radius": 50,
+    "strips": 6,
+    "noise": 0.1,
+    "area": 10.51350576492004,
+    "seams": 3,
+    "released_area": 0.0,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "arc",
+    "radius": 50,
+    "strips": 6,
+    "noise": 0.2,
+    "area": 0,
+    "seams": 0,
+    "released_area": 0.0,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "arc",
+    "radius": 100,
+    "strips": 12,
+    "noise": 0.0,
+    "area": 481.4171818889874,
+    "seams": 11,
+    "released_area": 2111.1428580535367,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "arc",
+    "radius": 100,
+    "strips": 12,
+    "noise": 0.1,
+    "area": 95.73775405782926,
+    "seams": 12,
+    "released_area": 0.0,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "arc",
+    "radius": 100,
+    "strips": 12,
+    "noise": 0.2,
+    "area": 0,
+    "seams": 0,
+    "released_area": 0.0,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "arc",
+    "radius": 300,
+    "strips": 20,
+    "noise": 0.0,
+    "area": 2482.210168249665,
+    "seams": 19,
+    "released_area": 10555.713521703856,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "arc",
+    "radius": 300,
+    "strips": 20,
+    "noise": 0.1,
+    "area": 1353.1887972161146,
+    "seams": 20,
+    "released_area": 5510.360236177379,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "arc",
+    "radius": 300,
+    "strips": 20,
+    "noise": 0.2,
+    "area": 126.09030648452841,
+    "seams": 2,
+    "released_area": 0.0,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "dome",
+    "radius": 100,
+    "strips": 10,
+    "noise": 0.0,
+    "area": 396.0658847416104,
+    "seams": 9,
+    "released_area": 1767.1553582786464,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "dome",
+    "radius": 100,
+    "strips": 10,
+    "noise": 0.1,
+    "area": 73.56298927745146,
+    "seams": 10,
+    "released_area": 0.0,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "dome",
+    "radius": 100,
+    "strips": 10,
+    "noise": 0.2,
+    "area": 6.349538871692693,
+    "seams": 1,
+    "released_area": 0.0,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "saddle",
+    "radius": 100,
+    "strips": 10,
+    "noise": 0.0,
+    "area": 396.0658847416104,
+    "seams": 9,
+    "released_area": 1767.1553582786464,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "saddle",
+    "radius": 100,
+    "strips": 10,
+    "noise": 0.1,
+    "area": 74.50159703531986,
+    "seams": 9,
+    "released_area": 0.0,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "saddle",
+    "radius": 100,
+    "strips": 10,
+    "noise": 0.2,
+    "area": 6.349538871692693,
+    "seams": 1,
+    "released_area": 0.0,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "torus",
+    "radius": 100,
+    "strips": 10,
+    "noise": 0.0,
+    "area": 396.1551046221143,
+    "seams": 9,
+    "released_area": 1767.6409685490828,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "torus",
+    "radius": 100,
+    "strips": 10,
+    "noise": 0.1,
+    "area": 73.52469242828192,
+    "seams": 10,
+    "released_area": 0.0,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "torus",
+    "radius": 100,
+    "strips": 10,
+    "noise": 0.2,
+    "area": 6.353529959871394,
+    "seams": 1,
+    "released_area": 0.0,
+    "correct": 0,
+    "true_polygon": 0
+  },
+  {
+    "case": "timing",
+    "triangles": 204800,
+    "seconds": 2.025418500008527,
+    "correct": 0
+  }
+]

@@ -418,6 +418,14 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
         big = max(polys, key=lambda p: Polygon(p.exterior).area)
         raw = Polygon(big.exterior).difference(shapely.union_all(polys))
         RAW_VOIDS[round(z, 3)] = raw
+        if os.environ.get("RAW_SMALL_HOLES", "1") == "1":
+            # для продолжения канавок вниз нужны и мелкие дырки сечения (меньше MIN_AREA = 1 мм²):
+            # острие V-канавки у бобышки в сечении — полоска 0,05–0,6 мм², sections() её отбрасывает
+            s_ = mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
+            if s_ is not None:
+                P_, _ = s_.to_2D(to_2D=np.eye(4))
+                full = shapely.union_all([q.buffer(0) for q in P_.polygons_full if q.area >= MIN_AREA])
+                RAW_VOIDS[round(z, 3)] = Polygon(big.exterior).difference(full)
         v = raw.buffer(-VOID_OPEN).buffer(VOID_OPEN)
         geoms = [g for g in getattr(v, "geoms", [v]) if not g.is_empty and g.area >= VOID_MIN]
         voids.append((z, geoms))
@@ -512,7 +520,7 @@ def _extend_down(it, dz, max_levels=6, min_area=0.03):
     zs = sorted(RAW_VOIDS)
     out = list(it)
     g0 = it[0][1]
-    if g0.area > float(os.environ.get("VOID_TIP_AREA", "6.0")) or 2 * g0.area / max(g0.length, 1e-9) > 0.8:
+    if g0.area > float(os.environ.get("VOID_TIP_AREA", "40")) or 2 * g0.area / max(g0.length, 1e-9) > 0.8:
         return out  # только узкие канавки: у больших отделений пологий край дна — не клин
     for _ in range(max_levels):
         z, g = out[0]

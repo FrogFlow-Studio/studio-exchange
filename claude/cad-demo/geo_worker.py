@@ -463,12 +463,40 @@ def main() -> None:
         if restored or not scan.is_watertight:
             source = fixed
         timings["cleanup"] = time.perf_counter() - t
+        # Разметка дополняется узкими плоскостями (рёбра жёсткости) и скруглениями между плоскостями
+        # (задачи 25, 26, 29 Севера); не вышло — обычная разметка. CAD_STRAIGHT_PLUS=0 — без дополнений.
+        seg, plus = None, {}
+        if os.environ.get("CAD_STRAIGHT_PLUS", "1") != "0":
+            t = time.perf_counter()
+            try:
+                import straight_plus
+
+                seg, plus = straight_plus.augment(source, 0.3, noise)
+                plus = {k: v for k, v in plus.items() if k != "fillet_growth"}
+            except Exception as error:  # noqa: BLE001
+                print(f"    дополнение разметки не удалось ({type(error).__name__}): обычная разметка", flush=True)
+                seg = None
+            timings["segment_plus"] = time.perf_counter() - t
         t = time.perf_counter()
-        mesh, info = idealize.idealize(source, noise=noise)
+        mesh, info = idealize.idealize(source, noise=noise, seg=seg)
         timings["idealize"] = time.perf_counter() - t
         t = time.perf_counter()
+        fit = float(info["fit_tol"])
         V, F, label = planar_brep.collapse_degenerate(mesh.vertices, mesh.faces, info["label"], 1e-3)
-        body, built = planar_brep.build(V, F, label, info["regions"])
+        # Пятна треугольников вне плоскостей — одной гладкой гранью по той же границе (задача 27 Севера).
+        # CAD_STRAIGHT_SMOOTH=0 — без них.
+        smooth = os.environ.get("CAD_STRAIGHT_SMOOTH", "1") != "0"
+        try:
+            body, built = planar_brep.build(V, F, label, info["regions"], smooth_tol=fit if smooth else None,
+                                            smooth_edge_tol=fit, smooth_budget=180.0)
+            if smooth and not built["valid"]:
+                raise RuntimeError("тело с гладкими гранями невалидно")
+        except Exception as error:  # noqa: BLE001
+            if not smooth:
+                raise
+            print(f"    гладкие грани не подошли ({type(error).__name__}): только ровные грани", flush=True)
+            body, built = planar_brep.build(V, F, label, info["regions"])
+        built.update(plus)
         timings["brep"] = time.perf_counter() - t
         t = time.perf_counter()
         cut = 0
@@ -486,8 +514,9 @@ def main() -> None:
         with measured(timings, "step_write"):
             cq.exporters.export(body, str(step))
         code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
-        meta = {"plan": f"прямое тело: отверстий построено точно {cut};  {built['planar_faces']} ровных граней с прямыми рёбрами на "
-                        f"{round(built['planar_area_share'] * 100)}% площади, остальное — {built['triangle_faces']} "
+        meta = {"plan": f"прямое тело: {built['planar_faces']} ровных граней с прямыми рёбрами на "
+                        f"{round(built['planar_area_share'] * 100)}% площади, гладких граней {built.get('smooth_faces', 0)} на "
+                        f"{round(built.get('smooth_area_share', 0) * 100)}%, отверстий точно {cut}, остальное — {built['triangle_faces']} "
                         f"треугольников по выпрямленному скану; плоскостей выровнено по главным направлениям: "
                         f"{info['aligned_planes']}",
                 "restored": restored, "restored_zones": zones, "straight": {**built, **{

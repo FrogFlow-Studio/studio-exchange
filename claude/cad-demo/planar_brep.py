@@ -143,7 +143,8 @@ def _area(P, n):
 
 
 def build(V, F, label, regions, *, sew_tol: float = 1e-3, min_faces: int = 3,
-          straight: float = 1e-5):
+          straight: float = 1e-5, smooth_tol: float | None = None, smooth_budget: float = 300.0,
+          smooth_edge_tol: float | None = None):
     """Возвращает (тело CadQuery, сведения). regions — как у regions.segment (нужны только плоскости)."""
     import cadquery as cq
     from OCP.BRepBuilderAPI import (BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon, BRepBuilderAPI_MakeSolid,
@@ -260,8 +261,46 @@ def build(V, F, label, regions, *, sew_tol: float = 1e-3, min_faces: int = 3,
             rejected += 1
             if DEBUG:
                 print('rej', c, 'done', mk.IsDone(), 'valid', mk.IsDone() and BRepCheck_Analyzer(mk.Face()).IsValid(), 'mass', mk.IsDone() and round(props.Mass(), 2), 'areas', [round(a, 2) for a in areas], [len(l) for l in loops])
+    # Остальное (свободная форма, скругления): связные пятна треугольников заменяются одной гладкой гранью
+    # по той же прямолинейной границе (patch_faces) — сшивка с соседями не меняется. Пятно, которое не
+    # ложится в допуск или не строится, остаётся треугольниками.
+    smooth, smooth_area, smooth_tris, smooth_fail = 0, 0.0, 0, 0
+    rest = comp < 0
+    if smooth_tol and rest.any():
+        import time
+
+        import patch_faces
+
+        started = time.perf_counter()
+        why = defaultdict(int)
+        own = np.where(label >= 0, label, -1)          # пятна не смешивают разные области (цилиндр и свободу)
+        zl = np.asarray([int(l) if l >= 0 and regions[l]["kind"] != "plane" else -1 for l in own])
+        zone_comp = _components(F, np.where(rest, np.where(zl >= 0, zl, len(regions)), -1))
+        tri_area = 0.5 * np.linalg.norm(tri_n, axis=1)
+        for z in np.unique(zone_comp[zone_comp >= 0]):
+            ids = np.flatnonzero(zone_comp == z)
+            if len(ids) < 2:
+                continue
+            for part in patch_faces.split_zones(V, F, ids):
+                if time.perf_counter() - started > smooth_budget:
+                    break
+                if len(part) < 2:
+                    continue
+                try:
+                    face, rep = patch_faces.patch(V, F, part, smooth_tol, smooth_edge_tol)
+                except Exception:  # noqa: BLE001
+                    face, rep = None, None
+                if face is None:
+                    smooth_fail += 1
+                    why[str((rep or {}).get("reason", "error"))] += len(part)
+                    continue
+                sew.Add(face)
+                rest[part] = False
+                smooth += 1
+                smooth_tris += len(part)
+                smooth_area += float(tri_area[part].sum())
     tris = 0
-    for fi in np.flatnonzero(comp < 0):
+    for fi in np.flatnonzero(rest):
         a, b, c = F[fi]
         f = BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakePolygon(P[a], P[b], P[c], True).Wire(), True)
         if f.IsDone():
@@ -287,5 +326,7 @@ def build(V, F, label, regions, *, sew_tol: float = 1e-3, min_faces: int = 3,
     body = max(solids, key=lambda s: abs(s.Volume()))
     return body, {"planar_faces": planar, "triangle_faces": tris, "faces": len(body.Faces()),
                   "valid": bool(body.isValid()), "free_edges": int(sew.NbFreeEdges()),
-                  "rejected_faces": rejected,
+                  "rejected_faces": rejected, "smooth_faces": smooth, "smooth_triangles": smooth_tris,
+                  "smooth_rejected": smooth_fail, "smooth_rejected_triangles": dict(why) if smooth_tol else {},
+                  "smooth_area_share": float(smooth_area / max(1e-9, trimesh.Trimesh(V, F, process=False).area)),
                   "planar_area_share": float(planar_area / max(1e-9, trimesh.Trimesh(V, F, process=False).area))}

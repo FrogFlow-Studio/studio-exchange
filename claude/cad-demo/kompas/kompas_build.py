@@ -388,7 +388,7 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
     body = cq.Workplane().add(wall)
     TOPINFO.update(coef=coef, ztop=ztop, ring=rings[-1])
     # пустоты внутри наружного контура по слоям
-    voids = []; top_v = []
+    voids = []; top_v = []; RAW_VOIDS.clear()
     # выше верха стенки (чаша, углубление у края) — пустоты считаем внутри последнего полного контура:
     # иначе их форму несёт только гладкая поверхность верха и на месте чаши остаётся ровная площадка
     above = float(os.environ.get("VOID_ABOVE", "0.6"))
@@ -404,7 +404,9 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
             top_v.append((z, geoms))
             continue
         big = max(polys, key=lambda p: Polygon(p.exterior).area)
-        v = Polygon(big.exterior).difference(shapely.union_all(polys)).buffer(-VOID_OPEN).buffer(VOID_OPEN)
+        raw = Polygon(big.exterior).difference(shapely.union_all(polys))
+        RAW_VOIDS[round(z, 3)] = raw
+        v = raw.buffer(-VOID_OPEN).buffer(VOID_OPEN)
         geoms = [g for g in getattr(v, "geoms", [v]) if not g.is_empty and g.area >= VOID_MIN]
         voids.append((z, geoms))
     if os.environ.get("VOIDS", "chains") == "chains":
@@ -488,6 +490,35 @@ def void_layers(voids, dz, n, zb):
         return cut
 
 
+RAW_VOIDS = {}
+
+
+def _extend_down(it, dz, max_levels=6, min_area=0.03):
+    """отделение, сужающееся книзу (канавка клином у бобышки, конец сверла): ниже первого сечения
+    пустота есть, но тоньше порога и отброшена. Продолжаем цепочку вниз по сырым сечениям, пока
+    пустота под ней сужается, — дно выреза выходит клином, а не плоской ступенью выше настоящего"""
+    zs = sorted(RAW_VOIDS)
+    out = list(it)
+    g0 = it[0][1]
+    if g0.area > 6.0 or 2 * g0.area / max(g0.length, 1e-9) > 0.8:
+        return out  # только узкие канавки: у больших отделений пологий край дна — не клин
+    for _ in range(max_levels):
+        z, g = out[0]
+        zl = round(z - dz, 3)
+        k = min(zs, key=lambda q: abs(q - zl)) if zs else None
+        if k is None or abs(k - zl) > dz / 4:
+            break
+        raw = RAW_VOIDS[k].intersection(g.buffer(0.1))
+        parts = [q for q in getattr(raw, "geoms", [raw]) if q.geom_type == "Polygon" and q.area >= min_area]
+        if not parts:
+            break
+        q = max(parts, key=lambda q: q.area)
+        if q.area > 0.8 * g.area:
+            break
+        out.insert(0, (k, q))
+    return out
+
+
 def void_chains(voids, dz, n, zb, jump=0.5):
     """каждое отделение кармана — своя цепочка контуров по всей высоте и один лофт.
     Отделение, которое выше сливается с большим (начались рёбра), продолжается
@@ -530,6 +561,8 @@ def void_chains(voids, dz, n, zb, jump=0.5):
                 segs.append((cur, cur[-1][0] + dz / 2)); cur = []
             cur.append((z, g))
         segs.append((cur, top_of(k) + dz / 2))
+    if os.environ.get("VOID_TIP", "1") == "1" and RAW_VOIDS:
+        segs = [(_extend_down(it, dz), z1) for it, z1 in segs]
     cut = []
     for it, z1 in segs:
         if (os.environ.get("CAD_KOMPAS_VOID_PERSISTENCE", "0") == "1"
@@ -550,9 +583,18 @@ def void_chains(voids, dz, n, zb, jump=0.5):
                 else: lv[-1] = (lv[-1][0], z1 + 0.02) if z1 - zs_c[-1] < 0.5 else lv[-1]
                 if lv[-1][1] < z1: lv.append((rings_c[-1], z1 + 0.02))
                 lv[0] = (lv[0][0], z0 - 0.1)
+                tip = 0.0
+                a0, a2 = it[0][1].area, it[2][1].area
+                if os.environ.get("VOID_TIP", "1") == "1" and a0 < 0.85 * a2:
+                    # отделение сужается книзу (канавка клином, конец сверла): сечения мельче порога
+                    # теряются, и дно выходит плоским выше настоящего. Продолжаем сужение вниз до острия
+                    w0, w2 = np.sqrt(a0), np.sqrt(a2)
+                    tip = min(1.0, 0.8 * w0 * 2 * dz / (w2 - w0))
+                    r0 = lv[0][0]; c = r0.mean(0)
+                    lv = [(c + 0.25 * (r0 - c), z0 - 0.1 - tip)] + lv
                 sol = loft(lv)
                 bb = sol.BoundingBox()
-                if sol.Volume() <= 0 or bb.zmin < z0 - 0.3 or bb.zmax > lv[-1][1] + 0.3:
+                if sol.Volume() <= 0 or bb.zmin < z0 - 0.3 - tip or bb.zmax > lv[-1][1] + 0.3:
                     sol = loft(lv, ruled=True)  # гладкий лофт выгнуло за свои уровни — прямые переходы
                     if sol.Volume() <= 0: raise RuntimeError("negative")
             else:

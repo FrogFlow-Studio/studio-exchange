@@ -210,12 +210,18 @@ def _project(x0, cons, iters: int = 6):
     return x
 
 
+def fit_tol(tol: float, noise: float) -> float:
+    """Допуск посадки на поверхности: два шума, но не больше двух допусков. Оценка шума на сглаженных
+    сканах студии бывает 0,6–1,4 мм (задача 22), и посадка с таким допуском срезала бы детали на миллиметры."""
+    return max(tol, min(2.0 * noise, 2.0 * tol))
+
+
 def idealize(scan: trimesh.Trimesh, tol: float = 0.3, noise: float = 0.0, *, seg: dict | None = None,
              angle_deg: float = 3.0, fair_iters: int = 10) -> tuple[trimesh.Trimesh, dict]:
     """Возвращает (выпрямленная сетка с теми же треугольниками, сведения)."""
     import regions
 
-    fit = max(tol, 2.0 * noise)
+    fit = fit_tol(tol, noise)
     if seg is None:
         step = float(np.median(scan.edges_unique_length))
         # область меньше нескольких треугольников — не поверхность, а случайность

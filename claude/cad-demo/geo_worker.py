@@ -463,19 +463,32 @@ def main() -> None:
         if restored or not scan.is_watertight:
             source = fixed
         timings["cleanup"] = time.perf_counter() - t
+        import regions
+
+        t = time.perf_counter()
+        step = float(np.median(source.edges_unique_length))
+        seg = regions.segment(source, tol=idealize.fit_tol(0.3, noise), min_area=max(6.0, 4 * step * step * 0.43),
+                              scan=source)
+        kinds = regions.summary(seg)
+        timings["segment"] = time.perf_counter() - t
+        # Прямое тело — для деталей из плоскостей и цилиндров. На кривой оболочке (линза, крышка) почти всё
+        # осталось бы треугольниками: тело строилось бы десятки минут и ничем не лучше гладкого 0к.
+        if kinds["plane"] + kinds["cylinder"] < 0.2:
+            raise SystemExit(f"кривая оболочка (плоскостей и цилиндров {round((kinds['plane'] + kinds['cylinder']) * 100)}% "
+                             "площади): прямое тело не строится")
         # Разметка дополняется узкими плоскостями (рёбра жёсткости) и скруглениями между плоскостями
-        # (задачи 25, 26, 29 Севера); не вышло — обычная разметка. CAD_STRAIGHT_PLUS=0 — без дополнений.
-        seg, plus = None, {}
-        if os.environ.get("CAD_STRAIGHT_PLUS", "1") != "0":
+        # (задачи 25, 26, 29 Севера), только у деталей, собранных из плоскостей: на кривой стенке они дробят
+        # её на грани. Не вышло — обычная разметка. CAD_STRAIGHT_PLUS=0 — без дополнений.
+        plus = {"plane_share_segment": kinds["plane"]}
+        if os.environ.get("CAD_STRAIGHT_PLUS", "1") != "0" and kinds["plane"] >= 0.3:
             t = time.perf_counter()
             try:
                 import straight_plus
 
-                seg, plus = straight_plus.augment(source, 0.3, noise)
-                plus = {k: v for k, v in plus.items() if k != "fillet_growth"}
+                seg, more = straight_plus.augment(source, 0.3, idealize.fit_tol(0.3, noise) / 2, seg=seg)
+                plus.update({k: v for k, v in more.items() if k != "fillet_growth"})
             except Exception as error:  # noqa: BLE001
                 print(f"    дополнение разметки не удалось ({type(error).__name__}): обычная разметка", flush=True)
-                seg = None
             timings["segment_plus"] = time.perf_counter() - t
         t = time.perf_counter()
         mesh, info = idealize.idealize(source, noise=noise, seg=seg)

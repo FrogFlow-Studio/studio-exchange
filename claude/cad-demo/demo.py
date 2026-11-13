@@ -766,6 +766,10 @@ def main() -> None:
         # тело по поверхности на огромном скане (миллионы треугольников) считается дольше: даём больше
         surf_limit = bg_limit + (480 if sheet["diagnostics"]["faces"] > 1_000_000 else 0)
         surf_proc, walls_proc = launch("surface", sj), launch("walls", wj)
+        # прямое тело (0п) тоже считается в фоне с начала: на кривой оболочке оно само отказывается
+        # после разметки, и ожидание не добавляется ко времени расчёта
+        pj = out / "straight.json"
+        straight_proc = launch("straight", pj) if os.environ.get("CAD_STRAIGHT", "1") != "0" else None
         kj = out / "smooth.json"
         smooth_job = None
 
@@ -909,28 +913,43 @@ def main() -> None:
         # Прямое тело: скан выпрямляется (плоскости ровные, рёбра — линии пересечения плоскостей), каждая
         # плоскость становится одной гранью. Выглядит как построенное в CAD, поэтому берётся вместо тел
         # по поверхности, если по точности им не уступает. CAD_STRAIGHT=0 — без него (для сравнения).
-        if os.environ.get("CAD_STRAIGHT", "1") != "0" and (best is None or best["n"] in ("0в", "0к")):
+        if straight_proc is not None and (best is None or best["n"] in ("0в", "0к")):
             t0 = time.time()
             log("2/4 попытка 0п: прямое тело — ровные грани и прямые рёбра по выпрямленному скану, без ИИ…", 600)
             try:
-                pj = out / "straight.json"
-                subprocess.run([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
-                                str(out / "sheet.json"), "1", str(pj), "straight"], check=True, timeout=900,
-                               env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                try:
+                    code = straight_proc.wait(timeout=max(10.0, 1200 - (time.time() - bg_started)))
+                except subprocess.TimeoutExpired:
+                    straight_proc.kill()
+                    raise
+                if code != 0 or not pj.exists():
+                    raise RuntimeError("прямое тело не построено (кривая оболочка или ошибка, см. журнал)")
                 g = json.loads(pj.read_text(encoding="utf-8"))
                 worker_times["0п"] = g.get("timings", {})
                 log("    " + g["meta"]["plan"])
                 itp = evaluate("0п", g["code"], g["meta"], t0, "ровные грани, без ИИ",
                                step_source=pj.with_suffix(".step"))
                 iterations.append(itp)
-                if itp["run"].get("ok") and itp["run"].get("valid") and not itp["gates"] and itp["cmp"] and (
-                        best is None or best["cmp"] is None
-                        or itp["cmp"]["within_tol_share"] >= best["cmp"]["within_tol_share"] - 0.01):
+                ok = itp["run"].get("ok") and itp["run"].get("valid") and not itp["gates"] and itp["cmp"] and (
+                    best is None or best["cmp"] is None
+                    or itp["cmp"]["within_tol_share"] >= best["cmp"]["within_tol_share"] - 0.01)
+                if ok and best is not None and best["cmp"] is not None and a.tol > 0.3:
+                    # Допуск поднят по шуму: при нём срезанные посадкой детали не видны. Прямое тело
+                    # должно не уступать и при 0,3 мм (на сглаженных сканах студии шум завышен).
+                    def strict(it):
+                        m = load_stl(it["dir"] / "model.stl")
+                        return cmpmod.compare(scan, m, tol=0.3)["within_tol_share"]
+
+                    sp, sb = strict(itp), strict(best)
+                    log(f"    при 0,3 мм: прямое тело {sp * 100:.1f}%, {best['n']} {sb * 100:.1f}%")
+                    ok = sp >= sb - 0.015
+                if ok:
                     best = itp
             except subprocess.TimeoutExpired:
                 log("    прямое тело не уложилось во время")
             except Exception as ex:  # noqa: BLE001
-                log(f"    прямое тело не получилось ({type(ex).__name__})")
+                log(f"    прямое тело не получилось: {ex}" if isinstance(ex, RuntimeError) else
+                    f"    прямое тело не получилось ({type(ex).__name__})")
         # Уточнение по скану: каждая грань нашей модели заново подгоняется по своим точкам скана,
         # точные размеры пишутся обратно в редактируемую программу (fitfaces.py + merge.py)
         if best is not None and best["run"].get("ok") and "importStep" not in best["code"]:
@@ -959,7 +978,7 @@ def main() -> None:
                     log("    уточнять нечего: размеры и так ближе всего к скану")
             except Exception as ex:  # noqa: BLE001
                 log(f"    уточнение по скану не удалось ({type(ex).__name__})")
-        for proc in (surf_proc, walls_proc):
+        for proc in (surf_proc, walls_proc, straight_proc):
             if proc is not None and proc.poll() is None:
                 proc.kill()  # не понадобился или не уложился во время
 

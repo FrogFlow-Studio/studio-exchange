@@ -147,13 +147,14 @@ def _on_ring(mesh, region, guides, step, limit):
     return False
 
 
-def augment(mesh, tol, noise):
-    """Update a copy of the segmentation and report how far evidence reaches toward each rail."""
+def augment(mesh, tol, noise, seg=None):
+    """Update a copy of the segmentation and report how far evidence reaches toward each rail.
+    seg — готовая разметка regions.segment с теми же параметрами (чтобы не считать её второй раз)."""
     from regions import segment
 
     step = float(np.median(mesh.edges_unique_length))
     limit = max(tol, 2 * noise)
-    source = segment(mesh, tol=limit, min_area=max(6., 4 * step * step * .43), scan=mesh)
+    source = seg if seg is not None else segment(mesh, tol=limit, min_area=max(6., 4 * step * step * .43), scan=mesh)
     seg = {**source, "label": np.array(source["label"], copy=True), "regions": [dict(r) for r in source["regions"]]}
     areas = mesh.area_faces
     strips = narrow_planes(mesh, seg, tol, noise)

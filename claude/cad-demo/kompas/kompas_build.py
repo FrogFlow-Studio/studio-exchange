@@ -455,12 +455,85 @@ def islands(secs, zb, dz=0.2, n=32, min_area=3.0):
             for h in ref.interiors:
                 if Polygon(h).area < 1: continue
                 sol = sol.cut(cq.Workplane().add(prism(ring_pts(h.coords, n, 0.03), za - 0.05, zb2 + 0.05)))
+            if os.environ.get("BOSS_SLOTS", "1") == "1":
+                sol, ns = _boss_slots(sol, ref, ps, dz, n)
+            else:
+                ns = 0
             solids.append(sol.val())
-            print("island", round(za, 2), round(zb2, 2), round(ref.area, 1), len(ref.interiors), flush=True)
+            print("island", round(za, 2), round(zb2, 2), round(ref.area, 1), len(ref.interiors), "slots", ns, flush=True)
         except Exception as e:
             print("island fail", round(za, 2), str(e)[:50], flush=True)
     return solids
 
+
+
+def _boss_slots(sol, ref, ps, dz, n, min_area=0.4, shrink=0.12):
+    """пазы в стенке бобышки: где на уровне z в сечении нет материала, а в контуре бобышки он есть.
+    Соседние уровни с перекрывающимся пазом — один вырез на всю их высоту (как паз фрезой).
+    Кольцевые недостачи (фаска, скругление по краю) не режем."""
+    F = ref.buffer(0)
+    byz = {}
+    for z, q in ps:
+        byz.setdefault(z, []).append(q)
+    runs = []
+    for z in sorted(byz):
+        M = F.difference(shapely.union_all(byz[z]).buffer(0)).buffer(-shrink).buffer(shrink)
+        for g in getattr(M, "geoms", [M]):
+            if g.is_empty or g.geom_type != "Polygon" or g.area < min_area or len(g.interiors) or g.area > 0.3 * F.area:
+                continue
+            if g.buffer(-0.3).is_empty:  # щель уже 0.6 мм — шум сечения, не паз
+                continue
+            for r in runs:
+                if abs(r["z1"] - z) < dz * 1.5 and r["g"][-1].intersection(g).area > 0.4 * min(r["g"][-1].area, g.area):
+                    r["z1"] = z; r["g"].append(g); break
+            else:
+                runs.append({"z0": z, "z1": z, "g": [g]})
+    # выступы внутрь отверстия (шпонка, упор): материал в сечении внутри отверстия контура
+    tabs = []
+    for h in ref.interiors:
+        H = Polygon(h)
+        if H.area < 1: continue
+        for z in sorted(byz):
+            T = shapely.union_all(byz[z]).buffer(0).intersection(H).buffer(-shrink).buffer(shrink)
+            for g in getattr(T, "geoms", [T]):
+                if g.is_empty or g.geom_type != "Polygon" or g.area < min_area or g.buffer(-0.3).is_empty or g.area > 0.5 * H.area:
+                    continue
+                for r in tabs:
+                    if abs(r["z1"] - z) < dz * 1.5 and r["g"][-1].intersection(g).area > 0.4 * min(r["g"][-1].area, g.area):
+                        r["z1"] = z; r["g"].append(g); break
+                else:
+                    tabs.append({"z0": z, "z1": z, "g": [g], "H": H})
+    k = 0
+    for r in tabs:
+        if len(r["g"]) < 3: continue
+        g = shapely.intersection_all(r["g"])
+        if g.is_empty or g.area < min_area: g = r["g"][len(r["g"]) // 2]
+        if g.geom_type != "Polygon": g = max(g.geoms, key=lambda q: q.area)
+        # выступ врастает в стенку отверстия
+        g = g.buffer(0.2, join_style=2).intersection(r["H"].buffer(0.2)).buffer(0)
+        if g.geom_type != "Polygon": continue
+        try:
+            add = cq.Workplane().add(prism(ring_pts(g.exterior.coords, n, 0.02), r["z0"] - dz / 2, r["z1"] + dz / 2))
+            nb = sol.union(add)
+            if nb.val().isValid() and len(nb.val().Solids()) == 1:
+                sol = nb; k += 1
+        except Exception:
+            pass
+    for r in runs:
+        if len(r["g"]) < 3: continue
+        g = shapely.intersection_all(r["g"])
+        if g.is_empty or g.area < min_area: g = r["g"][len(r["g"]) // 2]
+        if g.geom_type != "Polygon": g = max(g.geoms, key=lambda q: q.area)
+        # паз, выходящий на край бобышки, продлеваем наружу, чтобы не осталось плёнки
+        g = g.buffer(0.15, join_style=2)
+        try:
+            cutter = cq.Workplane().add(prism(ring_pts(g.exterior.coords, n, 0.02), r["z0"] - dz / 2, r["z1"] + dz / 2))
+            nb = sol.cut(cutter)
+            if nb.val().isValid() and nb.val().Volume() > 0.7 * sol.val().Volume():
+                sol = nb; k += 1
+        except Exception:
+            pass
+    return sol, k
 
 def top_surface(mesh, ring, zb, band=3.0, down=False):
     """верх стенки: гладкая поверхность z = f(x, y) (квадратичная) по точкам скана, смотрящим вверх у края"""

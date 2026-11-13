@@ -266,6 +266,12 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
         print("bottom z", round(float(zz.min()), 2), round(float(zz.max()), 2), flush=True)
         levels[0] = (levels[0][0], min(levels[0][1], float(zz.min()) - 0.3))
     TOPINFO["bcoef"] = bcoef
+    TOPINFO["dome"] = False
+    if os.environ.get("BOTTOM_DOME", "0") == "1" and pads:
+        # дно-купол: отдельный лофт по срезам низа (pad ниже) срастается со стенкой; стенку вниз не тянем
+        # и плоскостью дна не режем — иначе на дне остаётся уступ по контуру купола
+        TOPINFO["bcoef"] = None; TOPINFO["dome"] = True
+        levels[0] = (levels[0][0], zs[keep[0]] - dz / 2)
     body = cq.Workplane().add(loft(levels))
     TOPINFO.update(coef=coef, ztop=ztop, ring=rings[-1])
     # пустоты внутри наружного контура по слоям
@@ -287,7 +293,22 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
     if TOPINFO.get("pads"):
         pz = [p[0] for p in TOPINFO["pads"]]; big = max(TOPINFO["pads"], key=lambda p: p[2])[1]
         try:
-            isl.append(prism(ring_pts(big.exterior.coords, n, 0.03), min(pz) - dz / 2, outer[0][0] + 0.3))
+            # дно-купол: лофт по срезам низа (от самого нижнего, маленького, к полному), а не плоская площадка со ступенькой
+            pd = sorted(TOPINFO["pads"], key=lambda p: p[0])
+            done = False
+            if os.environ.get("PAD_LOFT", "1") == "1" and len(pd) >= 1:
+                try:
+                    lv = [(ring_pts(p[1].exterior.coords, n, 0.03), p[0]) for p in pd]
+                    lv[0] = (lv[0][0], pd[0][0] - dz / 2)
+                    lv.append((ring_pts(outer[0][1].exterior.coords, n, 0.03), outer[0][0] + 0.3))
+                    sol = loft(lv)
+                    bb = sol.BoundingBox()
+                    if sol.isValid() and sol.Volume() > 0 and bb.zmin > pd[0][0] - dz / 2 - 0.3:
+                        isl.append(sol); done = True
+                except Exception as e:
+                    print("pad loft fail", str(e)[:50], flush=True)
+            if not done:
+                isl.append(prism(ring_pts(big.exterior.coords, n, 0.03), min(pz) - dz / 2, outer[0][0] + 0.3))
             print("pad", round(min(pz) - dz / 2, 2), round(Polygon(big.exterior).area, 1), flush=True)
         except Exception as e:
             print("pad fail", str(e)[:50], flush=True)
@@ -527,11 +548,35 @@ def _boss_slots(sol, ref, ps, dz, n, min_area=0.4, shrink=0.12):
                 from shapely.affinity import scale
                 from shapely.ops import nearest_points
                 lv = [(ring_pts(q.exterior.coords, n, 0.01), z) for q, z in zip(gs, r["z"])]
-                def tip(q):
-                    o = nearest_points(r["H"].exterior, q.centroid)[0]
-                    return ring_pts(scale(q, 0.2, 0.2, origin=o).exterior.coords, n, 0.01)
-                lv = [(tip(gs[0]), r["z0"] - dz)] + lv + [(tip(gs[-1]), r["z1"] + dz)]
-                add = cq.Workplane().add(loft(lv, ruled=True))
+                def tip(q, strip):
+                    # strip: тонкая полоска язычка у стенки отверстия — ширина та же, толщина сходит на нет (ровный скос);
+                    # иначе язычок сжимается к точке у стенки (запасной вариант, лофт надёжнее)
+                    t = None
+                    if isinstance(strip, float):
+                        t = q.intersection(r["H"].exterior.buffer(strip)).buffer(0)
+                    elif strip == 2:
+                        # сдвигаем язычок к стенке на его вылет и берём общую часть — прямоугольная полоска у стенки
+                        from shapely.affinity import translate
+                        o = nearest_points(r["H"].exterior, q.centroid)[0]; c = r["H"].centroid
+                        d = np.array([o.x - c.x, o.y - c.y]); d /= max(np.linalg.norm(d), 1e-9)
+                        depth = q.intersection(r["H"]).area / max(q.length / 2, 1e-6) + 0.1
+                        t = q.intersection(translate(q, d[0] * depth, d[1] * depth)).buffer(0)
+                    if t is None or t.geom_type != "Polygon" or t.area < 0.02:
+                        o = nearest_points(r["H"].exterior, q.centroid)[0]
+                        t = scale(q, 0.2, 0.2, origin=o)
+                    return ring_pts(t.exterior.coords, n, 0.01)
+                done = False
+                for strip in (0.12, 0.18, 0.08, 0.25, 2, 0):
+                    try:
+                        lv2 = [(tip(gs[0], strip), r["z0"] - dz)] + lv + [(tip(gs[-1], strip), r["z1"] + dz)]
+                        nb = sol.union(cq.Workplane().add(loft(lv2, ruled=True)))
+                        ok = nb.val().isValid() and len(nb.val().Solids()) == 1
+                        if os.environ.get("TAB_DEBUG"): print("tab try", strip, ok, len(nb.val().Solids()), flush=True)
+                        if ok:
+                            sol = nb; k += 1; done = True; break
+                    except Exception as e:
+                        if os.environ.get("TAB_DEBUG"): print("tab try", strip, "fail", str(e)[:60], flush=True)
+                continue
             else:
                 g = shapely.intersection_all(gs)
                 if g.is_empty or g.geom_type != "Polygon": g = gs[len(gs) // 2]
@@ -560,12 +605,15 @@ def _boss_slots(sol, ref, ps, dz, n, min_area=0.4, shrink=0.12):
 def top_surface(mesh, ring, zb, band=3.0, down=False):
     """верх стенки: гладкая поверхность z = f(x, y) (квадратичная) по точкам скана, смотрящим вверх у края"""
     from shapely.geometry import Point
-    c = mesh.triangles_center; nz = mesh.face_normals[:, 2]
+    # точки по площади, а не центры треугольников: крупные плоские треугольники скана иначе почти не голосуют
+    c, fi = trimesh.sample.sample_surface(mesh, int(os.environ.get("SURF_SAMPLES", "60000")), seed=1) if os.environ.get("SURF_SAMPLE", "1") == "1" else (mesh.triangles_center, np.arange(len(mesh.faces)))
+    nz = mesh.face_normals[fi, 2]
     sel = ((nz < -0.8) & (c[:, 2] < zb + 1.5)) if down else ((nz > 0.8) & (c[:, 2] > zb - 1.5))
     P = c[sel]
     edge = Polygon(ring).exterior
-    d = np.array([edge.distance(Point(x, y)) for x, y in P[:, :2]])
-    inside = np.array([Polygon(ring).contains(Point(x, y)) for x, y in P[:, :2]])
+    pts = shapely.points(P[:, 0], P[:, 1])
+    d = shapely.distance(edge, pts)
+    inside = shapely.contains_xy(Polygon(ring), P[:, 0], P[:, 1])
     P = P[((d < band) | down) & inside]
     if len(P) < 30:
         return None

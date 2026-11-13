@@ -351,7 +351,8 @@ def islands(secs, zb, dz=0.2, n=32, min_area=3.0):
             print("island at wall skipped", round(g["foot"].area, 1), flush=True); continue
         zset = sorted({z for z, _ in ps})
         if len(zset) < 2: continue
-        za, zb2 = zset[0] - dz / 2, zset[-1] + dz / 2
+        # низ бобышки утапливаем в пол кармана, чтобы она срослась с телом, а не висела отдельно
+        za, zb2 = zset[0] - dz / 2 - float(os.environ.get("CAD_SECTIONS_EMBED", "0.6")), zset[-1] + dz / 2
         with_holes = [q for _, q in ps if len(q.interiors)]
         ref = max(with_holes or [q for _, q in ps], key=lambda q: Polygon(q.exterior).area)
         single = len(zset) == len(ps)
@@ -458,3 +459,82 @@ def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=0.6,
         except Exception:
             pass
     return out
+
+
+def assemble(scan, log=print):
+    """Сборка «как в Компасе» вдоль оси z выровненного скана. Возвращает (тело, сведения).
+    Порядок операций: наружная стенка (лофт по сечениям, сглаженным по высоте) → вырез кармана слоями →
+    срез верха и низа гладкими поверхностями по скану → бобышки и площадка выдавливанием →
+    поправка по сечениям (пазы и канавки вырезом). Если деталь не «стопка» вдоль z, тело выйдет негодным
+    или далёким от скана — тогда попытку отбрасывает сравнение со сканом."""
+    import tempfile
+    TOPINFO.clear()
+    info = {}
+    t = time.time()
+    pieces, cut, isl = build2(scan)
+    body = pieces[0]
+    if not body.isValid() or body.Volume() <= 0:
+        raise RuntimeError("наружная стенка не построена")
+    info["voids"] = len(cut)
+    skipped = 0
+    for v in sorted(cut, key=lambda c: -c.Volume()):
+        try:
+            nb = body.cut(v)
+            if nb.isValid() and nb.Volume() > 0.5 * body.Volume():
+                body = nb
+            else:
+                skipped += 1
+        except Exception:  # noqa: BLE001
+            skipped += 1
+    info["voids_skipped"] = skipped
+    bb = pieces[0].BoundingBox()
+    for key, below in (("coef", False), ("bcoef", True)):
+        if TOPINFO.get(key) is not None:
+            nb = cut_above(body, TOPINFO[key], (bb.xmin, bb.ymin, bb.xmax, bb.ymax), below=below)
+            if nb.isValid() and nb.Volume() > 0:
+                body = nb
+                info["bottom_surface" if below else "top_surface"] = True
+    body = body.clean()
+    added = 0
+    for p in isl:
+        try:
+            nb = body.fuse(p)
+            if nb.isValid() and len(nb.Solids()) <= len(body.Solids()):
+                body = nb; added += 1
+        except Exception:  # noqa: BLE001
+            pass
+    info["bosses"] = added
+    body = body.clean()
+    if os.environ.get("CAD_SECTIONS_CORRECT", "1") == "1":
+        tf = os.path.join(tempfile.gettempdir(), "_kcorr%d.stl" % os.getpid())
+        cq.exporters.export(body, tf, tolerance=0.03, angularTolerance=0.15)
+        mm = trimesh.load(tf, force="mesh")
+        nc = 0
+        for v in sorted(correction_prisms(scan, mm), key=lambda c: -c.Volume()):
+            try:
+                nb = body.cut(v)
+                if nb.isValid() and nb.Volume() > 0.9 * body.Volume():
+                    body = nb; nc += 1
+            except Exception:  # noqa: BLE001
+                pass
+        info["correction_cuts"] = nc
+        body = body.clean()
+        try:
+            os.remove(tf)
+        except OSError:
+            pass
+    sols = body.Solids()
+    if len(sols) > 1:
+        # мелкие отрезанные обрывки (тонкие перемычки между вырезами) — убираем, если их меньше 1% объёма
+        sols = sorted(sols, key=lambda x: -x.Volume())
+        rest = sum(x.Volume() for x in sols[1:])
+        if rest < 0.01 * sols[0].Volume():
+            body = sols[0]
+            info["fragments_dropped"] = len(sols) - 1
+        else:
+            raise RuntimeError(f"сборка распалась на {len(sols)} тела")
+    info["faces"] = len(body.Faces())
+    info["seconds"] = round(time.time() - t, 1)
+    log(f"    сборка по сечениям: стенка лофтом, вырезов кармана {len(cut) - skipped}, бобышек {added}, "
+        f"пазов поправкой {info.get('correction_cuts', 0)}, граней {info['faces']}, {info['seconds']} с")
+    return body, info

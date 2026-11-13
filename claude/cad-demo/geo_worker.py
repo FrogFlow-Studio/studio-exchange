@@ -625,6 +625,29 @@ def main() -> None:
                 meta["plan"] += "; видимых дефектов не найдено"
         except Exception as error:  # noqa: BLE001
             print(f"    поиск дефектов не удался ({type(error).__name__}: {error})", flush=True)
+    elif KIND == "sections":
+        # Сборка «как в Компасе» (попытка 0с): стенка лофтом по сечениям, карман вырезом, бобышки
+        # выдавливанием, верх и низ — гладкие поверхности по скану. Для деталей-«стопок» вдоль высоты.
+        import cadquery as cq
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "kompas"))
+        import kompas_build
+
+        with measured(timings, "sections"):
+            body, info = kompas_build.assemble(scan, log=lambda s: print(s, flush=True))
+        if not body.isValid() or body.Volume() <= 0:
+            raise SystemExit("сборка по сечениям дала негодное тело")
+        step = Path(sys.argv[4]).with_suffix(".step")
+        with measured(timings, "step_write"):
+            cq.exporters.export(body, str(step))
+        code = f"import cadquery as cq\nresult = cq.importers.importStep({str(step)!r}).val()\n"
+        meta = {"plan": (f"сборка как в Компасе: наружная стенка — один гладкий лофт по сечениям, карман вырезан "
+                         f"({info.get('voids', 0) - info.get('voids_skipped', 0)} вырезов), бобышек выдавлено "
+                         f"{info.get('bosses', 0)}, пазов вырезано поправкой {info.get('correction_cuts', 0)}, "
+                         f"верх{' и низ' if info.get('bottom_surface') else ''} — гладкие поверхности по скану; "
+                         f"граней {info.get('faces')}"),
+                "restored": [], "sections": info,
+                "assumptions": ["деталь собрана вдоль высоты: стенка, карман, бобышки — как операции в CAD"]}
     else:
         code, meta = geometric.build(scan, sheet, restore=sys.argv[3] == "1")
     timings["total"] = time.perf_counter() - started

@@ -453,6 +453,7 @@ ROUTES = {
     "0в": "по поверхности скана: любая форма мелкими плоскими гранями",
     "0к": "гладкое тело: любая форма гладкими гранями с точными плоскостями, отверстиями и скруглениями",
     "0п": "прямое тело: плоскости — ровные грани с прямыми рёбрами, как построено в CAD",
+    "0с": "сборка как в Компасе: стенка лофтом по сечениям, карман, бобышки, гладкие поверхности",
     "0ж": "по сечениям, размеры граней уточнены по точкам скана",
 }
 
@@ -467,7 +468,8 @@ def route_text(iterations: list, best: dict | None) -> str:
     tried = [f"{it['n']} ({share(it)})" for it in iterations if str(it["n"]) in ROUTES]
     name = ROUTES.get(str(best["n"]), "вариант ИИ или дополнительного метода")
     why = {"0к": "по точности он не уступает телу из мелких граней, а править его в CAD удобнее",
-           "0п": "по точности он не уступает телам по поверхности, а грани у него ровные и рёбра прямые"}.get(
+           "0п": "по точности он не уступает телам по поверхности, а грани у него ровные и рёбра прямые",
+           "0с": "по точности почти не уступает остальным, а собран операциями, как в CAD, гладкими гранями"}.get(
         str(best["n"]), "он лучше остальных совпал со сканом")
     return (f"Выбран путь {best['n']} — {name}; {why}. "
             f"Пробовались по очереди: {', '.join(tried) if tried else best['n']}.")
@@ -707,7 +709,7 @@ def main() -> None:
         it_dir.mkdir(exist_ok=True)
         log("3/4 строю модель…")
         # черновик из стенок собирается из сотен пластин: на крупной детали это минуты
-        limit = 420 if n in ("0б", "0в", "0к", "0п") else 180
+        limit = 420 if n in ("0б", "0в", "0к", "0п", "0с") else 180
         build_started = time.perf_counter()
         run = run_code(code, it_dir, timeout=limit, step_source=step_source) if code else {
             "ok": False, "error": "в ответе нет блока python"}
@@ -770,6 +772,9 @@ def main() -> None:
         # после разметки, и ожидание не добавляется ко времени расчёта
         pj = out / "straight.json"
         straight_proc = launch("straight", pj) if os.environ.get("CAD_STRAIGHT", "1") != "0" else None
+        # сборка «как в Компасе» (0с) — тоже в фоне с начала; на деталях не «стопкой» сама отпадёт
+        cj = out / "sections.json"
+        sections_proc = launch("sections", cj) if os.environ.get("CAD_SECTIONS", "1") != "0" else None
         kj = out / "smooth.json"
         smooth_job = None
 
@@ -950,6 +955,42 @@ def main() -> None:
             except Exception as ex:  # noqa: BLE001
                 log(f"    прямое тело не получилось: {ex}" if isinstance(ex, RuntimeError) else
                     f"    прямое тело не получилось ({type(ex).__name__})")
+        # Сборка «как в Компасе» (0с): операции стенка → карман → бобышки, гладкие поверхности вместо
+        # треугольников. Берётся вместо тел по поверхности и прямого тела, если при 0,3 мм уступает им
+        # не больше 1,5 п. п. CAD_SECTIONS=0 — без неё.
+        if sections_proc is not None and (best is None or best["n"] in ("0в", "0к", "0п")):
+            t0 = time.time()
+            log("2/4 попытка 0с: сборка как в Компасе — стенка лофтом, карман, бобышки, без ИИ…", 300)
+            try:
+                try:
+                    code = sections_proc.wait(timeout=max(10.0, 1500 - (time.time() - bg_started)))
+                except subprocess.TimeoutExpired:
+                    sections_proc.kill()
+                    raise
+                if code != 0 or not cj.exists():
+                    raise RuntimeError("сборка по сечениям не получилась (деталь не «стопкой» или ошибка, см. журнал)")
+                g = json.loads(cj.read_text(encoding="utf-8"))
+                worker_times["0с"] = g.get("timings", {})
+                log("    " + g["meta"]["plan"])
+                its = evaluate("0с", g["code"], g["meta"], t0, "как в Компасе, без ИИ",
+                               step_source=cj.with_suffix(".step"))
+                iterations.append(its)
+                ok = bool(its["run"].get("ok") and its["run"].get("valid") and not its["gates"] and its["cmp"])
+                if ok and best is not None and best["cmp"] is not None:
+                    def strict(it):
+                        m = load_stl(it["dir"] / "model.stl")
+                        return cmpmod.compare(scan, m, tol=0.3)["within_tol_share"]
+
+                    ss, sb = strict(its), strict(best)
+                    log(f"    при 0,3 мм: сборка как в Компасе {ss * 100:.1f}%, {best['n']} {sb * 100:.1f}%")
+                    ok = ss >= sb - 0.015
+                if ok:
+                    best = its
+            except subprocess.TimeoutExpired:
+                log("    сборка как в Компасе не уложилась во время")
+            except Exception as ex:  # noqa: BLE001
+                log(f"    сборка как в Компасе не получилась: {ex}" if isinstance(ex, RuntimeError) else
+                    f"    сборка как в Компасе не получилась ({type(ex).__name__})")
         # Уточнение по скану: каждая грань нашей модели заново подгоняется по своим точкам скана,
         # точные размеры пишутся обратно в редактируемую программу (fitfaces.py + merge.py)
         if best is not None and best["run"].get("ok") and "importStep" not in best["code"]:
@@ -978,21 +1019,22 @@ def main() -> None:
                     log("    уточнять нечего: размеры и так ближе всего к скану")
             except Exception as ex:  # noqa: BLE001
                 log(f"    уточнение по скану не удалось ({type(ex).__name__})")
-        for proc in (surf_proc, walls_proc, straight_proc):
+        for proc in (surf_proc, walls_proc, straight_proc, sections_proc):
             if proc is not None and proc.poll() is None:
                 proc.kill()  # не понадобился или не уложился во время
 
     hint = ""
-    if best is not None and best["n"] in (0, "0б", "0в", "0к", "0п") and best["cmp"]:
+    if best is not None and best["n"] in (0, "0б", "0в", "0к", "0п", "0с") and best["cmp"]:
         c0 = best["cmp"]
         hint = ("\n\nДля справки: черновик без ИИ совпал со сканом на "
                 f"{c0['within_tol_share']*100:.1f}%. Он копирует форму ступеньками и не знает замысла; "
                 "построй деталь по замыслу. Что черновик восстановил: " + "; ".join(best["meta"].get("restored", [])))
-    if prov and best is not None and best["n"] in ("0б", "0в", "0к", "0п"):
+    if prov and best is not None and best["n"] in ("0б", "0в", "0к", "0п", "0с"):
         DRAFT["step"] = best["dir"] / "model.step"
         hint += ("\n\nВ коде доступна готовая переменная `draft` (cq.Shape): это черновик "
                  + {"0б": "из стенок, ", "0к": "по скану гладкими B-сплайн гранями, ",
-                    "0п": "по выпрямленному скану: ровные плоские грани, остальное мелкими гранями, "}.get(
+                    "0п": "по выпрямленному скану: ровные плоские грани, остальное мелкими гранями, ",
+                    "0с": "собранный как в Компасе (стенка лофтом, карман, бобышки), "}.get(
                      best["n"], "по поверхности скана (много мелких плоских граней), ")
                  + f"он уже совпал со сканом на {best['cmp']['within_tol_share']*100:.1f}%. Не строй деталь "
                  "заново: начни с него (например, result = draft.fuse(...) или draft.cut(...)) и исправь "

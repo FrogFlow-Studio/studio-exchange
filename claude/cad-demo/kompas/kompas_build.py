@@ -96,7 +96,7 @@ def _inset(ring, d):
     return ring - nrm * d
 
 
-def round_rings(ring, zfun, r, k=6):
+def round_rings(ring, zfun, r, k=int(os.environ.get("ROUND_K", "4"))):
     """кольца скругления кромки дна радиусом r: четверть окружности от дна (z = zfun(x, y)) вверх на r"""
     # нижнее кольцо — плоское (торец лофта закрывается плоской гранью), ниже дна; дно потом срезает
     out = [(_inset(ring, r), float(np.min(zfun(ring[:, 0], ring[:, 1]))) - 0.3)]

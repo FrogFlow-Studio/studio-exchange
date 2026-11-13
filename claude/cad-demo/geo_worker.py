@@ -544,8 +544,20 @@ def main() -> None:
             builder = planar_brep_cyl
         try:
             extra = {"tol": fit} if builder is not planar_brep else {}
-            body, built = builder.build(V, F, label, info["regions"], smooth_tol=fit if smooth else None,
-                                        smooth_edge_tol=fit, smooth_budget=180.0, **extra)
+            if smooth and os.environ.get("CAD_STRAIGHT_REPAIR", "1") != "0":
+                # опыт: смятые места, найденные defects, освобождаются и закрываются гладкими гранями
+                # (задача 36 Севера); не больше двух проходов, принимается только без потерь
+                import repair
+
+                def rebuild(*state, **_):
+                    return builder.build(*state, smooth_tol=fit, smooth_edge_tol=fit, smooth_budget=180.0, **extra)
+
+                body, built = repair.repair_build(V, F, label, info["regions"], source, fit, build=rebuild)
+                built["repair_passes"] = [{k: v for k, v in p.items() if not hasattr(v, "shape")}
+                                          for p in built.get("repair_passes", [])]
+            else:
+                body, built = builder.build(V, F, label, info["regions"], smooth_tol=fit if smooth else None,
+                                            smooth_edge_tol=fit, smooth_budget=180.0, **extra)
             if smooth and not built["valid"]:
                 raise RuntimeError("тело с гладкими гранями невалидно")
         except Exception as error:  # noqa: BLE001

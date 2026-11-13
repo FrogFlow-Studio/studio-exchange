@@ -269,45 +269,11 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
         v = Polygon(big.exterior).difference(shapely.union_all(polys)).buffer(-0.15).buffer(0.15)
         geoms = [g for g in getattr(v, "geoms", [v]) if not g.is_empty and g.area >= 1.0]
         voids.append((z, geoms))
-    L = []
-    for z, g in voids:
-        sig = len(g)
-        if L and L[-1][-1][2] == sig and shapely.union_all(L[-1][-1][1] or [Polygon()]).symmetric_difference(shapely.union_all(g or [Polygon()])).area < 0.5 + 0.03 * sum(x.area for x in g):
-            L[-1].append((z, g, sig))
-        else:
-            L.append([(z, g, sig)])
-    cut = []
-    for lay in L:
-        z0, z1 = lay[0][0] - dz / 2, lay[-1][0] + dz / 2
-        if z1 >= zb - 1e-6: z1 = TOPINFO['ztop'] + 0.5
-        mid = lay[len(lay) // 2][1]
-        if len(lay) >= 3 and len({len(x[1]) for x in lay}) == 1:
-            # стенки кармана — лофт по отслеженным контурам, а не лесенка
-            chains = track([(z, g) for z, g, _ in lay])
-            done = True
-            pieces_l = []
-            for ch in chains:
-                try:
-                    zs_c = [z for z, _ in ch]
-                    rings_c = [ring_pts(g.exterior.coords, n, 0.03) for _, g in ch]
-                    kk = pick_levels(zs_c, rings_c, jump=0.5, dzmax=1.5, dzmin=0.4)
-                    if len(kk) < 2: raise RuntimeError("short")
-                    lz = [zs_c[i] for i in kk]; lz[0] = z0 - 0.02; lz[-1] = z1 + 0.02
-                    sol = cq.Workplane().add(loft([(rings_c[i], z) for i, z in zip(kk, lz)]))
-                    pieces_l.append(sol.val())
-                except Exception as e:
-                    print("void loft fail", round(z0, 2), str(e)[:50], flush=True); done = False; break
-            if done:
-                cut.extend(pieces_l); print("void loft", round(z0, 2), round(z1, 2), len(pieces_l), flush=True)
-                continue
-        print("void prism", round(z0, 2), round(z1, 2), len(mid), flush=True)
-        for g in mid:
-            try:
-                s = cq.Workplane().add(prism(ring_pts(g.exterior.coords, n, 0.03), z0 - 0.02, z1 + 0.02))
-                cut.append(s.val())
-            except Exception as e:
-                print("void fail", round(z0, 2), str(e)[:50], flush=True)
-    print("void layers", len(L), "void prisms", len(cut), flush=True)
+    if os.environ.get("VOIDS", "chains") == "chains":
+        cut = void_chains(voids, dz, n, zb)
+        print("void chains", len(cut), flush=True)
+    else:
+        cut = void_layers(voids, dz, n, zb)
     pieces = [body.val()]
     isl = islands(secs, zb, dz, n)
     # выступ под дном (площадка): выдавливание самого большого из отрезанных нижних срезов до дна
@@ -320,6 +286,126 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
             print("pad fail", str(e)[:50], flush=True)
     return pieces, cut, isl
 
+
+
+def void_layers(voids, dz, n, zb):
+    """прежний способ: слои с одинаковой формой пустот, лофт или призма на слой"""
+    if True:
+        L = []
+        for z, g in voids:
+            sig = len(g)
+            if L and L[-1][-1][2] == sig and shapely.union_all(L[-1][-1][1] or [Polygon()]).symmetric_difference(shapely.union_all(g or [Polygon()])).area < 0.5 + 0.03 * sum(x.area for x in g):
+                L[-1].append((z, g, sig))
+            else:
+                L.append([(z, g, sig)])
+        cut = []
+        for lay in L:
+            z0, z1 = lay[0][0] - dz / 2, lay[-1][0] + dz / 2
+            if z1 >= zb - 1e-6: z1 = TOPINFO['ztop'] + 0.5
+            mid = lay[len(lay) // 2][1]
+            if len(lay) >= 3 and len({len(x[1]) for x in lay}) == 1:
+                # стенки кармана — лофт по отслеженным контурам, а не лесенка
+                chains = track([(z, g) for z, g, _ in lay])
+                done = True
+                pieces_l = []
+                for ch in chains:
+                    try:
+                        zs_c = [z for z, _ in ch]
+                        rings_c = [ring_pts(g.exterior.coords, n, 0.03) for _, g in ch]
+                        kk = pick_levels(zs_c, rings_c, jump=0.5, dzmax=1.5, dzmin=0.4)
+                        if len(kk) < 2: raise RuntimeError("short")
+                        lz = [zs_c[i] for i in kk]; lz[0] = z0 - 0.02; lz[-1] = z1 + 0.02
+                        sol = cq.Workplane().add(loft([(rings_c[i], z) for i, z in zip(kk, lz)]))
+                        pieces_l.append(sol.val())
+                    except Exception as e:
+                        print("void loft fail", round(z0, 2), str(e)[:50], flush=True); done = False; break
+                if done:
+                    cut.extend(pieces_l); print("void loft", round(z0, 2), round(z1, 2), len(pieces_l), flush=True)
+                    continue
+            print("void prism", round(z0, 2), round(z1, 2), len(mid), flush=True)
+            for g in mid:
+                try:
+                    s = cq.Workplane().add(prism(ring_pts(g.exterior.coords, n, 0.03), z0 - 0.02, z1 + 0.02))
+                    cut.append(s.val())
+                except Exception as e:
+                    print("void fail", round(z0, 2), str(e)[:50], flush=True)
+        print("void layers", len(L), "void prisms", len(cut), flush=True)
+        return cut
+
+
+def void_chains(voids, dz, n, zb, jump=0.5):
+    """каждое отделение кармана — своя цепочка контуров по всей высоте и один лофт.
+    Отделение, которое выше сливается с большим (начались рёбра), продолжается
+    вверх до конца того, с чем слилось: его стенки не обрываются ступенькой."""
+    chains = []  # {"items": [(z, poly)], "open": bool, "into": idx}
+    for z, geoms in voids:
+        open_ = [k for k, c in enumerate(chains) if c["open"]]
+        claim = {}
+        for gi, g in enumerate(geoms):
+            for k in open_:
+                last = chains[k]["items"][-1][1]
+                if last.intersection(g).area > 0.3 * min(last.area, g.area):
+                    claim.setdefault(gi, []).append(k)
+        owners = {}
+        for gi, ks in claim.items():
+            for k in ks: owners.setdefault(k, []).append(gi)
+        cont = set()
+        for gi, g in enumerate(geoms):
+            ks = claim.get(gi, [])
+            if len(ks) == 1 and len(owners[ks[0]]) == 1:
+                chains[ks[0]]["items"].append((z, g)); cont.add(ks[0])
+            else:
+                chains.append({"items": [(z, g)], "open": True, "into": None, "from": ks})
+                for k in ks:
+                    if len(owners[k]) == 1 and Polygon(chains[k]["items"][-1][1].exterior).difference(g.buffer(0.3)).area < 0.1 * chains[k]["items"][-1][1].area:
+                        chains[k]["into"] = len(chains) - 1
+        for k in open_:
+            if k not in cont: chains[k]["open"] = False
+    def top_of(k, seen=()):
+        c = chains[k]
+        if c["into"] is not None and c["into"] not in seen:
+            return top_of(c["into"], seen + (k,))
+        return c["items"][-1][0]
+    segs = []
+    for k, c in enumerate(chains):
+        # скачок формы внутри цепочки (верх ребра, уступ) — настоящая ступень: делим цепочку
+        cur = [c["items"][0]]
+        for z, g in c["items"][1:]:
+            if cur[-1][1].hausdorff_distance(g) > float(os.environ.get("VOID_JUMP", "2.0")):
+                segs.append((cur, cur[-1][0] + dz / 2)); cur = []
+            cur.append((z, g))
+        segs.append((cur, top_of(k) + dz / 2))
+    cut = []
+    for it, z1 in segs:
+        z0 = it[0][0] - dz / 2
+        if z1 >= zb - 1e-6: z1 = TOPINFO['ztop'] + 0.5
+        try:
+            zs_c = [z for z, _ in it]
+            rings_c = [ring_pts(g.exterior.coords, n, 0.03) for _, g in it]
+            if len(it) >= 3:
+                kk = pick_levels(zs_c, rings_c, jump=jump, dzmax=1.5, dzmin=0.4)
+                lv = [(rings_c[i], zs_c[i]) for i in kk]
+                lv[0] = (lv[0][0], z0 - 0.02)
+                if len(lv) < 2: lv.append((lv[0][0], z1 + 0.02))
+                else: lv[-1] = (lv[-1][0], z1 + 0.02) if z1 - zs_c[-1] < 0.5 else lv[-1]
+                if lv[-1][1] < z1: lv.append((rings_c[-1], z1 + 0.02))
+                lv[0] = (lv[0][0], z0 - 0.1)
+                sol = loft(lv)
+                bb = sol.BoundingBox()
+                if sol.Volume() <= 0 or bb.zmin < z0 - 0.3 or bb.zmax > lv[-1][1] + 0.3:
+                    sol = loft(lv, ruled=True)  # гладкий лофт выгнуло за свои уровни — прямые переходы
+                    if sol.Volume() <= 0: raise RuntimeError("negative")
+            else:
+                sol = prism(rings_c[len(it) // 2], z0 - 0.02, z1 + 0.02)
+            cut.append(sol if isinstance(sol, cq.Shape) else cq.Workplane().add(sol).val())
+            print("void chain", round(z0, 2), round(z1, 2), len(it), flush=True)
+        except Exception as e:
+            print("void chain fail", round(z0, 2), str(e)[:50], flush=True)
+            try:
+                cut.append(prism(rings_c[len(it) // 2], z0 - 0.02, z1 + 0.02))
+            except Exception:
+                pass
+    return cut
 
 def islands(secs, zb, dz=0.2, n=32, min_area=3.0):
     """бобышки и рёбра внутри кармана и над краем: отдельные многоугольники сечений,

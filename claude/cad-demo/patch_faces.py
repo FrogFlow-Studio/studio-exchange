@@ -184,17 +184,18 @@ def _verify(face, points, xyz, cross, tol):
     sign = -1 if np.median(aligned) < 0 else 1
     if np.any(sign * aligned <= 0):
         return None, {"reason": "flipped_normal", "min_normal_dot": float(np.min(sign * aligned))}
-    away = _surface_away(face, surface, uv, classifier, xyz)
+    away, worst = _surface_away(face, surface, uv, classifier, xyz, tol)
     if away > tol:
-        return None, {"reason": "surface_away", "surface_max_mm": away}
+        return None, {"reason": "surface_away", "surface_max_mm": away, "_retry_points": worst}
     if (sign < 0) != (face.Orientation() == TopAbs_REVERSED):
         face = TopoDS.Face_s(face.Reversed())
     return face, {"reason": "accepted", "vertex_max_mm": maximum, "surface_max_mm": away, "area_ratio": area_ratio,
                   "min_normal_dot": float(np.min(sign * aligned))}
 
 
-def _surface_away(face, surface, uv, classifier, xyz, grid: int = 14):
-    """Наибольшее расстояние от точек поверхности внутри грани до треугольников зоны."""
+def _surface_away(face, surface, uv, classifier, xyz, tol, grid: int = 14):
+    """Наибольшее расстояние от точек поверхности внутри грани до треугольников зоны и ближайшие
+    к худшим таким точкам места зоны (их добавляют в опорные точки при повторной подгонке)."""
     import trimesh
 
     u0, u1, v0, v1 = uv
@@ -206,10 +207,12 @@ def _surface_away(face, surface, uv, classifier, xyz, grid: int = 14):
                 p = surface.Value(u, v)
                 pts.append((p.X(), p.Y(), p.Z()))
     if not pts:
-        return 0.
+        return 0., None
     zone = trimesh.Trimesh(xyz.reshape(-1, 3), np.arange(len(xyz) * 3).reshape(-1, 3), process=False)
-    _, d, _ = trimesh.proximity.closest_point(zone, np.asarray(pts))
-    return float(d.max())
+    near, d, _ = trimesh.proximity.closest_point(zone, np.asarray(pts))
+    bad = np.flatnonzero(d > tol)
+    worst = near[bad[np.argsort(d[bad])[-4:]]] if len(bad) else None
+    return float(d.max()), worst
 
 
 def patch(V, F, faces_of_zone, tol, edge_tol=None):

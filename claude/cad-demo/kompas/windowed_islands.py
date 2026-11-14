@@ -155,25 +155,13 @@ def _layer_groups(rows):
 
 
 def _build(rows,radii,center,outer,low,high,dz):
-    from itertools import groupby
-
-    def cylinder(r,a,b):
-        return cq.Solid.makeCylinder(r,b-a,cq.Vector(*center,a))
-
-    body = cylinder(outer,low,high)
     boundaries = [rows[0][0]-dz/2,
                   *[(a[0]+b[0])/2 for a,b in zip(rows,rows[1:])],
                   high+.02]
-    bores = []
-    drill = []
-    for radius,group in groupby(enumerate(radii),key=lambda row:row[1]):
-        indices = [i for i,_ in group]
-        a,b = boundaries[indices[0]],boundaries[indices[-1]+1]
-        if len(indices)<2 or radius>=outer-.2:
-            return None
-        bores.append(dict(diameter_mm=round(2*radius,2),z_mm=[float(a),float(b)]))
-        drill.append(cylinder(radius,a,b))
-    body = body.cut(drill[0].fuse(*drill[1:]).clean() if len(drill)>1 else drill[0])
+    bored = _drilled_body(radii,boundaries,center,outer,low,high)
+    if bored is None:
+        return None
+    body,bores = bored
     tools = []
     for interrupted,series in _layer_groups(rows):
         if not interrupted:
@@ -195,3 +183,22 @@ def _build(rows,radii,center,outer,low,high,dz):
         return result,dict(diameter_mm=round(2*outer,2),bores=bores,windows=len(tools),
                            center_mm=center.tolist())
     return None
+
+
+def _drilled_body(radii,boundaries,center,outer,low,high):
+    from itertools import groupby
+
+    def cylinder(r,a,b):
+        return cq.Solid.makeCylinder(r,b-a,cq.Vector(*center,a))
+
+    body = cylinder(outer,low,high)
+    bores = []
+    drill = []
+    for radius,group in groupby(enumerate(radii),key=lambda row:row[1]):
+        indices = [i for i,_ in group]
+        a,b = boundaries[indices[0]],boundaries[indices[-1]+1]
+        if len(indices)<2 or radius>=outer-.2:
+            return None
+        bores.append(dict(diameter_mm=round(2*radius,2),z_mm=[float(a),float(b)]))
+        drill.append(cylinder(radius,a,b))
+    return body.cut(drill[0].fuse(*drill[1:]).clean() if len(drill)>1 else drill[0]),bores

@@ -821,7 +821,18 @@ def islands(secs, zb, dz=0.2, n=32, min_area=float(os.environ.get("ISL_MIN", "0.
         ref = max(with_holes or [q for _, q in ps], key=lambda q: Polygon(q.exterior).area)
         single = len(zset) == len(ps)
         try:
-            if exact == "windowed":
+            if exact == "hooked":
+                from hooked_islands import hooked_island
+
+                fitted,error = hooked_island(ps,za,zb2,dz)
+                if fitted is not None:
+                    sol,audit = fitted
+                    sol._cylindrical_island = audit
+                    solids.append(sol)
+                    continue
+                print(f"windowed islands: level={error['level']} z={error['z_mm']:.3f} mm: "
+                      f"{error['reason']}",flush=True)
+            elif exact == "windowed":
                 from windowed_islands import windowed_island
 
                 fitted = windowed_island(ps,za,zb2,dz)
@@ -1233,10 +1244,11 @@ def assemble(scan, log=print):
     body,info = _assemble_candidates(scan,log)
     partial = os.environ.get("CAD_KOMPAS_PARTIAL_ISLANDS", "0") == "1"
     windowed = os.environ.get("CAD_KOMPAS_WINDOWED_ISLANDS", "0") == "1"
-    if windowed or partial or os.environ.get("CAD_KOMPAS_EXACT_ISLANDS", "0") == "1":
+    hooked = os.environ.get("CAD_KOMPAS_HOOKED_ISLANDS", "0") == "1"
+    if hooked or windowed or partial or os.environ.get("CAD_KOMPAS_EXACT_ISLANDS", "0") == "1":
         from cylindrical_islands import guarded_exact_islands
 
-        mode = "windowed" if windowed else "partial" if partial else True
+        mode = "hooked" if hooked else "windowed" if windowed else "partial" if partial else True
         body,info = guarded_exact_islands(scan,body,info,log,_assemble_stock,mode=mode)
     curved = os.environ.get("CAD_KOMPAS_CURVED_PADS", "0") == "1"
     if curved or os.environ.get("CAD_KOMPAS_LEVEL_PADS", "0") == "1":

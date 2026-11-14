@@ -15,7 +15,7 @@ from level_pads import guarded_level_pads
 from windowed_islands import windowed_island
 
 
-def fixture(stepped):
+def fixture(stepped, windows=((0,60),(90,30),(180,60),(270,30))):
     vec = cq.Vector
     base = cq.Workplane().box(24,20,1).translate((0,0,.5)).val()
     rim = cq.Workplane().box(24,20,7).translate((0,0,4.5)).val().cut(
@@ -27,7 +27,7 @@ def fixture(stepped):
         for height in (.89,5.8):
             ring = ring.cut(cq.Solid.makeCylinder(2.5,1.22,vec(0,0,height)))
     # Four independent planar sectors, alternating between 60 and 30 degrees.
-    for center,width in ((0,60),(90,30),(180,60),(270,30)):
+    for center,width in windows:
         angles = np.deg2rad([center-width/2,center+width/2])
         points = [(0,0)]+[(8*np.cos(a),8*np.sin(a)) for a in angles]
         cutter = cq.Workplane("XY").workplane(offset=2.2).polyline(points).close().extrude(3.6).val()

@@ -10,6 +10,7 @@ def compare_candidate(scan, stock, candidate, tol=.3, allowance=.005):
     from compare import ScanComparison, compare
     from stl_out import write_stl_checked
     from OCP.Standard import Standard_Failure
+    from OCP.StdFail import StdFail_NotDone
 
     try:
         if not candidate.isValid() or len(candidate.Solids())!=1:
@@ -27,5 +28,5 @@ def compare_candidate(scan, stock, candidate, tol=.3, allowance=.005):
                 audit[name] = [report["within_tol_share"],round(1-report["added_surface_share"],4)]
         accept = all(a >= b-allowance-1e-9 for a,b in zip(audit["candidate"],audit["stock"]))
         return accept, {**audit,"reason":"coverage_ok" if accept else "coverage_regression"}
-    except (RuntimeError,ValueError,Standard_Failure,OSError) as error:
+    except (RuntimeError,ValueError,Standard_Failure,StdFail_NotDone,OSError) as error:
         return False, {"reason":"comparison_failed","error":str(error)}

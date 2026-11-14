@@ -1,6 +1,7 @@
 """Reconstruct only the scan-supported cylindrical parts of an island."""
 import cadquery as cq
 from OCP.Standard import Standard_Failure
+from OCP.StdFail import StdFail_NotDone
 from shapely.geometry import Polygon
 
 from cylindrical_islands import _fit
@@ -27,7 +28,7 @@ def partial_island(sections, low, high, dz, make_loft, make_prism, ring_points, 
         return None
     try:
         return _build(sections,low,high,dz,make_loft,make_prism,ring_points,n)
-    except (RuntimeError,ValueError,Standard_Failure):
+    except (RuntimeError,ValueError,Standard_Failure,StdFail_NotDone):
         return None
 
 

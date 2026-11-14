@@ -2,6 +2,7 @@
 import cadquery as cq
 import numpy as np
 from OCP.Standard import Standard_Failure
+from OCP.StdFail import StdFail_NotDone
 from scipy.optimize import least_squares
 
 
@@ -71,7 +72,7 @@ def cylindrical_island(sections, low, high):
             body = body.cut(cq.Solid.makeCylinder(bore/2,high-low+.2,cq.Vector(*bore_center,low-.1)))
         if body.isValid() and len(body.Solids())==1:
             return body,dict(center_mm=center.tolist(),diameter_mm=diameter,bore_diameter_mm=bore)
-    except (RuntimeError,ValueError,Standard_Failure):
+    except (RuntimeError,ValueError,Standard_Failure,StdFail_NotDone):
         pass
     return None
 
@@ -95,6 +96,6 @@ def guarded_exact_islands(scan, body, info, log, assemble_stock, *, mode=True):
                 body,info = trial,{**info,**details}
             info = {**info,"exact_islands_guard":{**audit,"accepted":accepted}}
             log(f"    exact islands guard: {info['exact_islands_guard']}")
-    except (ValueError,RuntimeError,Standard_Failure) as error:
+    except (ValueError,RuntimeError,Standard_Failure,StdFail_NotDone) as error:
         log(f"    exact islands rollback: {error}")
     return body,info

@@ -4,6 +4,7 @@ from collections import Counter
 import numpy as np
 import shapely
 from OCP.Standard import Standard_Failure
+from OCP.StdFail import StdFail_NotDone
 from shapely.geometry import Polygon
 
 from cad_cleanliness import horizontal_planes
@@ -98,7 +99,7 @@ def level_pads(body, scan, *, curved=False, diagnostics=None):
                     accepted += 1
                     furthest = 5
                     break
-            except (RuntimeError,ValueError,Standard_Failure):
+            except (RuntimeError,ValueError,Standard_Failure,StdFail_NotDone):
                 continue
         outcomes[reasons[furthest]] += 1
     if diagnostics is not None:

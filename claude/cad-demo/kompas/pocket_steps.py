@@ -1,6 +1,7 @@
 """Remove shallow ledges from finished pocket walls by rebuilding closed wall bands."""
 from collections import Counter, defaultdict
 from math import cos, radians
+from statistics import median
 import json
 from subprocess import run, TimeoutExpired
 import sys
@@ -14,12 +15,13 @@ from OCP.BRepClass import BRepClass_FaceClassifier
 from OCP.TopAbs import TopAbs_IN
 from OCP.gp import gp_Pnt2d
 from OCP.Standard import Standard_Failure
+from OCP.StdFail import StdFail_NotDone
 
 from cad_cleanliness import horizontal_planes
 
 LIMIT = .08
 WALL_Z = cos(radians(65))
-CAD_ERRORS = (ValueError, RuntimeError, Standard_Failure)
+CAD_ERRORS = (ValueError, RuntimeError, Standard_Failure,StdFail_NotDone)
 
 
 def _samples(edge):
@@ -51,7 +53,7 @@ def _side_at_edge(face,edge):
     return votes[0] if len(votes)>=2 and len(set(votes))==1 else 0
 
 
-def _ledges(body):
+def _ledges(body, rejected_offsets=None):
     adjacency = defaultdict(list)
     face_edges = {}
     for face in body.Faces():
@@ -81,10 +83,13 @@ def _ledges(body):
             reasons["without_two_wall_sides"] += 1
             continue
         sides = [(edges,cq.Compound.makeCompound(edges)) for edges in (above,below)]
-        if any(cq.Vertex.makeVertex(*point.toTuple()).distance(target)>=LIMIT
-               for (edges,_),(_,target) in (sides,sides[::-1])
-               for edge in edges for point in _samples(edge)):
+        offset = max(cq.Vertex.makeVertex(*point.toTuple()).distance(target)
+                     for (edges,_),(_,target) in (sides,sides[::-1])
+                     for edge in edges for point in _samples(edge))
+        if offset>=LIMIT:
             reasons["offset_above_limit"] += 1
+            if rejected_offsets is not None:
+                rejected_offsets.append(offset)
             continue
         shelves[face] = neighbors
     return shelves,face_edges,adjacency,reasons
@@ -190,10 +195,9 @@ def _rebuild_bands(body):
     return shape,audit
 
 
-def _rebuild(body):
+def _rebuild_local(body,shelves,reasons):
     # Work around each join inside a thin slab. Faces that span the join
     # retain their original surfaces beyond the slab.
-    shelves,_,_,reasons = _ledges(body)
     if not shelves:
         return body,dict(found=0,removed=0,reasons=dict(reasons))
     # Simple closed bands still get the prior fast, guarded repair.
@@ -212,16 +216,18 @@ def _rebuild(body):
         if full["removed"]==len(shelves):
             return whole,full
     protected_heights = [z for face,z in horizontal_planes(body) if face not in shelves]
-    heights = sorted({round(f.Center().z,5) for f in shelves})
+    by_height = Counter(round(face.Center().z,4) for face in shelves)
+    heights = sorted(by_height)
     current = body
     removed = 0
     for i,z in enumerate(heights):
+        count = by_height[z]
         separation = min(z-heights[i-1] if i else 1.,
                          heights[i+1]-z if i+1<len(heights) else 1.)
         nearest = min((abs(z-other) for other in protected_heights if abs(z-other)>1e-4),default=1.)
         span = min(.30,.40*separation,.40*nearest)
         if span<.065:
-            reasons["nearby_horizontal_feature"] += 1
+            reasons["nearby_horizontal_feature"] += count
             continue
         try:
             planes = [cq.Face.makePlane(basePnt=cq.Vector(0,0,z+offset),dir=cq.Vector(0,0,1))
@@ -230,34 +236,48 @@ def _rebuild(body):
             middle = [p for p in parts if p.BoundingBox().zmin>=z-span-1e-5
                       and p.BoundingBox().zmax<=z+span+1e-5]
             if not middle:
-                reasons["missing_wall_slab"] += 1
+                reasons["missing_wall_slab"] += count
                 continue
             replacements = {}
+            slab_reasons = Counter()
             for part in middle:
                 fixed,local = _rebuild_bands(part)
                 if local["removed"]:
                     replacements[part] = fixed
                 else:
-                    reasons.update(local["reasons"])
+                    slab_reasons.update(local["reasons"])
             if not replacements:
+                reason = slab_reasons.most_common(1)[0][0] if slab_reasons else "no_removable_band"
+                reasons["slab_"+reason] += count
                 continue
             repaired = [replacements.get(part,part) for part in parts]
             joined = repaired[0].fuse(*repaired[1:]).clean()
             if not joined.isValid() or len(joined.Solids())!=1 or joined.Volume()<=0:
-                reasons["invalid_wall_slab"] += 1
+                reasons["invalid_wall_slab"] += count
                 continue
             remaining,_,_,_ = _ledges(joined)
-            initial_here = sum(abs(f.Center().z-z)<1e-4 for f in shelves)
-            removed_here = initial_here-sum(abs(f.Center().z-z)<1e-4 for f in remaining)
-            if removed_here<=0:
-                reasons["shelf_remains_after_join"] += initial_here
-                continue
-            current = joined
-            removed += removed_here
+            removed_here = max(0,count-sum(round(f.Center().z,4)==z for f in remaining))
+            if removed_here:
+                current = joined
+                removed += removed_here
+            if removed_here<count:
+                reasons["shelf_remains_after_join"] += count-removed_here
         except CAD_ERRORS:
-            reasons["wall_slab_failed"] += 1
+            reasons["wall_slab_failed"] += count
     return current,dict(found=len(shelves),removed=removed,reasons=dict(reasons),
                         faces=len(current.Faces()))
+
+
+def _rebuild(body):
+    offsets = []
+    shelves,_,_,reasons = _ledges(body,offsets)
+    screened = len(shelves)+sum(reasons.values())
+    result,audit = _rebuild_local(body,shelves,reasons)
+    audit["screened"] = screened
+    audit["rejected_offset_mm"] = dict(
+        count=len(offsets),min=round(min(offsets),4),median=round(median(offsets),4),
+        max=round(max(offsets),4)) if offsets else dict(count=0)
+    return result,audit
 
 
 def _worker(folder):

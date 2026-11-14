@@ -1,0 +1,44 @@
+{
+  "additions": {
+    "faces": [
+      106,
+      10
+    ],
+    "narrow_faces": [
+      32,
+      0
+    ],
+    "coverage": {
+      "stock": [
+        1.0,
+        1.0
+      ],
+      "candidate": [
+        1.0,
+        1.0
+      ],
+      "reason": "coverage_ok"
+    },
+    "methods": {
+      "smooth_loft": 2
+    },
+    "ruled_fallback": "ruled_loft",
+    "prism_fallback": {
+      "stacked_prisms": 2
+    }
+  },
+  "pocket": {
+    "found": 0,
+    "removed": 0,
+    "reasons": {
+      "offset_above_limit": 1
+    },
+    "screened": 1,
+    "rejected_offset_mm": {
+      "count": 1,
+      "min": 0.12,
+      "median": 0.12,
+      "max": 0.12
+    }
+  }
+}

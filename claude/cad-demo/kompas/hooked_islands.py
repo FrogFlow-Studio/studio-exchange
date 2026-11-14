@@ -1,17 +1,21 @@
 """Rebuild a windowed sleeve and its scan-supported latch protrusions."""
-from collections import defaultdict
+from collections import Counter, defaultdict
 from itertools import groupby
 
 import cadquery as cq
 import numpy as np
 import shapely
 from OCP.Standard import Standard_Failure
+from OCP.StdFail import StdFail_NotDone
 from shapely.errors import GEOSException
 from shapely.affinity import translate
 from shapely.geometry import Point, Polygon
 
 from cylindrical_islands import _fit
 from windowed_islands import _drilled_body, _layer_radii, _window_polygons, _window_edges
+
+
+CAD_ERRORS = (RuntimeError,ValueError,Standard_Failure,StdFail_NotDone)
 
 
 class Rejected(ValueError):
@@ -36,7 +40,7 @@ def hooked_island(sections, low, high, dz):
     except Rejected as error:
         z_mm = error.level
         reason = str(error)
-    except (RuntimeError,ValueError,Standard_Failure,GEOSException) as error:
+    except CAD_ERRORS+(GEOSException,) as error:
         z_mm = float(low)
         reason = f"CAD operation: {type(error).__name__}"
     heights = sorted({z for z,_ in sections})
@@ -70,7 +74,7 @@ def _build(sections,low,high,dz):
         ring_radii[i] = inner
     bounds = [z[0]-dz/2,*((z[:-1]+z[1:])/2),high+.02]
     radii = [None]*len(rows)
-    cuts, gaps, additions, fills = [], [], [], []
+    cuts, gaps, hook_tracks, end_tracks = [], [], [], []
     window_references = []
     for complete,run in groupby(range(len(rows)),key=ring_radii.__contains__):
         indices = list(run)
@@ -84,8 +88,8 @@ def _build(sections,low,high,dz):
         window_references.append(reference)
         cuts.extend(windows)
         gaps.extend(reliefs)
-        additions.extend(extras)
-        fills.extend(transitions)
+        hook_tracks.extend(extras)
+        end_tracks.extend(transitions)
     if not cuts:
         raise Rejected("no supported windows",float(z[0]))
     radii = [radii[0],*[float(np.median(radii[i-1:i+2])) for i in range(1,len(rows)-1)],radii[-1]]
@@ -96,22 +100,55 @@ def _build(sections,low,high,dz):
     sleeve = body.cut(*cuts,*gaps).clean()
     if not sleeve.isValid() or len(sleeve.Solids())!=1:
         raise Rejected("window cuts did not leave one solid",float(z[0]))
+    rollbacks = {}
+    for mode in ("smooth","ruled","legacy"):
+        try:
+            result,build = _add_features(sleeve,hook_tracks,end_tracks,bounds,mode=mode)
+            break
+        except Rejected:
+            raise
+        except CAD_ERRORS as error:
+            if mode=="legacy":
+                reason = str(error).splitlines()
+                detail = reason[0][:120] if reason else type(error).__name__
+                raise Rejected(f"legacy additions: {detail}",float(z[0])) from error
+            rollbacks[mode] = type(error).__name__ + ": " + str(error).split("\n")[0][:120]
+    if rollbacks:
+        build["addition_rollbacks"] = rollbacks
+    return result,dict(diameter_mm=diameter,bores=bores,windows=len(cuts),gaps=len(gaps),
+                       window_references=window_references,center_mm=center.tolist(),**build)
+
+
+def _add_features(sleeve,hook_tracks,end_tracks,bounds,*,mode="smooth"):
+    methods = Counter()
+    additions = []
+    for track in hook_tracks:
+        tools,method = _track_tools(track,bounds,mode=mode)
+        additions.extend(tools)
+        methods[method] += 1
+    fills = []
+    end_methods = Counter()
+    for bottom,track,annulus in end_tracks:
+        tools,method = _track_tools(track,bounds,mode=mode)
+        fills.extend((bottom,tool.intersect(annulus)) for tool in tools)
+        end_methods[method] += 1
     fillet = _fit_window_fillet(sleeve,fills)
     if fillet is not None:
         sleeve,fillet_volume,fillet_radius = fillet
+        methods["analytic_fillet"] += len(end_tracks)
     else:
-        fillet_volume = 0.
-        fillet_radius = None
+        fillet_volume,fillet_radius = 0.,None
         additions.extend(patch for _,patch in fills)
-    volume = fillet_volume + sum(tool.Volume() for tool in additions)
+        methods.update(end_methods)
+    volume = fillet_volume+sum(tool.Volume() for tool in additions)
     if volume>.3*(sleeve.Volume()-fillet_volume):
-        raise Rejected("additions exceed 30% of sleeve volume",float(z[0]))
+        raise ValueError("additions exceed 30% of sleeve volume")
     result = sleeve.fuse(*additions).clean() if additions else sleeve
     if not result.isValid() or len(result.Solids())!=1:
-        raise Rejected("additions did not fuse into one solid",float(z[0]))
-    return result,dict(diameter_mm=diameter,bores=bores,windows=len(cuts),gaps=len(gaps),
-                       additions=len(additions)+len(fills) if fillet is not None else len(additions),
-                       window_references=window_references,window_end_fillet_mm=fillet_radius,addition_volume_mm3=volume,center_mm=center.tolist())
+        raise ValueError("additions did not fuse into one solid")
+    return result,dict(additions=len(additions)+(len(fills) if fillet is not None else 0),
+                       addition_methods=dict(methods),window_end_fillet_mm=fillet_radius,
+                       addition_volume_mm3=volume)
 
 
 def _stable_window_rows(rows,candidates):
@@ -255,18 +292,19 @@ def _window_series(rows,indices,center,outer,bounds):
                 # Extend this gap to both pre-existing windows so the
                 # attached sector is completely removed.
                 gaps.append(_prism(lobe.buffer(.12),bounds[indices[group[0]]],bounds[indices[group[-1]]+1]))
-    patches = _protrusions(transitions,bounds,smooth=True)
-    if patches:
+    patches = []
+    tracks = _protrusion_tracks(transitions)
+    if tracks:
         height = bounds[indices[-1]+1]-bounds[indices[0]]+.04
         base = cq.Vector(*center,bounds[indices[0]]-.02)
         annulus = cq.Solid.makeCylinder(outer,height,base).cut(cq.Solid.makeCylinder(inner,height,base))
-        patches = [(bounds[indices[0]],patch.intersect(annulus)) for patch in patches]
+        patches = [(bounds[indices[0]],track,annulus) for track in tracks]
     reference = dict(levels=len(stable),z_mm=[float(rows[stable[0]][0]),float(rows[stable[-1]][0])],
                      fit=fitted)
-    return inner,windows,gaps,_protrusions(extras,bounds),patches,reference
+    return inner,windows,gaps,_protrusion_tracks(extras),patches,reference
 
 
-def _protrusions(extras,bounds,smooth=False):
+def _protrusion_tracks(extras):
     tracks = []
     for i,poly in extras:
         for track in tracks:
@@ -276,51 +314,51 @@ def _protrusions(extras,bounds,smooth=False):
                 break
         else:
             tracks.append([(i,poly)])
-    tools = []
-    for track in tracks:
-        if len(track)<2:
-            continue
-        if smooth and not any(p.interiors for _,p in track):
-            tool = _transition_loft(track,bounds)
+    return [track for track in tracks if len(track)>=2]
+
+
+def _track_tools(track,bounds,*,mode):
+    if any(p.interiors for _,p in track):
+        raise Rejected("protrusion with unsupported hole",float(bounds[track[0][0]]))
+    if mode!="legacy":
+        for ruled in ((False,True) if mode=="smooth" else (True,)):
+            tool = _transition_loft(track,bounds,ruled)
             if tool is not None:
-                tools.append(tool)
-                continue
-        representative = track[len(track)//2][1].simplify(.045,preserve_topology=True)
-        if (representative.interiors or any(representative.symmetric_difference(p).area>
-                                            .16*max(p.area,representative.area) for _,p in track)):
-            # Adapt the outline on each supported slice when the protrusion tapers.
-            for i,p in track:
-                if p.interiors:
-                    raise Rejected("protrusion with unsupported hole",float(bounds[i]))
-                tools.append(_prism(p.simplify(.045,preserve_topology=True),bounds[i],bounds[i+1]))
-        else:
-            low,high = bounds[track[0][0]],bounds[track[-1][0]+1]
-            from kompas_build import prism, ring_pts
+                return [tool],"ruled_loft" if ruled else "smooth_loft"
+    representative = track[len(track)//2][1].simplify(.045,preserve_topology=True)
+    if any(representative.symmetric_difference(p).area>.16*max(p.area,representative.area) for _,p in track):
+        tools = [_prism(p.simplify(.045,preserve_topology=True),bounds[i],bounds[i+1]) for i,p in track]
+        return tools,"stacked_prisms"
+    low,high = bounds[track[0][0]],bounds[track[-1][0]+1]
+    from kompas_build import prism, ring_pts
 
-            try:
-                outline = ring_pts(track[len(track)//2][1].exterior.coords,24,.025)
-                tool = prism(outline,low,high)
-                if tool.isValid() and tool.Volume()>0:
-                    tools.append(tool)
-                    continue
-            except (ValueError,RuntimeError,Standard_Failure):
-                pass
-            tools.append(_prism(representative,low,high))
-    return tools
+    try:
+        outline = ring_pts(track[len(track)//2][1].exterior.coords,24,.025)
+        tool = prism(outline,low,high)
+        if tool.isValid() and tool.Volume()>0:
+            return [tool],"spline_prism"
+    except CAD_ERRORS:
+        pass
+    return [_prism(representative,low,high)],"polygon_prism"
 
 
-def _transition_loft(track,bounds):
+def _transition_loft(track,bounds,ruled):
     from kompas_build import _common_par, _wire, align, ring_pts
 
     try:
         rings = [(ring_pts(p.exterior.coords,24,.025),(bounds[i]+bounds[i+1])/2) for i,p in track]
         rings = align([(rings[0][0],bounds[track[0][0]]),*rings,
-                   (rings[-1][0],bounds[track[-1][0]+1])])
+                       (rings[-1][0],bounds[track[-1][0]+1])])
         params = _common_par(rings)
-        tool = cq.Solid.makeLoft([_wire(points,z,params) for points,z in rings])
+        tool = cq.Solid.makeLoft([_wire(points,z,params) for points,z in rings],ruled=ruled)
         if tool.isValid() and tool.Volume()>0:
-            return tool
-    except (ValueError,RuntimeError,Standard_Failure):
+            box = tool.BoundingBox()
+            boxes = np.array([poly.bounds for _,poly in track])
+            low,high = boxes[:,:2].min(axis=0),boxes[:,2:].max(axis=0)
+            if (np.all([box.xmin,box.ymin]>=low-.08)
+                    and np.all([box.xmax,box.ymax]<=high+.08)):
+                return tool
+    except CAD_ERRORS:
         pass
     return None
 
@@ -369,6 +407,6 @@ def _fit_window_fillet(sleeve,fills):
             added_volume = added.Volume()
             if added_volume>0 and added.intersect(observed).Volume()>=.70*max(volume,added_volume):
                 return tool,added_volume,radius
-        except Exception:  # noqa: BLE001  OCP StdFail_NotDone не наследует Standard_Failure
+        except CAD_ERRORS:
             continue
     return None

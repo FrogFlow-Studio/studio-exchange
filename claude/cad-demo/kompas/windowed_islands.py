@@ -5,6 +5,7 @@ import cadquery as cq
 import numpy as np
 import shapely
 from OCP.Standard import Standard_Failure
+from OCP.StdFail import StdFail_NotDone
 from shapely.geometry import Point, Polygon
 from shapely.affinity import translate
 
@@ -143,7 +144,7 @@ def windowed_island(sections, low, high, dz):
             for i,_ in group:
                 radii[i] = median
         return _build(rows,radii,center,outer,low,high,dz)
-    except (ValueError,RuntimeError,Standard_Failure):
+    except (ValueError,RuntimeError,Standard_Failure,StdFail_NotDone):
         return None
 
 

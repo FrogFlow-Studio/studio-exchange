@@ -5,17 +5,17 @@ from itertools import groupby
 import cadquery as cq
 import numpy as np
 import shapely
-from OCP.Standard import Standard_Failure
+from OCP.Standard import Standard_ConstructionError, Standard_Failure
 from OCP.StdFail import StdFail_NotDone
 from shapely.errors import GEOSException
 from shapely.affinity import translate
-from shapely.geometry import Point, Polygon
+from shapely.geometry import LineString, Point, Polygon
 
 from cylindrical_islands import _fit
 from windowed_islands import _drilled_body, _layer_radii, _window_polygons, _window_edges
 
 
-CAD_ERRORS = (RuntimeError,ValueError,Standard_Failure,StdFail_NotDone)
+CAD_ERRORS = (RuntimeError,ValueError,Standard_Failure,Standard_ConstructionError,StdFail_NotDone)
 
 
 class Rejected(ValueError):
@@ -139,6 +139,12 @@ def _add_features(sleeve,hook_tracks,end_tracks,bounds,*,mode="smooth",attempts=
         end_mode = "legacy" if mode=="compact_hooks" else mode
         tools,method = _track_tools(track,bounds,mode=end_mode,diagnostics=group)
         patches = [tool.intersect(annulus) for tool in tools]
+        if any(not patch.Solids() or patch.Volume()<=0 for patch in patches):
+            group["empty_after_clipping"] = method
+            tools,method = _track_tools(track,bounds,mode="legacy")
+            patches = [tool.intersect(annulus) for tool in tools]
+            if any(not patch.Solids() or patch.Volume()<=0 for patch in patches):
+                raise ValueError("window transition vanished during clipping")
         fills.extend((bottom,patch) for patch in patches)
         end_options.append((track,annulus,patches,dict(feature="window_end",method=method,**group)))
     fillet = _fit_window_fillet(sleeve,fills)
@@ -149,10 +155,10 @@ def _add_features(sleeve,hook_tracks,end_tracks,bounds,*,mode="smooth",attempts=
     else:
         fillet_volume,fillet_radius = 0.,None
         for track,annulus,patches,group in end_options:
-            if group["method"] in ("smooth_loft","ruled_loft","union_prism"):
+            if group["method"] in ("smooth_loft","ruled_loft","radial_smooth_loft","radial_ruled_loft","union_prism"):
                 try:
                     trial = sleeve.fuse(*patches).clean()
-                    attached = trial.isValid() and len(trial.Solids())==1
+                    attached = _valid_addition(sleeve,trial,sum(patch.Volume() for patch in patches))
                 except CAD_ERRORS:
                     attached = False
                 if not attached:
@@ -167,17 +173,30 @@ def _add_features(sleeve,hook_tracks,end_tracks,bounds,*,mode="smooth",attempts=
     volume = fillet_volume+sum(tool.Volume() for tool in additions)
     if volume>.3*(sleeve.Volume()-fillet_volume):
         raise ValueError("additions exceed 30% of sleeve volume")
-    result = sleeve.fuse(*additions,tol=.0001).clean() if additions and mode in ("smooth","compact_hooks") else (
-        sleeve.fuse(*additions).clean() if additions else sleeve)
-    if mode in ("smooth","compact_hooks") and (not result.isValid() or len(result.Solids())!=1):
+    if additions:
+        tol = .0001 if mode in ("smooth","compact_hooks") else None
+        result = sleeve.fuse(*additions,tol=tol).clean()
+        if tol and not _valid_addition(sleeve,result,volume):
+            result = sleeve
+            for tool in additions:
+                next_shape = result.fuse(tool,tol=tol).clean()
+                if not _valid_addition(result,next_shape,tool.Volume()):
+                    raise ValueError("addition fusion changed sleeve outside additive bounds")
+                result = next_shape
+        if not _valid_addition(sleeve,result,volume):
+            raise ValueError("addition fusion changed sleeve outside additive bounds")
+    else:
         result = sleeve
-        for tool in additions:
-            result = result.fuse(tool,tol=.0001).clean()
-    if not result.isValid() or len(result.Solids())!=1:
-        raise ValueError("additions did not fuse into one solid")
     return result,dict(additions=len(additions)+(len(fills) if fillet is not None else 0),
                        addition_methods=dict(methods),addition_groups=groups,window_end_fillet_mm=fillet_radius,
                        addition_volume_mm3=volume)
+
+
+def _valid_addition(base,result,max_added):
+    if not result.isValid() or len(result.Solids())!=1:
+        return False
+    delta = result.Volume()-base.Volume()
+    return -1e-4<=delta<=max_added+1e-4
 
 
 def _stable_window_rows(rows,candidates):
@@ -361,6 +380,12 @@ def _track_tools(track,bounds,*,mode,diagnostics=None):
             if tool is not None:
                 return [tool],"ruled_loft" if ruled else "smooth_loft"
     if mode=="smooth":
+        for ruled in (False,True):
+            tool,status = _radial_loft(track,bounds,ruled)
+            attempts["radial_ruled" if ruled else "radial_smooth"] = {"status":status}
+            if tool is not None:
+                return [tool],"radial_ruled_loft" if ruled else "radial_smooth_loft"
+    if mode=="smooth":
         tool = _union_prism(track,bounds)
         if tool is not None:
             return [tool],"union_prism"
@@ -427,6 +452,48 @@ def _transition_loft(track,bounds,ruled,detail=None):
         except CAD_ERRORS as error:
             detail.update(status=type(error).__name__)
     return None
+
+
+def _radial_loft(track,bounds,ruled):
+    """Align profiles by rays from a point inside every section."""
+    from kompas_build import _common_par, _wire
+
+    polygons = [p for _,p in track]
+    common = shapely.intersection_all(polygons)
+    if common.area<.015:
+        return None,"no_common_interior"
+    center = np.array(common.representative_point().coords[0])
+    if not common.contains(Point(*center)):
+        return None,"no_common_interior"
+    theta = np.arange(64)*2*np.pi/64
+    directions = np.column_stack((np.cos(theta),np.sin(theta)))
+    length = max(np.hypot(p.bounds[2]-p.bounds[0],p.bounds[3]-p.bounds[1]) for p in polygons)
+    rays = [LineString([center,center+2*length*d]) for d in directions]
+    rings = []
+    for i,poly in track:
+        clipped = [poly.intersection(ray) for ray in rays]
+        if any(segment.geom_type!="LineString" or segment.is_empty for segment in clipped):
+            return None,"multiple_crossings"
+        points = np.array([segment.coords[-1] for segment in clipped])
+        rings.append((points,(bounds[i]+bounds[i+1])/2))
+    rings = [(rings[0][0],bounds[track[0][0]]),*rings,(rings[-1][0],bounds[track[-1][0]+1])]
+    try:
+        params = _common_par(rings)
+        solid = cq.Solid.makeLoft([_wire(points,z,params) for points,z in rings],ruled=ruled)
+        if not solid.isValid() or solid.Volume()<=0:
+            return None,"invalid_solid"
+        # Check actual surface samples. The default box can include spline control-point overshoot.
+        vertices,_ = solid.tessellate(.008,.13)
+        if not vertices:
+            return None,"empty_mesh"
+        points = np.array([vertex.toTuple() for vertex in vertices])
+        envelopes = np.array([p.bounds for p in polygons])
+        if (np.any(points[:,:2].min(axis=0)<envelopes[:,:2].min(axis=0)-.08)
+                or np.any(points[:,:2].max(axis=0)>envelopes[:,2:].max(axis=0)+.08)):
+            return None,"bounds"
+        return solid,"accepted"
+    except CAD_ERRORS as error:
+        return None,type(error).__name__
 
 
 def _fit_window_fillet(sleeve,fills):

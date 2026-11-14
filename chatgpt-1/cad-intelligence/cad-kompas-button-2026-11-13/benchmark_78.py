@@ -13,7 +13,7 @@ from benchmark_71_72 import noise
 from benchmark_cleanliness import round_trip
 from candidate_guard import compare_candidate
 from cad_cleanliness import cad_cleanliness
-from hooked_islands import _add_features, _track_tools
+from hooked_islands import _add_features, _radial_loft, _track_tools, _valid_addition
 from pocket_steps import _rebuild
 
 
@@ -24,6 +24,9 @@ def tapered_additions():
                for i,depth in enumerate((.14,.33,.53,.67,.50,.24))] for sign in (-1,1)]
     bounds = np.linspace(1.,2.2,7)
     sleeve = cq.Solid.makeCylinder(3.75,3.).cut(cq.Solid.makeCylinder(2.225,3.))
+    assert not _valid_addition(sleeve,cq.Solid.makeCylinder(.2,.3),1.)
+    radial,status = _radial_loft(tracks[0],bounds,False)
+    assert radial is not None and status=="accepted",status
     straight,_ = _add_features(sleeve,tracks,[],bounds,mode="legacy")
     smooth,audit = _add_features(sleeve,tracks,[],bounds)
     body = round_trip(smooth)

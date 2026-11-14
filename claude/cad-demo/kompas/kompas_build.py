@@ -1131,17 +1131,23 @@ def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RI
             elif max(ref.distance(Point(c)) for c in g.exterior.coords) < 0.3: continue  # и так в допуске
             L = g.length / 2
             if L < 0.5: continue                                 # короче 0,5 мм — не ребро
-            found.append((float(z), g.buffer(0.02, join_style=2)))
+            # под полоской слоем ниже сплошной материал модели: возможно, ступенька пологого дна
+            floor_ = sec(model_mesh, z - dz).intersection(g).area > 0.7 * g.area
+            found.append((float(z), g.buffer(0.02, join_style=2), floor_))
     if os.environ.get("THIN_RIB_LOFT", "1") == "1" and not cut:
         # одно ребро на язычок: сечения соседних слоёв, которые перекрываются, — одна цепочка и один
         # лофт по ним (как операция «по сечениям» в Компасе), а не стопка брусков высотой в слой
-        groups = []
-        for z, g in found:
+        groups = []; floors = {}
+        for z, g, fl in found:
             for G in groups:
                 if abs(G[-1][0] - (z - dz)) < 1e-6 and G[-1][1].buffer(0.1).intersects(g):
-                    G.append((z, g)); break
+                    G.append((z, g)); floors[id(G)] = False; break
             else:
-                groups.append([(z, g)])
+                groups.append([(z, g)]); floors[id(groups[-1])] = fl
+        if os.environ.get("THIN_RIB_FLOOR", "1") == "1":
+            # одна полоска в один слой прямо на материале модели — ступенька пологого дна (скан чуть
+            # выше гладкого дна), а не ребро: добавка рисовала на дне извилистые линии-террасы
+            groups = [G for G in groups if not floors[id(G)]]
         for G in groups:
             if os.environ.get("THIN_RIB_UNION", "1") == "1":
                 # как конструктор: язычок — одно выдавливание по общему контуру его сечений на всю
@@ -1173,7 +1179,7 @@ def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RI
                     except Exception:  # noqa: BLE001
                         pass
         return out
-    for z, q in found:
+    for z, q, _ in found:
         try:
             out.append(prism_poly(q, z - dz / 2 - 0.01, z + dz / 2 + 0.01, tol=0.02))
         except Exception:  # noqa: BLE001

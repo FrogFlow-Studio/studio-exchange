@@ -1,7 +1,9 @@
 """Remove shallow ledges from finished pocket walls by rebuilding closed wall bands."""
 from collections import Counter, defaultdict
 from math import cos, radians
-from multiprocessing import get_context
+import json
+from subprocess import run, TimeoutExpired
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic
@@ -28,6 +30,27 @@ def _is_wall(face,edges):
     return all(abs(face.normalAt(point).z)<WALL_Z for edge in edges for point in _samples(edge)[1:-1])
 
 
+def _side_at_edge(face,edge):
+    # Classify a small step in either tangent-plane direction against the trimmed face.
+    votes = []
+    for t in (.25,.5,.75):
+        point = edge.positionAt(t)
+        direction = face.normalAt(point).cross(edge.tangentAt(t)).normalized()
+        for distance in (.06,.025):
+            local = []
+            for sign in (-1,1):
+                u,v = face.paramAt(point+direction*(sign*distance))
+                inside = BRepClass_FaceClassifier(face.wrapped,gp_Pnt2d(u,v),1e-7)
+                if inside.State()==TopAbs_IN:
+                    dz = face.positionAt(u,v).z-point.z
+                    if abs(dz)>1e-4:
+                        local.append(1 if dz>0 else -1)
+            if len(local)==1:
+                votes.extend(local)
+                break
+    return votes[0] if len(votes)>=2 and len(set(votes))==1 else 0
+
+
 def _ledges(body):
     adjacency = defaultdict(list)
     face_edges = {}
@@ -49,13 +72,10 @@ def _ledges(body):
             if len(other)!=1 or not _is_wall(other[0],[edge]):
                 continue
             wall = other[0]
-            box = wall.BoundingBox()
-            if box.zmin>=z-1e-4 and box.zmax>z+1e-4:
-                above.append(edge)
-            elif box.zmax<=z+1e-4 and box.zmin<z-1e-4:
-                below.append(edge)
-            else:
+            side = _side_at_edge(wall,edge)
+            if not side:
                 continue
+            (above if side>0 else below).append(edge)
             neighbors.add(wall)
         if not above or not below:
             reasons["without_two_wall_sides"] += 1
@@ -135,7 +155,7 @@ def _bridge(band,face_edges,adjacency):
     return walls,None
 
 
-def _rebuild(body):
+def _rebuild_bands(body):
     shelves,face_edges,adjacency,reasons = _ledges(body)
     removed = set()
     inserted = []
@@ -170,13 +190,87 @@ def _rebuild(body):
     return shape,audit
 
 
-def _worker(folder,scan,response):
+def _rebuild(body):
+    # Work around each join inside a thin slab. Faces that span the join
+    # retain their original surfaces beyond the slab.
+    shelves,_,_,reasons = _ledges(body)
+    if not shelves:
+        return body,dict(found=0,removed=0,reasons=dict(reasons))
+    # Simple closed bands still get the prior fast, guarded repair.
+    spans_join = False
+    for shelf,walls in shelves.items():
+        z = shelf.Center().z
+        for wall in walls:
+            box = wall.BoundingBox()
+            if box.zmin<z-1e-4 and box.zmax>z+1e-4:
+                spans_join = True
+                break
+        if spans_join:
+            break
+    if not spans_join:
+        whole,full = _rebuild_bands(body)
+        if full["removed"]==len(shelves):
+            return whole,full
+    protected_heights = [z for face,z in horizontal_planes(body) if face not in shelves]
+    heights = sorted({round(f.Center().z,5) for f in shelves})
+    current = body
+    removed = 0
+    for i,z in enumerate(heights):
+        separation = min(z-heights[i-1] if i else 1.,
+                         heights[i+1]-z if i+1<len(heights) else 1.)
+        nearest = min((abs(z-other) for other in protected_heights if abs(z-other)>1e-4),default=1.)
+        span = min(.30,.40*separation,.40*nearest)
+        if span<.065:
+            reasons["nearby_horizontal_feature"] += 1
+            continue
+        try:
+            planes = [cq.Face.makePlane(basePnt=cq.Vector(0,0,z+offset),dir=cq.Vector(0,0,1))
+                      for offset in (-span,span)]
+            parts = current.split(*planes).Solids()
+            middle = [p for p in parts if p.BoundingBox().zmin>=z-span-1e-5
+                      and p.BoundingBox().zmax<=z+span+1e-5]
+            if not middle:
+                reasons["missing_wall_slab"] += 1
+                continue
+            replacements = {}
+            for part in middle:
+                fixed,local = _rebuild_bands(part)
+                if local["removed"]:
+                    replacements[part] = fixed
+                else:
+                    reasons.update(local["reasons"])
+            if not replacements:
+                continue
+            repaired = [replacements.get(part,part) for part in parts]
+            joined = repaired[0].fuse(*repaired[1:]).clean()
+            if not joined.isValid() or len(joined.Solids())!=1 or joined.Volume()<=0:
+                reasons["invalid_wall_slab"] += 1
+                continue
+            remaining,_,_,_ = _ledges(joined)
+            initial_here = sum(abs(f.Center().z-z)<1e-4 for f in shelves)
+            removed_here = initial_here-sum(abs(f.Center().z-z)<1e-4 for f in remaining)
+            if removed_here<=0:
+                reasons["shelf_remains_after_join"] += initial_here
+                continue
+            current = joined
+            removed += removed_here
+        except CAD_ERRORS:
+            reasons["wall_slab_failed"] += 1
+    return current,dict(found=len(shelves),removed=removed,reasons=dict(reasons),
+                        faces=len(current.Faces()))
+
+
+def _worker(folder):
     try:
         original = cq.Shape.importBrep(str(folder/"original.brep"))
         body,audit = _rebuild(original)
-        if scan is not None and audit["removed"]:
+        if (folder/"scan.npz").exists() and audit["removed"]:
+            import numpy as np
+            import trimesh
             from candidate_guard import compare_candidate
 
+            with np.load(folder/"scan.npz") as data:
+                scan = trimesh.Trimesh(vertices=data["vertices"],faces=data["faces"],process=False)
             passed,coverage = compare_candidate(scan,original,body,allowance=0.)
             audit["coverage"] = coverage
             if not passed:
@@ -187,50 +281,41 @@ def _worker(folder,scan,response):
             audit["removed"] = 0
     except CAD_ERRORS:
         audit = dict(found=0,removed=0,reasons={"cad_failure":1})
-    response.send(audit)
-    response.close()
+    (folder/"audit.json").write_text(json.dumps(audit),encoding="utf8")
 
 
 def clean_pocket_steps(body, *, scan=None, timeout_s=60.):
     """Return the original solid if the repair, including scan validation, times out."""
     start = monotonic()
-    failed = dict(found=0,removed=0,reasons={"timeout":1})
+    timeout = dict(found=0,removed=0,reasons={"timeout":1})
     if timeout_s<=0:
-        return body,failed
+        return body,timeout
     with TemporaryDirectory(prefix="pocket-steps-") as path:
         folder = Path(path)
         try:
-            exported = body.exportBrep(str(folder/"original.brep"))
-        except CAD_ERRORS+(OSError,):
-            exported = False
-        if not exported:
-            return body,dict(found=0,removed=0,reasons={"export_failed":1})
-        ctx = get_context("spawn")
-        receiver,sender = ctx.Pipe(duplex=False)
-        process = ctx.Process(target=_worker,args=(folder,scan,sender))
-        try:
-            process.start()
-        except (OSError,RuntimeError):
-            receiver.close()
-            sender.close()
-            return body,dict(found=0,removed=0,reasons={"worker_failed":1})
-        sender.close()
-        try:
-            if not receiver.poll(max(0.,timeout_s-(monotonic()-start))):
-                return body,failed
-            try:
-                audit = receiver.recv()
-            except EOFError:
+            if not body.exportBrep(str(folder/"original.brep")):
+                return body,dict(found=0,removed=0,reasons={"export_failed":1})
+            if scan is not None:
+                import numpy as np
+
+                np.savez(folder/"scan.npz",vertices=scan.vertices,faces=scan.faces)
+            remaining = timeout_s-(monotonic()-start)
+            if remaining<=0:
+                return body,timeout
+            process = run([sys.executable,__file__,path],capture_output=True,timeout=remaining)
+            audit_file = folder/"audit.json"
+            if process.returncode or not audit_file.exists():
                 return body,dict(found=0,removed=0,reasons={"worker_failed":1})
-            try:
-                shape = cq.Shape.importBrep(str(folder/"clean.brep")) if audit["removed"] else body
-            except CAD_ERRORS+(OSError,):
-                audit["reasons"]["import_failed"] = audit["removed"]
-                audit["removed"] = 0
-                shape = body
-            return (shape,audit) if monotonic()-start<timeout_s else (body,failed)
-        finally:
-            if process.is_alive():
-                process.kill()
-            process.join()
-            receiver.close()
+            audit = json.loads(audit_file.read_text(encoding="utf8"))
+            shape = cq.Shape.importBrep(str(folder/"clean.brep")) if audit["removed"] else body
+            return (shape,audit) if monotonic()-start<timeout_s else (body,timeout)
+        except TimeoutExpired:
+            return body,timeout
+        except CAD_ERRORS+(OSError,):
+            return body,dict(found=0,removed=0,reasons={"transfer_failed":1})
+
+
+if __name__=="__main__":
+    # The CLI can also run without the environment of kompas_build.
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+    _worker(Path(sys.argv[1]))

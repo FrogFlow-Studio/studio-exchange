@@ -1,0 +1,106 @@
+{
+  "sparse_window": {
+    "levels": 6,
+    "windows": 4,
+    "fit": "angular_crossings"
+  },
+  "wall": {
+    "audit": {
+      "found": 1,
+      "removed": 1,
+      "reasons": {},
+      "faces": 17,
+      "coverage": {
+        "stock": [
+          1.0,
+          1.0
+        ],
+        "candidate": [
+          1.0,
+          1.0
+        ],
+        "reason": "coverage_ok"
+      }
+    },
+    "seconds": 3.797,
+    "spanning_neighbors": 2,
+    "shelf_edges": 4,
+    "faces": [
+      15,
+      17
+    ],
+    "narrow_faces": [
+      3,
+      3
+    ]
+  },
+  "rounded_window": {
+    "diameters_mm": [
+      1.6,
+      4.45,
+      7.5
+    ],
+    "coverage": {
+      "stock": [
+        0.9902,
+        0.9895
+      ],
+      "candidate": [
+        1.0,
+        1.0
+      ],
+      "reason": "coverage_ok"
+    },
+    "accepted": true,
+    "faces": [
+      56,
+      39
+    ],
+    "geometry": {
+      "diameter_mm": 7.5,
+      "bores": [
+        {
+          "diameter_mm": 4.45,
+          "z_mm": [
+            1.158145927416037,
+            6.978145927416036
+          ]
+        }
+      ],
+      "windows": 4,
+      "gaps": 2,
+      "additions": 6,
+      "window_references": [
+        {
+          "levels": 9,
+          "z_mm": [
+            2.858145927416037,
+            4.458145927416036
+          ],
+          "fit": "vertices"
+        }
+      ],
+      "window_end_fillet_mm": 0.8,
+      "addition_volume_mm3": 1.7264038710272154,
+      "center_mm": [
+        -0.00010280593340102756,
+        0.00014664815605095263
+      ]
+    },
+    "missing_section": {
+      "reason": "missing section",
+      "level": 5,
+      "z_mm": 2.2581459274160367
+    },
+    "unstable": {
+      "reason": "fewer than three consecutive stable window levels",
+      "level": 6,
+      "z_mm": 2.2581459274160367
+    },
+    "noncircular": {
+      "reason": "outer arc fit failed",
+      "level": 1,
+      "z_mm": 1.2581459274160371
+    }
+  }
+}

@@ -8,10 +8,10 @@ import shapely
 from OCP.Standard import Standard_Failure
 from shapely.errors import GEOSException
 from shapely.affinity import translate
-from shapely.geometry import Point
+from shapely.geometry import Point, Polygon
 
 from cylindrical_islands import _fit
-from windowed_islands import _drilled_body, _layer_radii, _window_polygons
+from windowed_islands import _drilled_body, _layer_radii, _window_polygons, _window_edges
 
 
 class Rejected(ValueError):
@@ -71,15 +71,17 @@ def _build(sections,low,high,dz):
     bounds = [z[0]-dz/2,*((z[:-1]+z[1:])/2),high+.02]
     radii = [None]*len(rows)
     cuts, gaps, additions, fills = [], [], [], []
+    window_references = []
     for complete,run in groupby(range(len(rows)),key=ring_radii.__contains__):
         indices = list(run)
         if complete:
             for i in indices:
                 radii[i] = ring_radii[i]
             continue
-        inner,windows,reliefs,extras,transitions = _window_series(rows,indices,center,outer,bounds)
+        inner,windows,reliefs,extras,transitions,reference = _window_series(rows,indices,center,outer,bounds)
         for i in indices:
             radii[i] = inner
+        window_references.append(reference)
         cuts.extend(windows)
         gaps.extend(reliefs)
         additions.extend(extras)
@@ -109,23 +111,72 @@ def _build(sections,low,high,dz):
         raise Rejected("additions did not fuse into one solid",float(z[0]))
     return result,dict(diameter_mm=diameter,bores=bores,windows=len(cuts),gaps=len(gaps),
                        additions=len(additions)+len(fills) if fillet is not None else len(additions),
-                       window_end_fillet_mm=fillet_radius,addition_volume_mm3=volume,center_mm=center.tolist())
+                       window_references=window_references,window_end_fillet_mm=fillet_radius,addition_volume_mm3=volume,center_mm=center.tolist())
 
 
-def _stable_window_rows(rows, candidates):
-    """Choose a consecutive plateau of similar areas and aligned contours."""
-    profiles = [(i,shapely.union_all(rows[i][1])) for i in candidates]
-    best = []
+def _stable_window_rows(rows,candidates):
+    """Rank contiguous plateaus using the area and contour of each individual petal."""
+    profiles = [(i,rows[i][1]) for i in candidates]
+    runs = set()
     for start,(i,anchor) in enumerate(profiles):
         run = [i]
-        for j,current in profiles[start+1:]:
-            if (j!=run[-1]+1 or abs(current.area-anchor.area)>.025*anchor.area
-                    or current.symmetric_difference(anchor).area>.035*anchor.area):
+        for j,polys in profiles[start+1:]:
+            if j!=run[-1]+1:
+                break
+            paired = [(p,min(polys,key=lambda q:p.centroid.distance(q.centroid))) for p in anchor]
+            if len({id(q) for _,q in paired})!=len(anchor) or any(
+                    abs(p.area-q.area)>.07*p.area or p.symmetric_difference(q).area>.10*p.area
+                    for p,q in paired):
                 break
             run.append(j)
-        if len(run)>len(best):
-            best = run
-    return best
+            if len(run)>=3:
+                runs.add(tuple(run))
+    return sorted(runs,key=lambda run:(-len(run),run))
+
+
+def _sampled_flanks(reference,center,inner,outer):
+    """Fit flank lines to angular crossings instead of mesh vertices."""
+    radii = np.linspace(inner+.15,outer-.15,7)
+    mid = (inner+outer)/2
+    nominal = _window_edges(reference[len(reference)//2][1],center,mid)
+    if nominal is None:
+        return None
+    contours = []
+    for _,polys in reference:
+        samples = [_window_edges(polys,center,r) for r in radii]
+        if any(row is None or len(row)!=len(nominal) for row in samples):
+            continue
+        contours.append(np.asarray(samples))
+    if len(contours)<3:
+        return None
+
+    def flank(edge,side):
+        angles = np.stack([values[:,:,side] for values in contours])
+        diffs = (angles-edge+np.pi)%(2*np.pi)-np.pi
+        nearest = np.take_along_axis(diffs,np.argmin(abs(diffs),axis=2)[...,None],axis=2)[...,0]
+        if np.max(abs(nearest))>.3:
+            return None
+        measured = edge+nearest
+        points = np.column_stack(((np.cos(measured)*radii).ravel(),(np.sin(measured)*radii).ravel()))
+        origin = np.median(points,axis=0)
+        _,_,basis = np.linalg.svd(points-origin,full_matrices=False)
+        direction,normal = basis
+        if np.quantile(abs((points-origin)@normal),.95)>.055:
+            return None
+        if direction@origin<0:
+            direction = -direction
+        return origin-(mid-inner+.5)*direction,origin+2*outer*direction
+
+    windows = []
+    for start,end in nominal:
+        first,last = flank(start,0),flank(end,1)
+        if first is None or last is None:
+            return None
+        poly = Polygon([first[0],first[1],last[1],last[0]])
+        if not poly.is_valid:
+            return None
+        windows.append(poly)
+    return windows
 
 
 def _window_series(rows,indices,center,outer,bounds):
@@ -141,17 +192,31 @@ def _window_series(rows,indices,center,outer,bounds):
     if len(plain)<3:
         raise Rejected("insufficient full window profiles",float(rows[indices[0]][0]))
     inner = round(float(np.median([r for _,r in plain]))/.025)*.025
-    stable = _stable_window_rows(rows,[i for i,r in plain if abs(r-inner)<.026])
-    if len(stable)<3:
+    runs = _stable_window_rows(rows,[i for i,r in plain if abs(r-inner)<.026])
+    if not runs:
         raise Rejected("fewer than three consecutive stable window levels",float(rows[indices[0]][0]))
-    reference = [rows[i] for i in stable]
-    windows = _window_polygons(reference,center,inner,outer)
-    if windows is None:
-        raise Rejected("window flanks have no stable planar fit",float(rows[indices[0]][0]))
     outer_disk = Point(*center).buffer(outer,quad_segs=96)
     bore_disk = Point(*center).buffer(inner,quad_segs=96)
-    cutter_xy = [translate(p,*center) for p in windows]
-    lobes = _polygons(outer_disk.difference(bore_disk).difference(shapely.union_all(cutter_xy)))
+    annulus = outer_disk.difference(bore_disk)
+    for stable in runs:
+        reference = [rows[i] for i in stable]
+        windows = _window_polygons(reference,center,inner,outer)
+        fitted = "vertices"
+        if windows is None:
+            windows = _sampled_flanks(reference,center,inner,outer)
+            fitted = "angular_crossings"
+        if windows is None:
+            continue
+        cutter_xy = [translate(p,*center) for p in windows]
+        predicted = annulus.difference(shapely.union_all(cutter_xy))
+        if all(predicted.symmetric_difference(shapely.union_all(polys)).area<=.065*annulus.area
+               for _,polys in reference):
+            break
+    else:
+        first,last = (rows[i][0] for i in (runs[0][0],runs[0][-1]))
+        raise Rejected(f"window flanks have no stable planar fit (plateau {first:.3f}–{last:.3f} mm, "
+                       f"{len(runs[0])} levels)",float(first))
+    lobes = _polygons(predicted)
     if len(lobes)!=len(windows):
         raise Rejected("ambiguous sleeve sectors",float(rows[indices[0]][0]))
     absent = []
@@ -196,7 +261,9 @@ def _window_series(rows,indices,center,outer,bounds):
         base = cq.Vector(*center,bounds[indices[0]]-.02)
         annulus = cq.Solid.makeCylinder(outer,height,base).cut(cq.Solid.makeCylinder(inner,height,base))
         patches = [(bounds[indices[0]],patch.intersect(annulus)) for patch in patches]
-    return inner,windows,gaps,_protrusions(extras,bounds),patches
+    reference = dict(levels=len(stable),z_mm=[float(rows[stable[0]][0]),float(rows[stable[-1]][0])],
+                     fit=fitted)
+    return inner,windows,gaps,_protrusions(extras,bounds),patches,reference
 
 
 def _protrusions(extras,bounds,smooth=False):

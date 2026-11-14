@@ -324,7 +324,12 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
     zs = [o[0] for o in outer]
     # RING_ADAPT > 0: точки кольца сгущаются на скруглениях углов (0 — равномерно по длине, как раньше)
     adapt = float(os.environ.get("RING_ADAPT", "0"))
-    rings = [ring_pts(o[1].exterior.coords, n, smooth, adapt=adapt) for o in outer]
+    # большой контур: точек кольца по длине, не меньше одной на WALL_PT_MM мм (32 точки на фланец
+    # Ø90 — 9 мм между точками, отломанный край и выступы сглаживались)
+    per = max(Polygon(o[1].exterior).length for o in outer)
+    n_out = max(n, int(per / float(os.environ.get("WALL_PT_MM", "5"))))
+    TOPINFO["wall_points"] = n_out
+    rings = [ring_pts(o[1].exterior.coords, n_out, smooth, adapt=adapt) for o in outer]
     # сглаживание вдоль высоты: каждая точка кольца — гладкая функция z (шум скана не повторяем)
     from scipy.interpolate import UnivariateSpline
     al = align([(r, z) for r, z in zip(rings, zs)])
@@ -632,6 +637,24 @@ def void_chains(voids, dz, n, zb, jump=0.5):
             # ведёт общая цепочка, а прямая призма до верха давала рядом с её стенками тонкие полоски
             segs.append((cur, cur[-1][0] + dz / 2 + (dz if c["into"] is not None else 0)))
     segs = [(it, z1) + joins.get(id(it), (None, None)) for it, z1 in segs]
+    if os.environ.get("VOID_DUP", "1") == "1":
+        # однослойный вырез, целиком лежащий в другом вырезе того же уровня (тот же проём, вторая
+        # копия контура от шума у плоскости верха), — двойник: его торцы давали узкие полоски
+        by_z = {}
+        for k, (it, *_r) in enumerate(segs):
+            for z, g in it:
+                by_z.setdefault(round(z, 3), []).append((k, g))
+        keep_ = []
+        for k, sg in enumerate(segs):
+            it = sg[0]
+            if len(it) == 1:
+                z, g = it[0]
+                if any(j != k and len(segs[j][0]) > 1 and h.buffer(0.15).intersection(g).area >= 0.9 * g.area
+                       for j, h in by_z.get(round(z, 3), [])):
+                    print("void chain duplicate skipped", round(z, 2), round(g.area, 1), flush=True)
+                    continue
+            keep_.append(sg)
+        segs = keep_
     if os.environ.get("VOID_TIP", "1") == "1" and RAW_VOIDS:
         segs = [(it if (taper and pr is not None) else _extend_down(it, dz), z1, pr, su) for it, z1, pr, su in segs]
     def _taper_ok(g):
@@ -788,16 +811,24 @@ def islands(secs, zb, dz=0.2, n=32, min_area=float(os.environ.get("ISL_MIN", "0.
     """бобышки и рёбра внутри кармана и над краем: отдельные многоугольники сечений,
     сгруппированные по перекрытию в плане; каждое — выдавливание своего контура с отверстиями"""
     items = []
+    secs = [(z, ps) for z, ps in secs if ps]
+    zbot = secs[0][0] - dz / 2 if secs else None
+    floor_on = os.environ.get("CAD_KOMPAS_ISL_FLOOR", "1") == "1"
     for z, polys in secs:
         big = max(polys, key=lambda p: Polygon(p.exterior).area)
         for p in polys:
             if (p is big and z <= zb) or p.area < min_area:
                 continue
+            # крошки шума в самом нижнем срезе (касание дна) — не бобышки
+            if floor_on and z == secs[0][0] and p.area < float(os.environ.get("ISL_BOTTOM_CRUMB", "5")):
+                continue
             items.append((z, p))
     groups = []
     for z, p in items:
         f = Polygon(p.exterior).buffer(0.3)
-        hit = [g for g in groups if g["foot"].intersects(f)]
+        # бобышка — непрерывная по высоте: кусок через разрыв в срезах (шум у дна под втулкой)
+        # с ней не сливается
+        hit = [g for g in groups if g["foot"].intersects(f) and (not floor_on or z - max(t[0] for t in g["polys"]) <= 1.5 * dz)]
         if hit:
             g = hit[0]
             for o in hit[1:]:
@@ -817,6 +848,8 @@ def islands(secs, zb, dz=0.2, n=32, min_area=float(os.environ.get("ISL_MIN", "0.
         if len(zset) < int(os.environ.get("ISL_MIN_LEVELS", "1")): continue
         # низ бобышки утапливаем в пол кармана, чтобы она срослась с телом, а не висела отдельно
         za, zb2 = zset[0] - dz / 2 - float(os.environ.get("CAD_SECTIONS_EMBED", "0.6")), zset[-1] + dz / 2
+        if floor_on and zbot is not None:
+            za = max(za, zbot)  # утапливание в пол не выводит бобышку ниже дна детали
         with_holes = [q for _, q in ps if len(q.interiors)]
         ref = max(with_holes or [q for _, q in ps], key=lambda q: Polygon(q.exterior).area)
         single = len(zset) == len(ps)
@@ -1493,6 +1526,11 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
                 if (outer is not None and os.environ.get("CORR_ADD_OUTER", "0") != "1"
                         and any(not outer.contains(shapely.geometry.Point(q.X, q.Y)) for q in v.Vertices())):
                     info["correction_adds_outer_skipped"] = info.get("correction_adds_outer_skipped", 0) + 1
+                    continue
+                # прибавка, прилипшая к наружной стенке изнутри, — тот же нарост ступеньками на стенке
+                if (outer is not None and os.environ.get("CORR_ADD_WALL", "0") != "1"
+                        and min(outer.exterior.distance(shapely.geometry.Point(q.X, q.Y)) for q in v.Vertices()) < 0.3):
+                    info["correction_adds_wall_skipped"] = info.get("correction_adds_wall_skipped", 0) + 1
                     continue
                 try:
                     nb = body.fuse(v)

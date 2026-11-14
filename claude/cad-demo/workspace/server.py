@@ -259,11 +259,15 @@ class Workspace:
                                 "scan": mesh_info(scan), "check": check,
                                 "provenance": example["provenance"], "identity": identity,
                                 "compared": ["0", "0ж"], "winner": "0ж", "log": []}
+        review_path = directory / "review.json"
+        if review_path.is_file():
+            self.jobs["example"]["review"] = json_read(review_path)
 
     def summary(self):
         with self.lock:
             return [{"id": j["id"], "name": j["name"], "status": j["status"], "created": j["created"],
-                     "identity": j.get("identity")}
+                     "identity": j.get("identity"), "project": j.get("project", j["id"]),
+                     "units": j.get("units"), "review": j.get("review")}
                     for j in sorted(self.jobs.values(), key=lambda j: j["created"], reverse=True)]
 
     def snapshot(self, id):
@@ -278,6 +282,27 @@ class Workspace:
                                 if (self.path(id) / file).is_file()
                                 and (name == "scan" or job["status"] == "ready")}
             return result
+
+    def save_review(self, id, decision, note):
+        with self.lock:
+            job = self.jobs[id]
+            if job["status"] != "ready" or not (self.path(id) / ASSETS["step"]).is_file():
+                raise ValueError("Решение доступно для готового STEP.")
+            if not isinstance(decision, str) or decision not in ("accepted", "rework", "pending"):
+                raise ValueError("Выберите решение по модели.")
+            if not isinstance(note, str) or len(note) > 2000:
+                raise ValueError("Комментарий должен содержать до 2000 символов.")
+            if decision == "rework" and not note.strip():
+                raise ValueError("Укажите, что нужно исправить.")
+            updated = dict(job, review={"decision": decision, "note": note.strip(), "updated": time.time()})
+            if id == "example":
+                path = self.path(id) / "review.json"
+                staging = path.with_suffix(".tmp")
+                audit.write_json(staging, updated["review"])
+                staging.replace(path)
+            else:
+                self.save(updated)
+            self.jobs[id] = updated
 
     def create(self, original, units, stream=None, count=0):
         id = uuid4().hex[:12]
@@ -329,7 +354,7 @@ class Workspace:
                     with original.open("rb") as stream:
                         id = self.create(old["filename"], units, stream, original.stat().st_size)
             job = self.jobs[id]
-            job.update(status="running", units="mm" if job["sample"] else units, started=time.time(),
+            job.update(project=old.get("project", old["id"]), status="running", units="mm" if job["sample"] else units, started=time.time(),
                        stage="Запуск расчёта", log=[], compared=[], rejected=[],
                        notes=notes, identity=run_identity(job["name"], engine_revision(), regions, ai))
             self.save(job)
@@ -523,6 +548,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json({"error": "Выберите STL, OBJ или PLY до 300 МБ."}, 400)
                 id = self.server.workspace.create(name, units, self.rfile, count)
             else:
+                review = re.fullmatch(r"/api/jobs/(example|[a-f0-9]{12})/review", self.path)
+                if review:
+                    count = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < count <= 16_384:
+                        raise ValueError("Проверьте размер комментария.")
+                    payload = json.loads(self.rfile.read(count))
+                    if not isinstance(payload, dict):
+                        raise ValueError("Некорректное решение.")
+                    id = review[1]
+                    self.server.workspace.save_review(id, payload.get("decision"), payload.get("note", ""))
+                    return self.send_json(self.server.workspace.snapshot(id))
                 match = re.fullmatch(r"/api/jobs/(example|[a-f0-9]{12})/run", self.path)
                 if not match:
                     return self.send_json({"error": "Адрес не найден."}, 404)

@@ -199,3 +199,24 @@ button.metric:hover .metric-label { color: var(--cyan); }
 
 .project-dimensions { padding: 4px 14px 10px; }
 .project-dimensions .dims { min-height: 0; }
+
+.history-group h3 { margin: 8px 4px 3px; font-size: 12px; overflow-wrap: anywhere; }
+.history-review { color: var(--amber) !important; }
+.review-form { display: grid; gap: 10px; margin-top: 16px; }
+.review-form label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.review-form textarea, .review-form select, #baseline {
+  width: 100%; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
+  padding: 7px 8px; border-radius: 4px; font: inherit;
+}
+.review-form textarea { resize: vertical; }
+.review-form .section-note:empty { display: none; }
+#versions { width: min(590px, calc(100% - 24px)); padding: 0; color: var(--text);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+#versions::backdrop { background: #070b0de0; }
+.dialog-header, .dialog-body { padding: 16px; }
+.dialog-header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); gap: 10px; }
+.dialog-header h2 { font-size: 18px; }
+.dialog-body { display: grid; gap: 12px; font-size: 13px; }
+.comparison-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.comparison-table th, .comparison-table td { text-align: left; padding: 9px 5px; border-bottom: 1px solid var(--line); }
+.comparison-table td { color: var(--cyan); }

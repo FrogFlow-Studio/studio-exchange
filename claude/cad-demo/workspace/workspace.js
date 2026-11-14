@@ -122,6 +122,113 @@ function metric(label, value, direction) {
   return item;
 }
 
+const decisions = {pending: 'На проверке', accepted: 'Принято', rework: 'На доработку'};
+let runs = [];
+let comparisonEpoch = 0;
+
+function reviewForm(job) {
+  const form = dom('form', 'review-form');
+  const label = dom('label', '', 'Решение по STEP');
+  const select = dom('select');
+  for (const [value, title] of Object.entries(decisions)) select.add(new Option(title, value));
+  select.value = job.review?.decision || 'pending';
+  label.append(select);
+  const noteLabel = dom('label', '', 'Комментарий');
+  const input = dom('textarea');
+  input.rows = 3;
+  input.maxLength = 2000;
+  input.value = job.review?.note || '';
+  input.placeholder = 'Что проверили или что нужно исправить';
+  noteLabel.append(input);
+  const save = dom('button', 'button secondary', 'Сохранить решение');
+  save.type = 'submit';
+  const status = dom('p', 'section-note', job.review ? 'Сохранено ' + stamp(job.review.updated) : '');
+  status.setAttribute('role', 'status');
+  form.append(label, noteLabel, save, status);
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    save.disabled = true;
+    try {
+      const updated = await request('/api/jobs/' + job.id + '/review', {
+        method: 'POST', headers: {'X-CAD-Workspace': '1', 'Content-Type': 'application/json'},
+        body: JSON.stringify({decision: select.value, note: input.value}),
+      });
+      if (selected.job?.id !== job.id) return;
+      renderJob(updated);
+      renderInspection(updated);
+      await history();
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      save.disabled = false;
+    }
+  };
+  return form;
+}
+
+function comparableRuns(job) {
+  return job?.status === 'ready' ? runs.filter((item) => item.id !== job.id && item.status === 'ready'
+    && item.project === (job.project || job.id) && item.units === job.units) : [];
+}
+
+async function compareRuns() {
+  const current = selected.job;
+  const options = comparableRuns(current);
+  if (!options.length) return;
+  const select = $('baseline');
+  select.replaceChildren(...options.map((job) => new Option(
+    (job.created ? stamp(job.created) : 'Сохранённый пример') + ' · ' + (runLabel(job.identity) || job.id),
+    job.id)));
+  $('versions').showModal();
+  await renderComparison();
+}
+
+async function renderComparison() {
+  const epoch = ++comparisonEpoch;
+  const current = selected.job;
+  const root = $('version-comparison');
+  root.replaceChildren(dom('p', '', 'Загружаю проверку версии…'));
+  $('open-baseline').disabled = true;
+  try {
+    const baseline = await request('/api/jobs/' + $('baseline').value);
+    if (epoch !== comparisonEpoch || current?.id !== selected.job?.id || !$('versions').open) return;
+    const a = baseline.check, b = current.check;
+    if (!a || !b) throw new Error('Для сравнения нужны отчёты проверки обеих версий.');
+    const table = dom('table', 'comparison-table');
+    const head = table.createTHead().insertRow();
+    for (const text of ['Показатель', 'Выбранная', 'Текущая']) head.append(dom('th', '', text));
+    const body = table.createTBody();
+    const row = (label, old, value) => {
+      const line = body.insertRow();
+      line.append(dom('th', '', label), dom('td', '', old), dom('td', '', value));
+    };
+    const pct = (value) => Number.isFinite(value) ? (value < 1 && value >= .99995 ? '<100' : number(value * 100, 2)) + '%' : '—';
+    if (a.tolerance_mm === b.tolerance_mm) {
+      row('Допуск', number(a.tolerance_mm, 2) + ' мм', number(b.tolerance_mm, 2) + ' мм');
+      for (const [title, key] of [['Скан → модель', 'reference_to_model'], ['Модель → скан', 'model_to_reference']]) {
+        row(title, pct(a.scan_surface?.[key]?.within_share), pct(b.scan_surface?.[key]?.within_share));
+      }
+    }
+    row('Грани STEP', number(a.topology.faces), number(b.topology.faces));
+    row('Замкнутое тело', a.topology.valid && a.topology.closed && a.topology.connected_solid ? 'Да' : 'Проверить',
+      b.topology.valid && b.topology.closed && b.topology.connected_solid ? 'Да' : 'Проверить');
+    row('Решение', decisions[baseline.review?.decision || 'pending'], decisions[current.review?.decision || 'pending']);
+    root.replaceChildren(table);
+    if (a.tolerance_mm !== b.tolerance_mm) root.append(dom('p', 'section-note', 'Допуски версий различаются. Покрытие напрямую несопоставимо.'));
+    $('open-baseline').disabled = false;
+  } catch (error) {
+    if (epoch === comparisonEpoch) root.replaceChildren(dom('p', '', error.message));
+  }
+}
+
+$('compare-runs').onclick = compareRuns;
+$('baseline').onchange = renderComparison;
+$('open-baseline').onclick = () => {
+  const id = $('baseline').value;
+  $('versions').close();
+  activate(id);
+};
+
 function renderInspection(job) {
   const root = $('inspection');
   root.replaceChildren();
@@ -206,6 +313,7 @@ function renderInspection(job) {
     }
     audit.append(item);
   }
+  if (job.status === 'ready' && job.assets.step) audit.append(reviewForm(job));
   if (job.assets.report) {
     const link = dom('a', 'report-link', 'Скачать отчёт проверки');
     link.href = job.assets.report;
@@ -224,6 +332,7 @@ function renderInspection(job) {
         Boolean(top.valid && top.closed && top.connected_solid)));
     if (!report.has_reference) overview.append(dom('p', 'section-note', 'Посадка и размеры требуют проверки по оригиналу.'));
     if (report.issues.length) overview.append(dom('p', 'section-note', 'Замечаний: ' + number(report.issues.length)));
+    if (job.review) overview.append(dom('p', 'section-note', 'Решение: ' + decisions[job.review.decision]));
     root.append(overview);
   }
 
@@ -253,6 +362,7 @@ function showDimensions() {
 function showActions() {
   const job = selected.job;
   const draft = job?.status === 'draft';
+  $('compare-runs').disabled = !comparableRuns(job).length;
   $('run').disabled = !job || selected.busy || selected.globalRunning || job.status === 'running';
   $('open-file').disabled = selected.busy;
   $('run-label').textContent = draft ? 'Построить модель' : 'Пересчитать';
@@ -308,7 +418,7 @@ function renderJob(job) {
     if (job.status === 'draft') $('settings').open = true;
     try { localStorage.setItem('cad.workspace.job', job.id); } catch { /* Browser storage is optional. */ }
     message(job.error || null);
-    for (const entry of $('history').children) entry.setAttribute('aria-current', String(entry.dataset.id === job.id));
+    for (const entry of $('history').querySelectorAll('.history-entry')) entry.setAttribute('aria-current', String(entry.dataset.id === job.id));
   }
   showActions();
   const detail = job.stage_detail;
@@ -365,22 +475,35 @@ function renderJob(job) {
 
 async function history() {
   const jobs = await request('/api/jobs');
+  runs = jobs;
   const list = $('history');
   list.replaceChildren();
   selected.globalRunning = jobs.some((job) => job.status === 'running');
+  const groups = new Map();
   for (const job of jobs) {
-    const entry = dom('button', 'history-entry');
-    entry.type = 'button';
-    entry.dataset.id = job.id;
-    entry.dataset.status = job.status;
-    entry.setAttribute('aria-current', String(job.id === selected.job?.id));
-    const info = dom('span');
-    info.append(dom('b', '', job.name), dom('small', '',
-      (job.created ? stamp(job.created) + ' · ' : '') + (statusLabels[job.status] || job.status)));
-    if (job.identity) info.append(dom('small', 'history-run', runLabel(job.identity)));
-    entry.append(dom('i'), info);
-    entry.onclick = () => activate(job.id);
-    list.append(entry);
+    const project = job.project || job.id;
+    if (!groups.has(project)) groups.set(project, []);
+    groups.get(project).push(job);
+  }
+  for (const group of groups.values()) {
+    const section = dom('div', 'history-group');
+    if (group.length > 1) section.append(dom('h3', '', group[0].name));
+    for (const job of group) {
+      const entry = dom('button', 'history-entry');
+      entry.type = 'button';
+      entry.dataset.id = job.id;
+      entry.dataset.status = job.status;
+      entry.setAttribute('aria-current', String(job.id === selected.job?.id));
+      const info = dom('span');
+      info.append(dom('b', '', group.length > 1 ? 'Версия ' + (group.length - group.indexOf(job)) : job.name), dom('small', '',
+        (job.created ? stamp(job.created) + ' · ' : '') + (statusLabels[job.status] || job.status)));
+      if (job.review) info.append(dom('small', 'history-review', decisions[job.review.decision]));
+      if (job.identity) info.append(dom('small', 'history-run', runLabel(job.identity)));
+      entry.append(dom('i'), info);
+      entry.onclick = () => activate(job.id);
+      section.append(entry);
+    }
+    list.append(section);
   }
   showActions();
   return jobs;

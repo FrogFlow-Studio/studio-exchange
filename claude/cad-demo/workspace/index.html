@@ -28,6 +28,7 @@
       </div>
       <div class="part-actions">
         <button id="run" class="button secondary" type="button" disabled><span aria-hidden="true">↻</span> <span id="run-label">Пересчитать</span></button>
+        <button type="button" id="compare-runs" class="button secondary" disabled>Сравнить версии</button>
         <a id="macro" class="button secondary" hidden>Макрос SolidWorks</a>
         <a id="step" class="button primary" aria-disabled="true"><span aria-hidden="true">↓</span> Скачать STEP</a>
       </div>
@@ -138,6 +139,18 @@
     </footer>
     <pre id="log" class="log" tabindex="0" hidden></pre>
   </main>
+  <dialog id="versions" aria-labelledby="versions-title">
+    <form method="dialog" class="dialog-header">
+      <h2 id="versions-title">Сравнение версий</h2>
+      <button class="button secondary" type="submit">Закрыть</button>
+    </form>
+    <div class="dialog-body">
+      <label for="baseline">Сравнить текущую версию с</label>
+      <select id="baseline"></select>
+      <div id="version-comparison" aria-live="polite"></div>
+      <button type="button" id="open-baseline" class="button secondary" disabled>Открыть выбранную версию</button>
+    </div>
+  </dialog>
   <script type="module" src="/workspace.js"></script>
 </body>
 </html>

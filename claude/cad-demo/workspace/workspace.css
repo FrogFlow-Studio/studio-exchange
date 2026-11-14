@@ -68,13 +68,13 @@ h2 { font-size: 13px; font-weight: 650; }
 .history-entry[data-status="error"] i { background: var(--amber); }
 .canvas-panel { display: flex; flex-direction: column; }
 .canvas-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); min-height: 48px; }
-.tabs, .views { display: flex; gap: 2px; flex-wrap: wrap; }
-.tabs button, .views button, .view-footer button, .icon-button { border: 1px solid transparent; background: transparent; border-radius: 5px; color: var(--muted); padding: 5px 8px; font-size: 12px; white-space: nowrap; }
+.tabs { display: flex; gap: 2px; flex-wrap: wrap; }
+.tabs button, .view-footer button, .icon-button { border: 1px solid transparent; background: transparent; border-radius: 5px; color: var(--muted); padding: 5px 8px; font-size: 12px; white-space: nowrap; }
 .tabs button[aria-pressed="true"] { background: #294047; border-color: #3d5c61; color: #d0f5f1; }
 .tabs button:hover, .view-footer button:hover, .icon-button:hover { color: var(--text); background: #233540; }
 .icon-button { flex: none; color: var(--cyan); font-size: 18px; padding: 2px 8px; }
 .deviation-controls { padding: 5px 10px; border-bottom: 1px solid var(--line); }
-.viewport { position: relative; min-height: 370px; height: clamp(400px, 62vh, 760px); flex: 1 0 auto; overflow: hidden; isolation: isolate; background: radial-gradient(ellipse at 48% 42%, #2a3b47 0%, #192732 54%, #121b24 100%); }
+.viewport { container-type: inline-size; position: relative; min-height: 370px; height: clamp(400px, 62vh, 760px); flex: 1 0 auto; overflow: hidden; isolation: isolate; background: radial-gradient(ellipse at 48% 42%, #2a3b47 0%, #192732 54%, #121b24 100%); }
 .viewport canvas { display: block; width: 100%; height: 100%; position: absolute; inset: 0; z-index: 0; touch-action: none; }
 .viewport-info { position: absolute; z-index: 1; top: 15px; left: 15px; display: flex; align-items: center; gap: 7px; color: #aec3d1; font-size: 11px; pointer-events: none; }
 .view-dot { width: 5px; height: 5px; background: #7ca3ad; }
@@ -147,3 +147,26 @@ body.dragging .viewport { outline: 2px dashed var(--cyan); outline-offset: -7px;
 .ai-key button { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--line, #2a3442); background: transparent; color: inherit; font-size: 12px; cursor: pointer; }
 .ai-key .ai-note { margin: 0; flex-basis: 100%; }
 .ai-note { margin: 4px 0 0 21px; font-size: 11px; line-height: 1.4; color: var(--muted, #8a97a8); }
+
+/* Comparison uses equal panes so the same orthographic camera has the same scale. */
+.split-labels { position: absolute; inset: 0; z-index: 1; display: grid; grid-template-columns: 1fr 1fr; pointer-events: none; }
+.split-labels > div { padding: 13px 14px; }
+.split-labels > div + div { border-inline-start: 1px solid #566777; }
+.pane-label { display: inline-flex; align-items: center; gap: 7px; padding: 6px 9px; background: #131e27ed; border: 1px solid #40505d; border-radius: 4px; font-size: 12px; font-weight: 600; }
+.pane-label::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #86d8d2; }
+.pane-model::before { background: #b5c3cc; }
+.viewport.split .viewport-info { top: auto; bottom: 17px; }
+.view-select, .section-controls output { color: var(--muted); font-size: 12px; }
+.view-select { display: flex; align-items: center; gap: 6px; }
+.view-select select { max-width: 115px; padding: 4px 5px; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; }
+.section-controls output { white-space: nowrap; font-variant-numeric: tabular-nums; }
+@container (max-width: 500px) {
+  .split-labels { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+  .split-labels > div + div { border-inline-start: 0; border-top: 1px solid #566777; }
+}
+
+.viewport.loading-geometry canvas,
+.viewport.loading-geometry .marker { visibility: hidden; }
+@media (min-width: 801px) {
+  .sidebar, .inspection { max-height: calc(max(430px, min(62vh, 760px)) + 98px); overflow-y: auto; }
+}

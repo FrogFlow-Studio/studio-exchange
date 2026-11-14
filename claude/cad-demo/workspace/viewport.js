@@ -6,7 +6,11 @@ const loader = new STLLoader();
 const orientations = {
   iso: [1.05, -1.48, 1.22],
   top: [0, -.001, 1],
+  bottom: [0, -.001, -1],
   front: [0, -1, 0],
+  back: [0, 1, 0],
+  left: [-1, 0, 0],
+  right: [1, 0, 0],
 };
 
 async function binary(url) {
@@ -151,7 +155,7 @@ export class Viewport {
       this.controls.update();
       this.drawMarker();
       this.drawAxes();
-      this.renderer.render(this.scene, this.camera);
+      this.render();
     });
   }
 
@@ -159,11 +163,41 @@ export class Viewport {
     const width = this.element.clientWidth;
     const height = this.element.clientHeight;
     if (!width || !height) return;
-    const aspect = width / height;
+    this.stacked = this.mode === 'split' && width <= 500;
+    const split = this.mode === 'split';
+    const paneWidth = split && !this.stacked ? Math.floor(width / 2) : width;
+    const paneHeight = split && this.stacked ? Math.floor(height / 2) : height;
+    this.display = {width, height, paneWidth, paneHeight};
+    const aspect = paneWidth / paneHeight;
     const vertical = this.size * .63 / Math.min(aspect, 1);
     Object.assign(this.camera, {left: -vertical * aspect, right: vertical * aspect, top: vertical, bottom: -vertical});
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
+  }
+
+  render() {
+    const display = this.display;
+    if (!display) return;
+    const {width, height, paneWidth, paneHeight} = display;
+    const {renderer, scene, camera} = this;
+    if (this.mode !== 'split' || !this.objects.model) {
+      renderer.setViewport(0, 0, width, height);
+      renderer.render(scene, camera);
+      return;
+    }
+    renderer.setScissorTest(true);
+    for (const [layer, x, y] of [
+      [1, 0, this.stacked ? height - paneHeight : 0],
+      [2, this.stacked ? 0 : width - paneWidth, 0],
+    ]) {
+      camera.layers.set(0);
+      camera.layers.enable(layer);
+      renderer.setViewport(x, y, paneWidth, paneHeight);
+      renderer.setScissor(x, y, paneWidth, paneHeight);
+      renderer.render(scene, camera);
+    }
+    renderer.setScissorTest(false);
+    camera.layers.enableAll();
   }
 
   async load(assets, tolerance) {
@@ -184,9 +218,11 @@ export class Viewport {
       this.grid.material.dispose();
     }
     this.objects = {scan: new THREE.Mesh(scan, this.material.scan)};
+    this.objects.scan.layers.set(1);
     this.colors = {};
     if (model) {
       this.objects.model = new THREE.Mesh(model, this.material.model);
+      this.objects.model.layers.set(2);
       this.objects.ghost = makePoints(scan, 31000, this.material.ghost);
       this.objects.ghost.renderOrder = 2;
     }
@@ -223,11 +259,14 @@ export class Viewport {
   }
 
   setMode(mode, direction = this.direction) {
+    const layoutChanged = (this.mode === 'split') !== (mode === 'split');
     this.mode = mode;
     this.direction = direction;
+    if (layoutChanged) this.resize();
+    this.camera.layers.enableAll();
     const {scan, model, ghost, deviation} = this.objects;
     const heatmap = mode === 'deviation' && direction === 'model' && Boolean(this.colors.deviation);
-    if (scan) scan.visible = mode === 'scan' || !model;
+    if (scan) scan.visible = mode === 'scan' || mode === 'split' || !model;
     if (ghost) ghost.visible = mode === 'compare';
     if (deviation) deviation.visible = mode === 'deviation' && direction === 'scan';
     if (!model) return;
@@ -260,6 +299,7 @@ export class Viewport {
     for (const material of Object.values(this.material)) {
       material.clippingPlanes = enabled ? [this.section] : [];
     }
+    return this.section.constant;
   }
 
   focus(point) {
@@ -296,7 +336,10 @@ export class Viewport {
     }
     const p = this.anchor.clone().project(this.camera);
     this.marker.hidden = Math.abs(p.x) > 1 || Math.abs(p.y) > 1 || Math.abs(p.z) > 1;
-    this.marker.style.left = (p.x + 1) * 50 + '%';
-    this.marker.style.top = (1 - p.y) * 50 + '%';
+    const split = this.mode === 'split';
+    const x = (p.x + 1) * 50;
+    const y = (1 - p.y) * 50;
+    this.marker.style.left = (split && !this.stacked ? 50 + x / 2 : x) + '%';
+    this.marker.style.top = (split && this.stacked ? 50 + y / 2 : y) + '%';
   }
 }

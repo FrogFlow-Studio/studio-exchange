@@ -1,7 +1,7 @@
 import {Viewport} from './viewport.js';
 
 const $ = (id) => document.getElementById(id);
-const selected = {job: null, mode: 'compare', view: 'iso', section: false, direction: 'model', busy: false, globalRunning: false};
+const selected = {job: null, mode: 'split', view: 'iso', section: false, direction: 'model', busy: false, globalRunning: false};
 const units = {mm: 1, cm: 10, m: 1000, in: 25.4};
 const statusLabels = {ready: 'Результат', draft: 'Скан загружен', running: 'В расчёте', error: 'Ошибка'};
 const number = (value, digits = 0) => Number(value).toLocaleString('ru-RU', {
@@ -55,6 +55,8 @@ function setMode(mode, direction = selected.direction) {
   selected.direction = direction;
   scene?.setMode(mode, direction);
   $('directions').hidden = mode !== 'deviation';
+  $('split-labels').hidden = mode !== 'split';
+  $('viewport').classList.toggle('split', mode === 'split');
   for (const button of document.querySelectorAll('[data-direction]')) {
     button.disabled = !(button.dataset.direction === 'model' ? available.model_deviation : available.deviations);
     button.setAttribute('aria-pressed', String(button.dataset.direction === direction));
@@ -66,6 +68,7 @@ function setMode(mode, direction = selected.direction) {
   }
   const legend = $('legend');
   legend.replaceChildren();
+  if (mode === 'split') return;
   if (mode === 'deviation') {
     const gradient = dom('i', 'scale');
     const limit = selected.job?.check?.tolerance_mm || .3;
@@ -101,7 +104,7 @@ function checkRow(title, detail, good) {
 function metric(label, value) {
   const item = dom('div', 'metric');
   const title = dom('div', 'metric-label');
-  title.append(dom('span', '', label), dom('strong', '', number(value * 100, 1) + '%'));
+  title.append(dom('span', '', label), dom('strong', '', (value < 1 && value >= .9995 ? '<100' : number(value * 100, 1)) + '%'));
   const track = dom('div', 'track');
   const fill = dom('i');
   fill.style.setProperty('--value', Math.min(100, Math.max(0, value * 100)) + '%');
@@ -209,9 +212,10 @@ function clearFocus() {
 
 function setView(view) {
   selected.view = view;
-  const names = {iso: 'Изометрия', top: 'Вид сверху', front: 'Вид спереди'};
+  const names = {iso: 'Изометрия', top: 'Вид сверху', bottom: 'Вид снизу',
+    front: 'Вид спереди', back: 'Вид сзади', left: 'Вид слева', right: 'Вид справа'};
   $('view-label').textContent = names[view];
-  for (const b of document.querySelectorAll('[data-view]')) b.setAttribute('aria-pressed', String(b.dataset.view === view));
+  $('view').value = view;
   scene?.view(view);
 }
 
@@ -308,18 +312,24 @@ function renderJob(job) {
   if (key !== loadedKey && scene && job.assets.scan) {
     loadedKey = key;
     $('view-message').hidden = false;
+    $('viewport').classList.add('loading-geometry');
     $('view-message').textContent = 'Загрузка геометрии…';
-    setMode(job.assets.model ? 'compare' : 'scan', 'model');
+    setMode(job.assets.model ? 'split' : 'scan', 'model');
     selected.section = false;
     $('section').setAttribute('aria-pressed', 'false');
     $('section-level').hidden = true;
+    $('section-height').hidden = true;
     scene.load(job.assets, job.check?.tolerance_mm || .3).then(() => {
       if (key === loadedKey) {
         setView('iso');
         $('view-message').hidden = true;
+        $('viewport').classList.remove('loading-geometry');
       }
     }).catch((error) => {
-      if (key === loadedKey) $('view-message').textContent = error.message;
+      if (key === loadedKey) {
+        $('view-message').textContent = error instanceof TypeError ?
+          'Не удалось загрузить геометрию. Откройте расчёт заново.' : error.message;
+      }
     });
   }
 }
@@ -424,10 +434,16 @@ $('fit').onclick = () => { clearFocus(); setView(selected.view); };
 $('section').onclick = () => {
   selected.section = !selected.section;
   $('section').setAttribute('aria-pressed', String(selected.section));
-  $('section-level').hidden = !selected.section;
-  scene?.clip(selected.section, Number($('section-level').value));
+  updateSection();
 };
-$('section-level').oninput = () => scene?.clip(true, Number($('section-level').value));
+function updateSection() {
+  $('section-level').hidden = !selected.section;
+  $('section-height').hidden = !selected.section;
+  const height = scene?.clip(selected.section, Number($('section-level').value));
+  $('section-height').textContent = Number.isFinite(height) ? number(height, 2) + ' мм' : '—';
+  $('section-level').setAttribute('aria-valuetext', $('section-height').textContent);
+}
+$('section-level').oninput = updateSection;
 $('journal').onclick = () => {
   $('log').hidden = !$('log').hidden;
   $('journal').setAttribute('aria-expanded', String(!$('log').hidden));
@@ -437,9 +453,9 @@ for (const button of document.querySelectorAll('[data-mode]')) button.onclick = 
 for (const button of document.querySelectorAll('[data-direction]')) {
   button.onclick = () => setMode('deviation', button.dataset.direction);
 }
-for (const button of document.querySelectorAll('[data-view]')) button.onclick = () => {
+$('view').onchange = (event) => {
   clearFocus();
-  setView(button.dataset.view);
+  setView(event.target.value);
 };
 const drop = $('viewport');
 drop.addEventListener('dragover', (event) => {

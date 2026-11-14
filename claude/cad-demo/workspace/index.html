@@ -69,7 +69,8 @@
         <div class="canvas-toolbar">
           <div class="tabs" aria-label="Режим отображения">
             <button type="button" data-mode="scan">Скан</button>
-            <button type="button" data-mode="compare">Сравнение</button>
+            <button type="button" data-mode="split">Рядом</button>
+            <button type="button" data-mode="compare">Наложение</button>
             <button type="button" data-mode="model">Модель</button>
             <button type="button" data-mode="deviation">Отклонения</button>
           </div>
@@ -80,6 +81,10 @@
           <button type="button" data-direction="scan">Скан → модель</button>
         </div>
         <div class="viewport" id="viewport">
+          <div class="split-labels" id="split-labels" hidden>
+            <div><span class="pane-label pane-scan">Исходный скан</span></div>
+            <div><span class="pane-label pane-model">CAD-модель</span></div>
+          </div>
           <div class="viewport-info" aria-hidden="true"><span class="view-dot"></span><span id="view-label">Изометрия</span></div>
           <div class="viewport-message" id="view-message" role="status">Загрузка геометрии…</div>
           <div class="axis" id="axis" aria-hidden="true"></div>
@@ -87,12 +92,19 @@
           <div class="marker" id="marker" hidden aria-hidden="true"></div>
         </div>
         <div class="view-footer">
-          <div class="views" aria-label="Ракурс">
-            <button type="button" data-view="iso" aria-pressed="true">Изометрия</button>
-            <button type="button" data-view="top" aria-pressed="false">Сверху</button>
-            <button type="button" data-view="front" aria-pressed="false">Спереди</button>
-          </div>
+          <label class="view-select"><span>Ракурс</span>
+            <select id="view">
+              <option value="iso">Изометрия</option>
+              <option value="top">Сверху</option>
+              <option value="bottom">Снизу</option>
+              <option value="front">Спереди</option>
+              <option value="back">Сзади</option>
+              <option value="left">Слева</option>
+              <option value="right">Справа</option>
+            </select>
+          </label>
           <div class="section-controls"><input id="section-level" type="range" min="0" max="100" value="53" aria-label="Высота сечения" hidden>
+            <output id="section-height" for="section-level" hidden></output>
             <button type="button" id="section" aria-pressed="false"><span aria-hidden="true">⫽</span> Сечение</button></div>
         </div>
       </section>

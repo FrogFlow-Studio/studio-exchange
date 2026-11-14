@@ -641,12 +641,27 @@ def void_chains(voids, dz, n, zb, jump=0.5):
         # верхний ниже стыка уходит внутрь нижнего. Стенки пересекаются по одной кромке в плоскости стыка,
         # торцы спрятаны в пустоте соседа. Где контуры расходятся сильнее, это настоящий уступ: он остаётся.
         low, up = pred, succ
-        pred = low is not None and _taper_ok(it[0][1]); succ = up is not None and _taper_ok(it[-1][1])
+        pred = low is not None and _taper_ok(it[0][1])
+        # вырез, уходящий выше верха детали, кончается в воздухе: стыка сверху у него нет
+        succ = up is not None and z1 < zb - 1e-6 and _taper_ok(it[-1][1])
         if succ:
             g_top = _snap(it[-1][1], up)
             r_top = ring_pts(g_top.exterior.coords, n, 0.03)
         if pred:
-            r_tuck = ring_pts(_tucked(it[0][1], low).exterior.coords, n, 0.03)
+            # кольцо низа под стыком; кольцо по сложному контуру может перекрутиться — тогда
+            # берём сглаженное, а не выйдет — то же кольцо низа, равномерно сдвинутое внутрь
+            tk = _tucked(it[0][1], low)
+            r_tuck = None
+            for sm in (0.03, 0.08):
+                r = ring_pts(tk.exterior.coords, n, sm)
+                if Polygon(r).is_valid: r_tuck = r; break
+            if r_tuck is None:
+                r = _inset(ring_pts(_fill(it[0][1]).exterior.coords, n, 0.03), taper + 0.03)
+                r_tuck = r if Polygon(r).is_valid else None
+            pred = r_tuck is not None
+        if succ and not Polygon(r_top).is_valid:
+            r_top = ring_pts(g_top.exterior.coords, n, 0.08)
+            succ = Polygon(r_top).is_valid and Polygon(_inset(r_top, 0.1)).is_valid
         if (os.environ.get("CAD_KOMPAS_VOID_PERSISTENCE", "0") == "1"
                 and len(it)==1 and it[0][1].area<12):
             # A small, isolated slice can be caused by floor noise. It
@@ -654,7 +669,10 @@ def void_chains(voids, dz, n, zb, jump=0.5):
             continue
         z0 = it[0][0] - dz / 2
         if z1 >= zb - 1e-6: z1 = TOPINFO['ztop'] + 0.5
-        for pred, succ in [(pred, succ)] + ([(False, False)] if (pred or succ) else []):
+        # попытки: стык с уступами по контуру соседа; стык с равномерно суженным низом (кольца точка
+        # в точку, лофт не перекручивается); без стыка, как раньше
+        tries = [(pred, succ, 0)] + ([(pred, succ, 1)] if pred else []) + ([(False, False, 0)] if (pred or succ) else [])
+        for pred, succ, even in tries:
             try:
                 zs_c = [z for z, _ in it]
                 rings_c = [ring_pts(g.exterior.coords, n, 0.03) for _, g in it]
@@ -668,7 +686,7 @@ def void_chains(voids, dz, n, zb, jump=0.5):
                     lv[0] = (lv[0][0], z0 - 0.1)
                     if pred:
                         lv[0] = (lv[0][0], z0)
-                        lv = [(r_tuck, z0 - 0.1)] + lv
+                        lv = [(_inset(lv[0][0], taper + 0.03) if even else r_tuck, z0 - 0.1)] + lv
                     if succ:
                         while len(lv) > 1 and lv[-1][1] > zs_c[-1] + 1e-6: lv.pop()
                         if lv[-1][1] < zs_c[-1] - 1e-6: lv.append((rings_c[-1], zs_c[-1]))
@@ -689,7 +707,7 @@ def void_chains(voids, dz, n, zb, jump=0.5):
                         if sol.Volume() <= 0: raise RuntimeError("negative")
                 elif pred or succ:
                     r = rings_c[len(it) // 2]
-                    lv = ([(r_tuck, z0 - 0.1), (r, z0)] if pred else [(r, z0 - 0.02)]) \
+                    lv = ([(_inset(r, taper + 0.03) if even else r_tuck, z0 - 0.1), (r, z0)] if pred else [(r, z0 - 0.02)]) \
                         + ([(r, z1 - 0.1), (r_top, z1), (_inset(r_top, 0.1), z1 + 0.1)] if succ else [(r, z1 + 0.02)])
                     try:
                         sol = loft(lv)
@@ -719,6 +737,10 @@ def void_chains(voids, dz, n, zb, jump=0.5):
             except Exception as e:
                 if pred or succ:
                     # стык не построился: этот вырез — как раньше, без стыка
+                    if os.environ.get("VOID_DEBUG"):
+                        import pickle
+                        with open(os.environ["VOID_DEBUG"] + f"_{len(cut)}.pkl", "wb") as fh:
+                            pickle.dump(dict(it=it, z1=z1, low=low, up=up, lv=lv, pred=pred, succ=succ), fh)
                     print("void chain join fail", round(z0, 2), str(e)[:40], flush=True)
                     continue
                 print("void chain fail", round(z0, 2), str(e)[:50], flush=True)

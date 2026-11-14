@@ -1,0 +1,85 @@
+[
+  {
+    "task": 68,
+    "diameters": [
+      {
+        "center_mm": [
+          -4.998992172628276,
+          0.0002911175950662836
+        ],
+        "diameter_mm": 4.0,
+        "bore_diameter_mm": 1.6
+      },
+      {
+        "center_mm": [
+          5.000312130334208,
+          0.0007381166246011925
+        ],
+        "diameter_mm": 6.0,
+        "bore_diameter_mm": 2.4
+      }
+    ],
+    "before": {
+      "faces": 19,
+      "narrow_faces": 0,
+      "plane_area_share": 0.9207036634875041,
+      "cylinder_area_share": 0.0,
+      "plane_cylinder_area_share": 0.9207036634875041,
+      "horizontal_planes": 7,
+      "near_height_horizontal_faces": 5
+    },
+    "after": {
+      "faces": 19,
+      "narrow_faces": 0,
+      "plane_area_share": 0.9204906256359826,
+      "cylinder_area_share": 0.0795093743640174,
+      "plane_cylinder_area_share": 1.0,
+      "horizontal_planes": 7,
+      "near_height_horizontal_faces": 5
+    },
+    "coverage": {
+      "stock": [
+        1.0,
+        1.0
+      ],
+      "candidate": [
+        1.0,
+        1.0
+      ],
+      "reason": "coverage_ok"
+    }
+  },
+  {
+    "task": 69,
+    "adjusted": 2,
+    "before": {
+      "faces": 30,
+      "narrow_faces": 12,
+      "plane_area_share": 1.0,
+      "cylinder_area_share": 0.0,
+      "plane_cylinder_area_share": 1.0,
+      "horizontal_planes": 8,
+      "near_height_horizontal_faces": 5
+    },
+    "after": {
+      "faces": 20,
+      "narrow_faces": 4,
+      "plane_area_share": 1.0,
+      "cylinder_area_share": 0.0,
+      "plane_cylinder_area_share": 1.0,
+      "horizontal_planes": 6,
+      "near_height_horizontal_faces": 3
+    },
+    "coverage": {
+      "stock": [
+        1.0,
+        1.0
+      ],
+      "candidate": [
+        1.0,
+        1.0
+      ],
+      "reason": "coverage_ok"
+    }
+  }
+]

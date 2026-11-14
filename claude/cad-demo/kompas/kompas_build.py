@@ -273,7 +273,7 @@ def _top_open_levels(top_v, min_area=20.0):
 
 
 def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.environ.get('RING_SMOOTH', '0.05')), *,
-           periodic_wall=False, void_n=None, fit_upper_wall=False):
+           periodic_wall=False, void_n=None, fit_upper_wall=False, exact_islands=False):
     """наружная стенка — один лофт по всей высоте; внутренние объёмы (карманы, пазы) вычитаются по слоям"""
     secs = sections(mesh, dz)
     secs = [(z, p) for z, p in secs if p]
@@ -437,7 +437,7 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
     else:
         cut = void_layers(voids, dz, n, zb)
     pieces = [body.val()]
-    isl = islands(secs, zb, dz, n)
+    isl = islands(secs, zb, dz, n, exact=exact_islands)
     # выступ под дном (площадка): выдавливание самого большого из отрезанных нижних срезов до дна
     if TOPINFO.get("pads") and os.environ.get("PADS", "0") == "1":
         pz = [p[0] for p in TOPINFO["pads"]]; big = max(TOPINFO["pads"], key=lambda p: p[2])[1]
@@ -645,7 +645,7 @@ def void_chains(voids, dz, n, zb, jump=0.5):
                 pass
     return cut
 
-def islands(secs, zb, dz=0.2, n=32, min_area=float(os.environ.get("ISL_MIN", "0.8"))):
+def islands(secs, zb, dz=0.2, n=32, min_area=float(os.environ.get("ISL_MIN", "0.8")), *, exact=False):
     """бобышки и рёбра внутри кармана и над краем: отдельные многоугольники сечений,
     сгруппированные по перекрытию в плане; каждое — выдавливание своего контура с отверстиями"""
     items = []
@@ -682,6 +682,14 @@ def islands(secs, zb, dz=0.2, n=32, min_area=float(os.environ.get("ISL_MIN", "0.
         ref = max(with_holes or [q for _, q in ps], key=lambda q: Polygon(q.exterior).area)
         single = len(zset) == len(ps)
         try:
+            if exact:
+                from cylindrical_islands import cylindrical_island
+
+                fitted = cylindrical_island(ps,za,zb2)
+                if fitted is not None:
+                    sol,sol._cylindrical_island = fitted
+                    solids.append(sol)
+                    continue
             zs_c = [z for z, _ in ps]
             rings_c = [ring_pts(q.exterior.coords, n, 0.03) for _, q in ps]
             kk = pick_levels(zs_c, rings_c, jump=0.5, dzmax=1.5, dzmin=0.4) if single and not with_holes else []
@@ -1065,6 +1073,19 @@ def _edge_fillets(body, info, scan=None, *, fit_variable=False):
 
 
 def assemble(scan, log=print):
+    body,info = _assemble_candidates(scan,log)
+    if os.environ.get("CAD_KOMPAS_EXACT_ISLANDS", "0") == "1":
+        from cylindrical_islands import guarded_exact_islands
+
+        body,info = guarded_exact_islands(scan,body,info,log,_assemble_stock)
+    if os.environ.get("CAD_KOMPAS_LEVEL_PADS", "0") == "1":
+        from level_pads import guarded_level_pads
+
+        body,info = guarded_level_pads(scan,body,info,log)
+    return body,info
+
+
+def _assemble_candidates(scan, log):
     """Build 0с and validate an opt-in candidate against the stock result."""
     candidate = None
     experiment = None
@@ -1126,7 +1147,7 @@ def assemble(scan, log=print):
 
 
 def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
-                    fit_upper_wall=False, fit_pocket_floor=False, fit_variable=False):
+                    fit_upper_wall=False, fit_pocket_floor=False, fit_variable=False,exact_islands=False):
     """Сборка «как в Компасе» вдоль оси z выровненного скана. Возвращает (тело, сведения).
     Порядок операций: наружная стенка (лофт по сечениям, сглаженным по высоте) → вырез кармана слоями →
     срез верха и низа гладкими поверхностями по скану → бобышки и площадка выдавливанием →
@@ -1136,7 +1157,10 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
     TOPINFO.clear()
     info = {}
     t = time.time()
-    pieces, cut, isl = build2(scan, periodic_wall=periodic_wall, void_n=void_n,fit_upper_wall=fit_upper_wall)
+    pieces, cut, isl = build2(scan, periodic_wall=periodic_wall, void_n=void_n,
+                             fit_upper_wall=fit_upper_wall,exact_islands=exact_islands)
+    if void_n is not None:
+        info["void_n"] = void_n
     for key in ("periodic_wall", "wall_end_recovery", "upper_wall_fit"):
         if TOPINFO.get(key):
             info[key] = True
@@ -1212,6 +1236,8 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             nb = body.fuse(p)
             if nb.isValid() and len(nb.Solids()) <= len(body.Solids()):
                 body = nb; added += 1
+                if hasattr(p,"_cylindrical_island"):
+                    info.setdefault("cylindrical_islands",[]).append(p._cylindrical_island)
         except Exception:  # noqa: BLE001
             pass
     info["bosses"] = added

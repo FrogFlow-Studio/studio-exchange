@@ -1,0 +1,132 @@
+[
+  {
+    "stepped": false,
+    "diameters_mm": [
+      4.45,
+      7.5
+    ],
+    "analytic": {
+      "diameter_mm": 7.5,
+      "bores": [
+        {
+          "diameter_mm": 4.45,
+          "z_mm": [
+            1.1535063370299152,
+            6.9735063370299155
+          ]
+        }
+      ],
+      "windows": 4,
+      "center_mm": [
+        0.0002582511648702851,
+        0.000344263340035348
+      ]
+    },
+    "coverage": {
+      "stock": [
+        1.0,
+        1.0
+      ],
+      "candidate": [
+        1.0,
+        1.0
+      ],
+      "reason": "coverage_ok"
+    },
+    "coverage_ok": true,
+    "faces": [
+      45,
+      31
+    ],
+    "vertical_planes": 16
+  },
+  {
+    "stepped": true,
+    "diameters_mm": [
+      4.45,
+      5.0,
+      7.5
+    ],
+    "analytic": {
+      "diameter_mm": 7.5,
+      "bores": [
+        {
+          "diameter_mm": 5.0,
+          "z_mm": [
+            1.1522886435754756,
+            2.1522886435754756
+          ]
+        },
+        {
+          "diameter_mm": 4.45,
+          "z_mm": [
+            2.1522886435754756,
+            5.752288643575476
+          ]
+        },
+        {
+          "diameter_mm": 5.0,
+          "z_mm": [
+            5.752288643575476,
+            6.972288643575475
+          ]
+        }
+      ],
+      "windows": 4,
+      "center_mm": [
+        0.0006228064361718487,
+        -1.0693474769914559e-05
+      ]
+    },
+    "coverage": {
+      "stock": [
+        0.9997,
+        1.0
+      ],
+      "candidate": [
+        1.0,
+        1.0
+      ],
+      "reason": "coverage_ok"
+    },
+    "coverage_ok": true,
+    "faces": [
+      44,
+      44
+    ],
+    "vertical_planes": 16
+  },
+  {
+    "task": 72,
+    "adjusted": 3,
+    "before": {
+      "faces": 41,
+      "narrow_faces": 10,
+      "plane_area_share": 0.9734800038484883,
+      "cylinder_area_share": 0.02641394664729234,
+      "plane_cylinder_area_share": 0.9998939504957807,
+      "horizontal_planes": 11,
+      "near_height_horizontal_faces": 8
+    },
+    "after": {
+      "faces": 28,
+      "narrow_faces": 0,
+      "plane_area_share": 0.9737407566977173,
+      "cylinder_area_share": 0.02625924330228263,
+      "plane_cylinder_area_share": 1.0,
+      "horizontal_planes": 8,
+      "near_height_horizontal_faces": 5
+    },
+    "coverage": {
+      "stock": [
+        1.0,
+        1.0
+      ],
+      "candidate": [
+        1.0,
+        1.0
+      ],
+      "reason": "coverage_ok"
+    }
+  }
+]

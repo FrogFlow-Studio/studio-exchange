@@ -1,5 +1,6 @@
 """Merge shallow steps into a neighboring, scan-supported pocket floor."""
 import cadquery as cq
+from collections import Counter
 import numpy as np
 import shapely
 from OCP.Standard import Standard_Failure
@@ -34,7 +35,7 @@ def _footprint(face, *, curved=False):
     return poly if poly is not None and poly.is_valid and poly.area>0 else None
 
 
-def level_pads(body, scan, *, curved=False):
+def level_pads(body, scan, *, curved=False, diagnostics=None):
     """Level supported shallow bumps and depressions; preserve an unsupported step."""
     import trimesh
 
@@ -44,16 +45,23 @@ def level_pads(body, scan, *, curved=False):
     targets = sorted(rows,key=lambda row:-row[0].Area())
     footprints = {}
     accepted = 0
+    outcomes = Counter()
+    reasons = ("no_nearby_floor","floor_does_not_contain_pad","insufficient_scan_points",
+               "scan_height_mismatch","boolean_or_topology","leveled")
     for face,z in sorted(rows,key=lambda row:row[0].Area()):
         if not any(f.isSame(face) for f in body.Faces()):
+            outcomes["removed_by_prior_edit"] += 1
             continue
         poly = _footprint(face,curved=curved)
         if poly is None:
+            outcomes["unsupported_contour"] += 1
             continue
+        furthest = 0
         for parent,height in targets:
             offset = z-height
             if not .005<abs(offset)<.05 or parent.Area()<4*face.Area():
                 continue
+            furthest = max(furthest,1)
             if parent not in footprints:
                 support = parent if len(parent.Wires())==1 else cq.Face.makeFromWires(parent.outerWire())
                 footprints[parent] = _footprint(support,curved=curved)
@@ -64,6 +72,7 @@ def level_pads(body, scan, *, curved=False):
             samples = points[mask]
             samples = samples[abs(samples[:,2]-height)<.10]
             if len(samples)<12:
+                furthest = max(furthest,2)
                 continue
             delta = samples[:,2]-height
             median = np.median(delta)
@@ -73,7 +82,9 @@ def level_pads(body, scan, *, curved=False):
                 # support the existing step. Still require proximity.
                 limit = max(limit,.025)
             if abs(median)>limit or np.quantile(abs(delta),.9)>.045:
+                furthest = max(furthest,3)
                 continue
+            furthest = max(furthest,4)
             # A narrow overlap makes the filling prism fuse to the floor.
             low,high = sorted((z,height))
             try:
@@ -85,16 +96,22 @@ def level_pads(body, scan, *, curved=False):
                         and abs(candidate.Volume()-body.Volume())<=1.2*poly.area*abs(offset)):
                     body = candidate
                     accepted += 1
+                    furthest = 5
                     break
             except (RuntimeError,ValueError,Standard_Failure):
                 continue
+        outcomes[reasons[furthest]] += 1
+    if diagnostics is not None:
+        diagnostics.update(horizontal_faces=len(rows), outcomes=dict(outcomes))
     return body,accepted
 
 
 def guarded_level_pads(scan, body, info, log, *, curved=False):
     from candidate_guard import compare_candidate
 
-    candidate,count = level_pads(body,scan,curved=curved)
+    diagnostics = {}
+    candidate,count = level_pads(body,scan,curved=curved,diagnostics=diagnostics)
+    log(f"    level pads: {diagnostics}")
     if not count:
         return body,info
     accepted,audit = compare_candidate(scan,body,candidate,allowance=0.)

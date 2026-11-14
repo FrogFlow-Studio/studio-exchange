@@ -1,0 +1,92 @@
+[
+  {
+    "task": 71,
+    "diameters_mm": [
+      2.5,
+      2.5,
+      7.5
+    ],
+    "coverage": {
+      "stock": [
+        1.0,
+        0.9988
+      ],
+      "candidate": [
+        1.0,
+        1.0
+      ],
+      "reason": "coverage_ok"
+    },
+    "faces": [
+      29,
+      40
+    ],
+    "islands": [
+      {
+        "outer_spans": [
+          {
+            "z_mm": [
+              3.9472354118468123,
+              7.947235411846813
+            ],
+            "diameter_mm": 7.5
+          }
+        ],
+        "bores": [
+          {
+            "z_mm": [
+              1.147235411846812,
+              7.967235411846812
+            ],
+            "diameter_mm": 2.5
+          }
+        ]
+      },
+      {
+        "outer_spans": [],
+        "bores": [
+          {
+            "z_mm": [
+              1.147235411846812,
+              7.967235411846812
+            ],
+            "diameter_mm": 2.5
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "task": 72,
+    "adjusted": 3,
+    "before": {
+      "faces": 41,
+      "narrow_faces": 10,
+      "plane_area_share": 0.9734800038484883,
+      "cylinder_area_share": 0.02641394664729234,
+      "plane_cylinder_area_share": 0.9998939504957807,
+      "horizontal_planes": 11,
+      "near_height_horizontal_faces": 8
+    },
+    "after": {
+      "faces": 28,
+      "narrow_faces": 0,
+      "plane_area_share": 0.9737407566977173,
+      "cylinder_area_share": 0.02625924330228263,
+      "plane_cylinder_area_share": 1.0,
+      "horizontal_planes": 8,
+      "near_height_horizontal_faces": 5
+    },
+    "coverage": {
+      "stock": [
+        1.0,
+        1.0
+      ],
+      "candidate": [
+        1.0,
+        1.0
+      ],
+      "reason": "coverage_ok"
+    }
+  }
+]

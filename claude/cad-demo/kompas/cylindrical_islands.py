@@ -5,12 +5,17 @@ from OCP.Standard import Standard_Failure
 from scipy.optimize import least_squares
 
 
-def _fit(rings, tolerance=.05):
+def _fit(rings, tolerance=.05, diameter_step=.1, *, sample_segments=False):
     levels = []
     for ring in rings:
         samples = np.asarray(ring.coords)[:-1]
         if len(samples)<8:
             return None
+        # Sample along segments as well: polygon vertices alone can all
+        # lie on a circle even when the actual contour is faceted.
+        if sample_segments:
+            middle = (samples+np.roll(samples,-1,axis=0))/2
+            samples = np.vstack((samples,middle))
         levels.append(samples)
     points = np.vstack(levels)
     origin = points.mean(axis=0)
@@ -28,7 +33,7 @@ def _fit(rings, tolerance=.05):
     center, radius = fit.x[:2]+origin,fit.x[2]
     if radius<.25:
         return None
-    diameter = round(round(radius/.05)*.1,2)
+    diameter = round(round(2*radius/diameter_step)*diameter_step,2)
     for level in levels:
         relative = level-center
         angles = np.arctan2(relative[:,1],relative[:,0])
@@ -71,9 +76,9 @@ def cylindrical_island(sections, low, high):
     return None
 
 
-def guarded_exact_islands(scan, body, info, log, assemble_stock):
+def guarded_exact_islands(scan, body, info, log, assemble_stock, *, mode=True):
     try:
-        trial,details = assemble_stock(scan,log=log,exact_islands=True,
+        trial,details = assemble_stock(scan,log=log,exact_islands=mode,
             fit_pocket_floor=bool(info.get("smooth_pocket_floors")),
             void_n=info.get("void_n"),periodic_wall=bool(info.get("periodic_wall")),
             fit_upper_wall=bool(info.get("upper_wall_fit")),

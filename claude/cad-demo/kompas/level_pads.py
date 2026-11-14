@@ -8,10 +8,18 @@ from shapely.geometry import Polygon
 from cad_cleanliness import horizontal_planes
 
 
-def _footprint(face):
-    # Restrict the local edit to straight-sided islands with simple bounds.
-    if len(face.Wires())!=1 or any(e.geomType()!="LINE" for e in face.Edges()):
+def _footprint(face, *, curved=False):
+    if len(face.Wires())!=1:
         return None
+    if any(e.geomType()!="LINE" for e in face.Edges()):
+        if not curved:
+            return None
+        wire = face.outerWire()
+        # The polygon is only for evidence selection. The boolean uses the
+        # original OCC wire and retains exact arcs and splines.
+        points,_ = wire.sample(min(4096,max(96,int(wire.Length()/.06))))
+        poly = Polygon([(p.x,p.y) for p in points])
+        return poly if poly.is_valid and poly.area>0 else None
     # Preserve corners by using the actual wire vertices in traversal order.
     from OCP.BRepTools import BRepTools_WireExplorer
     from OCP.BRep import BRep_Tool
@@ -26,12 +34,12 @@ def _footprint(face):
     return poly if poly is not None and poly.is_valid and poly.area>0 else None
 
 
-def level_pads(body, scan):
+def level_pads(body, scan, *, curved=False):
     """Level supported shallow bumps and depressions; preserve an unsupported step."""
     import trimesh
 
     points,indices = trimesh.sample.sample_surface(scan,90000,seed=69)
-    points = points[scan.face_normals[indices,2]>.92]
+    points = points[scan.face_normals[indices,2]>(.6 if curved else .92)]
     rows = [(f,z) for f,z in horizontal_planes(body,angle_deg=.05) if f.normalAt().z>.99]
     targets = sorted(rows,key=lambda row:-row[0].Area())
     footprints = {}
@@ -39,7 +47,7 @@ def level_pads(body, scan):
     for face,z in sorted(rows,key=lambda row:row[0].Area()):
         if not any(f.isSame(face) for f in body.Faces()):
             continue
-        poly = _footprint(face)
+        poly = _footprint(face,curved=curved)
         if poly is None:
             continue
         for parent,height in targets:
@@ -47,7 +55,8 @@ def level_pads(body, scan):
             if not .005<abs(offset)<.05 or parent.Area()<4*face.Area():
                 continue
             if parent not in footprints:
-                footprints[parent] = _footprint(parent) if len(parent.Wires())==1 else _outer_polygon(parent)
+                support = parent if len(parent.Wires())==1 else cq.Face.makeFromWires(parent.outerWire())
+                footprints[parent] = _footprint(support,curved=curved)
             outer = footprints[parent]
             if outer is None or not outer.buffer(.002).covers(poly):
                 continue
@@ -57,7 +66,13 @@ def level_pads(body, scan):
             if len(samples)<12:
                 continue
             delta = samples[:,2]-height
-            if abs(np.median(delta))>max(.006,.3*abs(offset)) or np.quantile(abs(delta),.9)>.045:
+            median = np.median(delta)
+            limit = max(.006,.3*abs(offset))
+            if curved and median*offset<0:
+                # Evidence on the opposite side of the floor cannot
+                # support the existing step. Still require proximity.
+                limit = max(limit,.025)
+            if abs(median)>limit or np.quantile(abs(delta),.9)>.045:
                 continue
             # A narrow overlap makes the filling prism fuse to the floor.
             low,high = sorted((z,height))
@@ -76,14 +91,10 @@ def level_pads(body, scan):
     return body,accepted
 
 
-def _outer_polygon(face):
-    return _footprint(cq.Face.makeFromWires(face.outerWire()))
-
-
-def guarded_level_pads(scan, body, info, log):
+def guarded_level_pads(scan, body, info, log, *, curved=False):
     from candidate_guard import compare_candidate
 
-    candidate,count = level_pads(body,scan)
+    candidate,count = level_pads(body,scan,curved=curved)
     if not count:
         return body,info
     accepted,audit = compare_candidate(scan,body,candidate,allowance=0.)

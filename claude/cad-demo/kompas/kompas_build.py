@@ -765,7 +765,16 @@ def islands(secs, zb, dz=0.2, n=32, min_area=float(os.environ.get("ISL_MIN", "0.
         ref = max(with_holes or [q for _, q in ps], key=lambda q: Polygon(q.exterior).area)
         single = len(zset) == len(ps)
         try:
-            if exact:
+            if exact == "partial":
+                from partial_islands import partial_island
+
+                fitted = partial_island(ps,za,zb2,dz,loft,prism,ring_pts,n)
+                if fitted is not None:
+                    sol,audit = fitted
+                    sol._cylindrical_island = audit
+                    solids.append(sol)
+                    continue
+            elif exact:
                 from cylindrical_islands import cylindrical_island
 
                 fitted = cylindrical_island(ps,za,zb2)
@@ -1157,14 +1166,16 @@ def _edge_fillets(body, info, scan=None, *, fit_variable=False):
 
 def assemble(scan, log=print):
     body,info = _assemble_candidates(scan,log)
-    if os.environ.get("CAD_KOMPAS_EXACT_ISLANDS", "0") == "1":
+    partial = os.environ.get("CAD_KOMPAS_PARTIAL_ISLANDS", "0") == "1"
+    if partial or os.environ.get("CAD_KOMPAS_EXACT_ISLANDS", "0") == "1":
         from cylindrical_islands import guarded_exact_islands
 
-        body,info = guarded_exact_islands(scan,body,info,log,_assemble_stock)
-    if os.environ.get("CAD_KOMPAS_LEVEL_PADS", "0") == "1":
+        body,info = guarded_exact_islands(scan,body,info,log,_assemble_stock,mode="partial" if partial else True)
+    curved = os.environ.get("CAD_KOMPAS_CURVED_PADS", "0") == "1"
+    if curved or os.environ.get("CAD_KOMPAS_LEVEL_PADS", "0") == "1":
         from level_pads import guarded_level_pads
 
-        body,info = guarded_level_pads(scan,body,info,log)
+        body,info = guarded_level_pads(scan,body,info,log,curved=curved)
     return body,info
 
 

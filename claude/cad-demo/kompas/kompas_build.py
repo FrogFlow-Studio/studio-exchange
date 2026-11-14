@@ -1143,6 +1143,20 @@ def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RI
             else:
                 groups.append([(z, g)])
         for G in groups:
+            if os.environ.get("THIN_RIB_UNION", "1") == "1":
+                # как конструктор: язычок — одно выдавливание по общему контуру его сечений на всю
+                # высоту, одна боковая грань вместо лофта по слоям
+                try:
+                    u = shapely.union_all([q for _, q in G]).buffer(0.01).buffer(-0.01)
+                    if u.geom_type != "Polygon":
+                        u = max(u.geoms, key=lambda q: q.area)
+                    # гладкий контур сплайном: одна боковая грань (многоугольник давал грань на каждую сторону)
+                    sol = prism(ring_pts(u.exterior.coords, 24, 0.01), G[0][0] - dz / 2 - 0.01, G[-1][0] + dz / 2 + 0.01)
+                    sol = sol if isinstance(sol, cq.Shape) else cq.Workplane().add(sol).val()
+                    if sol.isValid() and sol.Volume() > 0:
+                        out.append(sol); continue
+                except Exception:  # noqa: BLE001
+                    pass
             try:
                 if len(G) < 2:
                     raise ValueError("one level")

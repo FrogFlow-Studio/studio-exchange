@@ -1,0 +1,36 @@
+{
+  "audit": {
+    "found": 2,
+    "removed": 2,
+    "reasons": {},
+    "faces": 10,
+    "coverage": {
+      "stock": [
+        1.0,
+        1.0
+      ],
+      "candidate": [
+        1.0,
+        1.0
+      ],
+      "reason": "coverage_ok"
+    }
+  },
+  "seconds": 4.187,
+  "faces": [
+    14,
+    10
+  ],
+  "narrow_faces": [
+    2,
+    0
+  ],
+  "preserved_step_mm": 0.3,
+  "timeout": {
+    "found": 0,
+    "removed": 0,
+    "reasons": {
+      "timeout": 1
+    }
+  }
+}

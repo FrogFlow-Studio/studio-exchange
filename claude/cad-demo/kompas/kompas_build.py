@@ -1255,6 +1255,14 @@ def assemble(scan, log=print):
         from level_pads import guarded_level_pads
 
         body,info = guarded_level_pads(scan,body,info,log,curved=curved)
+    if os.environ.get("CAD_KOMPAS_POCKET_STEPS","0") == "1":
+        from pocket_steps import clean_pocket_steps
+
+        body,audit = clean_pocket_steps(body,scan=scan)
+        info = {**info,"pocket_steps":audit}
+        if audit["removed"]:
+            info["faces"] = audit["faces"]
+        log(f"    pocket steps: {audit}")
     return body,info
 
 

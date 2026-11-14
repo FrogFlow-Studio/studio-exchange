@@ -36,18 +36,25 @@ def tapered_additions():
 
     from hooked_islands import _transition_loft
 
-    def fail_smooth(track,bounds,ruled):
-        return _transition_loft(track,bounds,ruled) if ruled else None
+    def fail_smooth(track,bounds,ruled,detail):
+        return _transition_loft(track,bounds,ruled,detail) if ruled else None
 
     with patch("hooked_islands._transition_loft",side_effect=fail_smooth):
         _,method = _track_tools(tracks[0],bounds,mode="smooth")
     assert method=="ruled_loft",method
     with patch("hooked_islands.cq.Solid.makeLoft",side_effect=StdFail_NotDone):
+        diagnostics = {}
+        tools,compact = _track_tools(tracks[0],bounds,mode="smooth",diagnostics=diagnostics)
+    assert len(tools)==1 and compact=="union_prism",compact
+    assert {entry["status"] for entry in diagnostics["lofts"].values()}=={"StdFail_NotDone"}
+    with (patch("hooked_islands.cq.Solid.makeLoft",side_effect=StdFail_NotDone),
+          patch("hooked_islands._union_prism",return_value=None)):
         _,fallback = _add_features(sleeve,tracks,[],bounds)
     assert fallback["addition_methods"]=={"stacked_prisms":2},fallback
     return dict(faces=[before["faces"],after["faces"]],
                 narrow_faces=[before["narrow_faces"],after["narrow_faces"]],
                 coverage=coverage,methods=audit["addition_methods"],ruled_fallback=method,
+                compact_fallback=compact,
                 prism_fallback=fallback["addition_methods"])
 
 
@@ -56,11 +63,11 @@ def rejected_offset():
     box = cq.Solid.makeBox(12,12,8,v(-6,-6,0))
     lower = cq.Solid.makeBox(6,6,3,v(-3,-3,1))
     upper = cq.Workplane("XY").workplane(offset=4).polyline(
-        [(-3,-3),(3.02,-3),(3.12,3),(-3,3)]).close().extrude(4.1).val()
+        [(-3,-3),(3.002,-3),(3.152,3),(-3,3)]).close().extrude(4.1).val()
     body = box.cut(lower,upper).clean()
     unchanged,audit = _rebuild(body)
     assert unchanged is body and audit["reasons"]=={"offset_above_limit":1},audit
-    assert audit["rejected_offset_mm"]==dict(count=1,min=.12,median=.12,max=.12),audit
+    assert audit["rejected_offset_mm"]==dict(count=1,min=.152,median=.152,max=.152),audit
     return audit
 
 

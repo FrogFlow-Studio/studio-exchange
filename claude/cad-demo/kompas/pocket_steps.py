@@ -20,6 +20,8 @@ from OCP.StdFail import StdFail_NotDone
 from cad_cleanliness import horizontal_planes
 
 LIMIT = .08
+JOIN_OFFSET = .15
+JOIN_HEIGHT = .05
 WALL_Z = cos(radians(65))
 CAD_ERRORS = (ValueError, RuntimeError, Standard_Failure,StdFail_NotDone)
 
@@ -86,7 +88,7 @@ def _ledges(body, rejected_offsets=None):
         offset = max(cq.Vertex.makeVertex(*point.toTuple()).distance(target)
                      for (edges,_),(_,target) in (sides,sides[::-1])
                      for edge in edges for point in _samples(edge))
-        if offset>=LIMIT:
+        if offset>=JOIN_OFFSET:
             reasons["offset_above_limit"] += 1
             if rejected_offsets is not None:
                 rejected_offsets.append(offset)
@@ -155,7 +157,7 @@ def _bridge(band,face_edges,adjacency):
                     sample = BRepClass_FaceClassifier(face.wrapped,gp_Pnt2d(u,v),1e-6)
                     if sample.State()==TopAbs_IN:
                         points.append(face.positionAt(u,v))
-        if any(cq.Vertex.makeVertex(*p.toTuple()).distance(target)>LIMIT for p in points):
+        if any(cq.Vertex.makeVertex(*p.toTuple()).distance(target)>JOIN_OFFSET for p in points):
             return None,"wall_displacement"
     return walls,None
 
@@ -195,6 +197,15 @@ def _rebuild_bands(body):
     return shape,audit
 
 
+def _join_groups(shelves):
+    groups = []
+    for z in sorted(face.Center().z for face in shelves):
+        if not groups or z-groups[-1][0]>2*JOIN_HEIGHT:
+            groups.append([])
+        groups[-1].append(z)
+    return groups
+
+
 def _rebuild_local(body,shelves,reasons):
     # Work around each join inside a thin slab. Faces that span the join
     # retain their original surfaces beyond the slab.
@@ -215,26 +226,36 @@ def _rebuild_local(body,shelves,reasons):
         whole,full = _rebuild_bands(body)
         if full["removed"]==len(shelves):
             return whole,full
-    protected_heights = [z for face,z in horizontal_planes(body) if face not in shelves]
-    by_height = Counter(round(face.Center().z,4) for face in shelves)
-    heights = sorted(by_height)
+    groups = _join_groups(shelves)
+    protected = []
+    for face,z in horizontal_planes(body):
+        if face in shelves:
+            continue
+        perimeter = sum(w.Length() for w in face.Wires())
+        if perimeter and 2*face.Area()/perimeter>=LIMIT:
+            protected.append((face.BoundingBox(),z))
     current = body
     removed = 0
-    for i,z in enumerate(heights):
-        count = by_height[z]
-        separation = min(z-heights[i-1] if i else 1.,
-                         heights[i+1]-z if i+1<len(heights) else 1.)
-        nearest = min((abs(z-other) for other in protected_heights if abs(z-other)>1e-4),default=1.)
-        span = min(.30,.40*separation,.40*nearest)
+    for i,group in enumerate(groups):
+        count = len(group)
+        low,high = group[0],group[-1]
+        left = low-groups[i-1][-1] if i else 1.
+        right = groups[i+1][0]-high if i+1<len(groups) else 1.
+        footprints = [face.BoundingBox() for face in shelves if low<=face.Center().z<=high]
+        nearby = (z for box,z in protected if any(
+            box.xmin<=b.xmax+.15 and box.xmax>=b.xmin-.15
+            and box.ymin<=b.ymax+.15 and box.ymax>=b.ymin-.15 for b in footprints))
+        nearest = min((min(abs(low-z),abs(high-z)) for z in nearby),default=1.)
+        span = min(.30,.40*left,.40*right,.40*nearest)
         if span<.065:
             reasons["nearby_horizontal_feature"] += count
             continue
         try:
-            planes = [cq.Face.makePlane(basePnt=cq.Vector(0,0,z+offset),dir=cq.Vector(0,0,1))
-                      for offset in (-span,span)]
+            planes = [cq.Face.makePlane(basePnt=cq.Vector(0,0,z),dir=cq.Vector(0,0,1))
+                      for z in (low-span,high+span)]
             parts = current.split(*planes).Solids()
-            middle = [p for p in parts if p.BoundingBox().zmin>=z-span-1e-5
-                      and p.BoundingBox().zmax<=z+span+1e-5]
+            middle = [p for p in parts if p.BoundingBox().zmin>=low-span-1e-5
+                      and p.BoundingBox().zmax<=high+span+1e-5]
             if not middle:
                 reasons["missing_wall_slab"] += count
                 continue
@@ -256,7 +277,7 @@ def _rebuild_local(body,shelves,reasons):
                 reasons["invalid_wall_slab"] += count
                 continue
             remaining,_,_,_ = _ledges(joined)
-            removed_here = max(0,count-sum(round(f.Center().z,4)==z for f in remaining))
+            removed_here = max(0,count-sum(low-1e-4<=f.Center().z<=high+1e-4 for f in remaining))
             if removed_here:
                 current = joined
                 removed += removed_here
@@ -274,6 +295,8 @@ def _rebuild(body):
     screened = len(shelves)+sum(reasons.values())
     result,audit = _rebuild_local(body,shelves,reasons)
     audit["screened"] = screened
+    audit["join_groups"] = [dict(z_mm=[round(g[0],4),round(g[-1],4)],count=len(g))
+                            for g in _join_groups(shelves)]
     audit["rejected_offset_mm"] = dict(
         count=len(offsets),min=round(min(offsets),4),median=round(median(offsets),4),
         max=round(max(offsets),4)) if offsets else dict(count=0)

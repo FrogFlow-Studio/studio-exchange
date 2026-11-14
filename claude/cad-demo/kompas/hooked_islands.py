@@ -101,9 +101,10 @@ def _build(sections,low,high,dz):
     if not sleeve.isValid() or len(sleeve.Solids())!=1:
         raise Rejected("window cuts did not leave one solid",float(z[0]))
     rollbacks = {}
-    for mode in ("smooth","ruled","legacy"):
+    attempts = []
+    for mode in ("smooth","compact_hooks","ruled","legacy"):
         try:
-            result,build = _add_features(sleeve,hook_tracks,end_tracks,bounds,mode=mode)
+            result,build = _add_features(sleeve,hook_tracks,end_tracks,bounds,mode=mode,attempts=attempts)
             break
         except Rejected:
             raise
@@ -115,39 +116,67 @@ def _build(sections,low,high,dz):
             rollbacks[mode] = type(error).__name__ + ": " + str(error).split("\n")[0][:120]
     if rollbacks:
         build["addition_rollbacks"] = rollbacks
+        build["rolled_back_groups"] = attempts[:-1]
     return result,dict(diameter_mm=diameter,bores=bores,windows=len(cuts),gaps=len(gaps),
                        window_references=window_references,center_mm=center.tolist(),**build)
 
 
-def _add_features(sleeve,hook_tracks,end_tracks,bounds,*,mode="smooth"):
+def _add_features(sleeve,hook_tracks,end_tracks,bounds,*,mode="smooth",attempts=None):
     methods = Counter()
+    groups = []
+    hook_mode = "smooth" if mode=="compact_hooks" else mode
     additions = []
     for track in hook_tracks:
-        tools,method = _track_tools(track,bounds,mode=mode)
+        group = {}
+        tools,method = _track_tools(track,bounds,mode=hook_mode,diagnostics=group)
+        groups.append(dict(feature="hook",method=method,**group))
         additions.extend(tools)
         methods[method] += 1
     fills = []
-    end_methods = Counter()
+    end_options = []
     for bottom,track,annulus in end_tracks:
-        tools,method = _track_tools(track,bounds,mode=mode)
-        fills.extend((bottom,tool.intersect(annulus)) for tool in tools)
-        end_methods[method] += 1
+        group = {}
+        end_mode = "legacy" if mode=="compact_hooks" else mode
+        tools,method = _track_tools(track,bounds,mode=end_mode,diagnostics=group)
+        patches = [tool.intersect(annulus) for tool in tools]
+        fills.extend((bottom,patch) for patch in patches)
+        end_options.append((track,annulus,patches,dict(feature="window_end",method=method,**group)))
     fillet = _fit_window_fillet(sleeve,fills)
     if fillet is not None:
         sleeve,fillet_volume,fillet_radius = fillet
         methods["analytic_fillet"] += len(end_tracks)
+        groups.extend(dict(group,method="analytic_fillet") for _,_,_,group in end_options)
     else:
         fillet_volume,fillet_radius = 0.,None
-        additions.extend(patch for _,patch in fills)
-        methods.update(end_methods)
+        for track,annulus,patches,group in end_options:
+            if group["method"] in ("smooth_loft","ruled_loft","union_prism"):
+                try:
+                    trial = sleeve.fuse(*patches).clean()
+                    attached = trial.isValid() and len(trial.Solids())==1
+                except CAD_ERRORS:
+                    attached = False
+                if not attached:
+                    group["attachment_failed"] = group["method"]
+                    tools,group["method"] = _track_tools(track,bounds,mode="legacy")
+                    patches = [tool.intersect(annulus) for tool in tools]
+            additions.extend(patches)
+            groups.append(group)
+            methods[group["method"]] += 1
+    if attempts is not None:
+        attempts.append(dict(mode=mode,groups=groups))
     volume = fillet_volume+sum(tool.Volume() for tool in additions)
     if volume>.3*(sleeve.Volume()-fillet_volume):
         raise ValueError("additions exceed 30% of sleeve volume")
-    result = sleeve.fuse(*additions).clean() if additions else sleeve
+    result = sleeve.fuse(*additions,tol=.0001).clean() if additions and mode in ("smooth","compact_hooks") else (
+        sleeve.fuse(*additions).clean() if additions else sleeve)
+    if mode in ("smooth","compact_hooks") and (not result.isValid() or len(result.Solids())!=1):
+        result = sleeve
+        for tool in additions:
+            result = result.fuse(tool,tol=.0001).clean()
     if not result.isValid() or len(result.Solids())!=1:
         raise ValueError("additions did not fuse into one solid")
     return result,dict(additions=len(additions)+(len(fills) if fillet is not None else 0),
-                       addition_methods=dict(methods),window_end_fillet_mm=fillet_radius,
+                       addition_methods=dict(methods),addition_groups=groups,window_end_fillet_mm=fillet_radius,
                        addition_volume_mm3=volume)
 
 
@@ -317,14 +346,24 @@ def _protrusion_tracks(extras):
     return [track for track in tracks if len(track)>=2]
 
 
-def _track_tools(track,bounds,*,mode):
+def _track_tools(track,bounds,*,mode,diagnostics=None):
     if any(p.interiors for _,p in track):
         raise Rejected("protrusion with unsupported hole",float(bounds[track[0][0]]))
+    attempts = {}
+    if diagnostics is not None:
+        diagnostics.update(sections=len(track),z_mm=round(float(bounds[track[0][0]]),3),
+                           areas_mm2=[round(p.area,3) for _,p in track],lofts=attempts)
     if mode!="legacy":
         for ruled in ((False,True) if mode=="smooth" else (True,)):
-            tool = _transition_loft(track,bounds,ruled)
+            detail = {}
+            tool = _transition_loft(track,bounds,ruled,detail)
+            attempts["ruled" if ruled else "smooth"] = detail
             if tool is not None:
                 return [tool],"ruled_loft" if ruled else "smooth_loft"
+    if mode=="smooth":
+        tool = _union_prism(track,bounds)
+        if tool is not None:
+            return [tool],"union_prism"
     representative = track[len(track)//2][1].simplify(.045,preserve_topology=True)
     if any(representative.symmetric_difference(p).area>.16*max(p.area,representative.area) for _,p in track):
         tools = [_prism(p.simplify(.045,preserve_topology=True),bounds[i],bounds[i+1]) for i,p in track]
@@ -342,24 +381,51 @@ def _track_tools(track,bounds,*,mode):
     return [_prism(representative,low,high)],"polygon_prism"
 
 
-def _transition_loft(track,bounds,ruled):
+def _union_prism(track,bounds):
+    union = shapely.union_all([poly for _,poly in track])
+    if union.geom_type!="Polygon" or union.interiors:
+        return None
+    low,high = bounds[track[0][0]],bounds[track[-1][0]+1]
+    try:
+        tool = _prism(union.simplify(.025,preserve_topology=True),low,high)
+        return tool if tool.isValid() and tool.Volume()>0 else None
+    except CAD_ERRORS:
+        return None
+
+
+def _transition_loft(track,bounds,ruled,detail=None):
     from kompas_build import _common_par, _wire, align, ring_pts
 
-    try:
-        rings = [(ring_pts(p.exterior.coords,24,.025),(bounds[i]+bounds[i+1])/2) for i,p in track]
-        rings = align([(rings[0][0],bounds[track[0][0]]),*rings,
-                       (rings[-1][0],bounds[track[-1][0]+1])])
-        params = _common_par(rings)
-        tool = cq.Solid.makeLoft([_wire(points,z,params) for points,z in rings],ruled=ruled)
-        if tool.isValid() and tool.Volume()>0:
-            box = tool.BoundingBox()
-            boxes = np.array([poly.bounds for _,poly in track])
-            low,high = boxes[:,:2].min(axis=0),boxes[:,2:].max(axis=0)
-            if (np.all([box.xmin,box.ymin]>=low-.08)
-                    and np.all([box.xmax,box.ymax]<=high+.08)):
+    from OCP.BRepBndLib import BRepBndLib
+    from OCP.Bnd import Bnd_Box
+
+    detail = {} if detail is None else detail
+    boxes = np.array([poly.bounds for _,poly in track])
+    low,high = boxes[:,:2].min(axis=0),boxes[:,2:].max(axis=0)
+    for smoothing in (.025,.008):
+        detail.clear()
+        try:
+            rings = [(ring_pts(p.exterior.coords,32,smoothing),(bounds[i]+bounds[i+1])/2) for i,p in track]
+            rings = align([(rings[0][0],bounds[track[0][0]]),*rings,
+                           (rings[-1][0],bounds[track[-1][0]+1])])
+            params = _common_par(rings)
+            tool = cq.Solid.makeLoft([_wire(points,z,params) for points,z in rings],ruled=ruled)
+            if not tool.isValid():
+                detail.update(status="invalid_solid")
+                continue
+            if tool.Volume()<=0:
+                detail.update(status="nonpositive_volume")
+                continue
+            box = Bnd_Box()
+            BRepBndLib.AddOptimal_s(tool.wrapped,box,False,False)
+            xmin,ymin,_,xmax,ymax,_ = box.Get()
+            excess = max(*(low-[xmin,ymin]),*([xmax,ymax]-high))
+            detail.update(status="bounds",excess_mm=round(float(excess),3))
+            if excess<=.08:
+                detail.update(status="accepted")
                 return tool
-    except CAD_ERRORS:
-        pass
+        except CAD_ERRORS as error:
+            detail.update(status=type(error).__name__)
     return None
 
 

@@ -145,6 +145,13 @@ export class Viewport {
     this.center = new THREE.Vector3();
     this.size = 90;
     this.anchor = null;
+    this.gridEnabled = true;
+    this.measurePoints = [];
+    this.raycaster = new THREE.Raycaster();
+    this.measureGroup = new THREE.Group();
+    this.measureMaterial = new THREE.LineBasicMaterial({color: 0xffcc8b, depthTest: false});
+    this.pointMaterial = new THREE.PointsMaterial({color: 0xffcc8b, depthTest: false, size: 7, sizeAttenuation: false});
+    this.scene.add(this.measureGroup);
     this.version = 0;
     this.mode = 'compare';
     this.direction = 'model';
@@ -227,7 +234,8 @@ export class Viewport {
       this.objects.ghost.renderOrder = 2;
     }
     this.scene.add(...Object.values(this.objects));
-    this.bounds.setFromObject(this.objects.model || this.objects.scan);
+    this.bounds.setFromObject(this.objects.scan);
+    if (this.objects.model) this.bounds.expandByObject(this.objects.model);
     this.bounds.getCenter(this.center);
     this.size = Math.max(1e-5, this.bounds.getSize(new THREE.Vector3()).length());
     this.grid = new THREE.GridHelper(this.size * 2.7, 32, 0x637f8e, 0x3a5664);
@@ -235,6 +243,7 @@ export class Viewport {
     this.grid.position.set(this.center.x, this.center.y, this.bounds.min.z - this.size * .085);
     this.grid.material.transparent = true;
     this.grid.material.opacity = .28;
+    this.grid.visible = this.gridEnabled;
     this.scene.add(this.grid);
     this.anchor = null;
     this.clip(false, 53);
@@ -294,12 +303,65 @@ export class Viewport {
     this.controls.update();
   }
 
-  clip(enabled, position) {
-    this.section.constant = this.bounds.min.z + (this.bounds.max.z - this.bounds.min.z) * position / 100;
+  setGrid(enabled) {
+    this.gridEnabled = enabled;
+    if (this.grid) this.grid.visible = enabled;
+  }
+
+  clip(enabled, position, axis = 'z', flipped = false) {
+    const height = THREE.MathUtils.lerp(this.bounds.min[axis], this.bounds.max[axis], position / 100);
+    const sign = flipped ? 1 : -1;
+    this.section.normal.set(0, 0, 0);
+    this.section.normal[axis] = sign;
+    this.section.constant = -sign * height;
     for (const material of Object.values(this.material)) {
       material.clippingPlanes = enabled ? [this.section] : [];
     }
-    return this.section.constant;
+    return height;
+  }
+
+  pick(clientX, clientY) {
+    if (!this.display) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const {width, height, paneWidth, paneHeight} = this.display;
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const split = this.mode === 'split' && this.objects.model;
+    const modelPane = split && (this.stacked ? y >= height / 2 : x >= width / 2);
+    const source = (split ? !modelPane : this.mode === 'scan' || !this.objects.model) ? 'scan' : 'model';
+    const localX = x - (modelPane && !this.stacked ? width - paneWidth : 0);
+    const localY = y - (modelPane && this.stacked ? height - paneHeight : 0);
+    if (!this.objects[source] || localX < 0 || localY < 0 || localX > paneWidth || localY > paneHeight) return null;
+    this.raycaster.layers.enableAll();
+    this.raycaster.setFromCamera(new THREE.Vector2(2 * localX / paneWidth - 1, 1 - 2 * localY / paneHeight), this.camera);
+    for (const hit of this.raycaster.intersectObject(this.objects[source], false)) {
+      if (this.material.model.clippingPlanes.length && this.section.distanceToPoint(hit.point) < -1e-6) continue;
+      return {point: hit.point, source};
+    }
+    return null;
+  }
+
+  clearMeasure() {
+    this.measurePoints = [];
+    for (const object of [...this.measureGroup.children]) {
+      object.geometry.dispose();
+      this.measureGroup.remove(object);
+    }
+  }
+
+  measure(hit) {
+    if (this.measurePoints.length === 2) this.clearMeasure();
+    this.measurePoints.push(hit.point);
+    const geometry = new THREE.BufferGeometry().setFromPoints(this.measurePoints);
+    const points = new THREE.Points(geometry, this.pointMaterial);
+    points.renderOrder = 4;
+    this.measureGroup.add(points);
+    if (this.measurePoints.length < 2) return null;
+    const length = this.measurePoints[0].distanceTo(this.measurePoints[1]);
+    const line = new THREE.Line(geometry.clone(), this.measureMaterial);
+    line.renderOrder = 4;
+    this.measureGroup.add(line);
+    return length;
   }
 
   focus(point) {

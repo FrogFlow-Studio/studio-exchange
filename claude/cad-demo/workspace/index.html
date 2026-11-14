@@ -12,7 +12,7 @@
 <body>
   <header class="app-header">
     <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>CAD Intelligence</span></div>
-    <span class="header-separator"></span><span class="app-context">Рабочее окно</span>
+    <span class="header-separator"></span><span class="app-context">Реконструкция деталей</span>
     <div class="header-actions">
       <span class="connection" id="connection"><i></i> Локальный расчёт</span>
       <button type="button" id="open-file" class="button secondary"><span aria-hidden="true">＋</span> Открыть скан</button>
@@ -36,7 +36,7 @@
 
     <div class="workspace">
       <aside class="sidebar panel" aria-label="Проект">
-        <div class="panel-heading"><h2>Файлы</h2></div>
+        <div class="panel-heading"><h2>Проект</h2></div>
         <div class="file-list">
           <button class="file-entry" type="button" data-mode="scan">
             <span class="file-icon scan-icon" aria-hidden="true">⠿</span><span><b>Исходный скан</b><small id="scan-type">STL</small></span>
@@ -45,11 +45,11 @@
             <span class="file-icon model-icon" aria-hidden="true">◇</span><span><b>CAD-модель</b><small id="model-type">STEP</small></span>
           </button>
         </div>
-        <section class="sidebar-section">
-          <h2>Параметры расчёта</h2>
+        <div class="project-dimensions"><div class="field-row dims"><span>Габариты, мм</span><strong id="dimensions">—</strong></div></div>
+        <details class="sidebar-section settings" id="settings">
+          <summary>Параметры расчёта</summary>
           <label class="field-row"><span>Единицы</span><select id="units" aria-label="Единицы скана"><option value="mm">мм</option><option value="cm">см</option><option value="m">м</option><option value="in">дюймы</option></select></label>
           <div class="field-row"><span>Допуск</span><strong id="tolerance">—</strong></div>
-          <div class="field-row dims"><span>Габариты, мм</span><strong id="dimensions">—</strong></div>
           <label class="notes-field"><span>Что сломано, что важно</span><textarea id="notes" rows="3" placeholder="Например: отколот угол фланца, отверстие в нём потеряно"></textarea></label>
           <label class="regions-option"><input id="ai" type="checkbox"> <span id="ai-label">Построить с ИИ</span></label>
           <p class="ai-note" id="ai-note"></p>
@@ -58,7 +58,7 @@
             <button type="submit">Подключить</button>
             <span class="ai-note">Ключ хранится только в памяти, пока программа запущена; на диск не пишется.</span>
           </form>
-        </section>
+        </details>
         <section class="sidebar-section history">
           <h2>История</h2>
           <div id="history" class="history-list"></div>
@@ -74,7 +74,11 @@
             <button type="button" data-mode="model">Модель</button>
             <button type="button" data-mode="deviation">Отклонения</button>
           </div>
-          <button type="button" class="icon-button" id="fit" title="Подогнать модель в кадр" aria-label="Подогнать модель в кадр">⌗</button>
+          <div class="canvas-actions">
+            <button type="button" class="tool-button" id="grid" aria-pressed="true">Сетка</button>
+            <button type="button" class="tool-button" id="measure" title="Расстояние между двумя точками на сетке" aria-pressed="false" disabled>Замер</button>
+            <button type="button" class="icon-button" id="fit" title="Подогнать модель в кадр" aria-label="Подогнать модель в кадр">⌗</button>
+          </div>
         </div>
         <div class="deviation-controls tabs" id="directions" role="group" aria-label="Направление измерения отклонений" hidden>
           <button type="button" data-direction="model">Модель → скан</button>
@@ -89,6 +93,9 @@
           <div class="viewport-message" id="view-message" role="status">Загрузка геометрии…</div>
           <div class="axis" id="axis" aria-hidden="true"></div>
           <div class="legend" id="legend"></div>
+          <div class="measure-readout" id="measure-readout" role="status" hidden>
+            <span id="measure-result"></span><button type="button" id="clear-measure">Очистить</button>
+          </div>
           <div class="marker" id="marker" hidden aria-hidden="true"></div>
         </div>
         <div class="view-footer">
@@ -103,7 +110,12 @@
               <option value="right">Справа</option>
             </select>
           </label>
-          <div class="section-controls"><input id="section-level" type="range" min="0" max="100" value="53" aria-label="Высота сечения" hidden>
+          <div class="section-controls">
+            <select id="section-axis" aria-label="Ось сечения" hidden>
+              <option value="z">Z</option><option value="x">X</option><option value="y">Y</option>
+            </select>
+            <input id="section-level" type="range" min="0" max="100" value="53" aria-label="Высота сечения" hidden>
+            <button type="button" id="section-flip" aria-pressed="false" title="Поменять сторону отсечки" aria-label="Поменять сторону отсечки" hidden>⇄</button>
             <output id="section-height" for="section-level" hidden></output>
             <button type="button" id="section" aria-pressed="false"><span aria-hidden="true">⫽</span> Сечение</button></div>
         </div>
@@ -111,6 +123,11 @@
 
       <aside class="inspection panel" aria-label="Проверка результата">
         <div class="panel-heading"><h2>Проверка</h2><span class="inspection-state" id="inspection-state">Загрузка</span></div>
+        <div class="inspector-nav tabs" role="group" aria-label="Раздел проверки">
+          <button type="button" data-inspect="overview" aria-pressed="true">Сводка</button>
+          <button type="button" data-inspect="body" aria-pressed="false">Геометрия</button>
+          <button type="button" data-inspect="review" aria-pressed="false">Приёмка</button>
+        </div>
         <div id="inspection"></div>
       </aside>
     </div>

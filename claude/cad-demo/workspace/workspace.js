@@ -1,7 +1,7 @@
 import {Viewport} from './viewport.js';
 
 const $ = (id) => document.getElementById(id);
-const selected = {job: null, mode: 'split', view: 'iso', section: false, direction: 'model', busy: false, globalRunning: false};
+const selected = {job: null, mode: 'split', view: 'iso', section: false, direction: 'model', busy: false, globalRunning: false, inspector: 'overview', measuring: false};
 const units = {mm: 1, cm: 10, m: 1000, in: 25.4};
 const statusLabels = {ready: 'Результат', draft: 'Скан загружен', running: 'В расчёте', error: 'Ошибка'};
 const number = (value, digits = 0) => Number(value).toLocaleString('ru-RU', {
@@ -51,7 +51,9 @@ function setMode(mode, direction = selected.direction) {
   if (mode === 'deviation' && !available.model_deviation && !available.deviations) mode = 'model';
   if (direction === 'model' && !available.model_deviation) direction = 'scan';
   if (direction === 'scan' && !available.deviations && available.model_deviation) direction = 'model';
+  if (mode !== selected.mode) setMeasure(false);
   selected.mode = mode;
+  $('measure').disabled = !scene || !available.scan || mode === 'deviation';
   selected.direction = direction;
   scene?.setMode(mode, direction);
   $('directions').hidden = mode !== 'deviation';
@@ -101,8 +103,15 @@ function checkRow(title, detail, good) {
   return row;
 }
 
-function metric(label, value) {
-  const item = dom('div', 'metric');
+function metric(label, value, direction) {
+  const assets = selected.job.assets;
+  const enabled = Boolean(scene && (direction === 'scan' ? assets.deviations : assets.model_deviation));
+  const item = dom(enabled ? 'button' : 'div', 'metric');
+  if (enabled) {
+    item.type = 'button';
+    item.title = 'Показать карту отклонений';
+    item.onclick = () => setMode('deviation', direction);
+  }
   const title = dom('div', 'metric-label');
   title.append(dom('span', '', label), dom('strong', '', (value < 1 && value >= .9995 ? '<100' : number(value * 100, 1)) + '%'));
   const track = dom('div', 'track');
@@ -159,8 +168,8 @@ function renderInspection(job) {
   coverage.append(heading);
   const forward = report.scan_surface?.reference_to_model;
   const back = report.scan_surface?.model_to_reference;
-  if (forward) coverage.append(metric('Скан → модель', forward.within_share));
-  if (back) coverage.append(metric('Модель → скан', back.within_share));
+  if (forward) coverage.append(metric('Скан → модель', forward.within_share, 'scan'));
+  if (back) coverage.append(metric('Модель → скан', back.within_share, 'model'));
   if (forward && back) coverage.append(dom('p', 'section-note',
     'P95 ' + number(forward.p95_mm, 2) + ' / ' + number(back.p95_mm, 2) + ' мм'));
 
@@ -202,7 +211,22 @@ function renderInspection(job) {
     link.href = job.assets.report;
     audit.append(link);
   }
-  root.append(file, coverage, audit);
+  if (selected.inspector === 'body') {
+    root.append(file);
+  } else if (selected.inspector === 'review') {
+    root.append(audit);
+  } else {
+    root.append(coverage);
+    const overview = dom('section', 'inspect-section');
+    overview.append(dom('h3', '', 'Готовность STEP'),
+      checkRow(top.valid && top.closed && top.connected_solid ? 'Одно замкнутое тело' : 'Проверьте геометрию',
+        number(top.faces) + ' ' + plural(top.faces, ['грань', 'грани', 'граней']),
+        Boolean(top.valid && top.closed && top.connected_solid)));
+    if (!report.has_reference) overview.append(dom('p', 'section-note', 'Посадка и размеры требуют проверки по оригиналу.'));
+    if (report.issues.length) overview.append(dom('p', 'section-note', 'Замечаний: ' + number(report.issues.length)));
+    root.append(overview);
+  }
+
 }
 
 function clearFocus() {
@@ -281,6 +305,7 @@ function renderJob(job) {
     $('units').value = job.units;
     showDimensions();
     renderInspection(job);
+    if (job.status === 'draft') $('settings').open = true;
     try { localStorage.setItem('cad.workspace.job', job.id); } catch { /* Browser storage is optional. */ }
     message(job.error || null);
     for (const entry of $('history').children) entry.setAttribute('aria-current', String(entry.dataset.id === job.id));
@@ -311,6 +336,7 @@ function renderJob(job) {
   const key = job.id + (job.status === 'ready' ? '/result' : '/scan');
   if (key !== loadedKey && scene && job.assets.scan) {
     loadedKey = key;
+    setMeasure(false);
     $('view-message').hidden = false;
     $('viewport').classList.add('loading-geometry');
     $('view-message').textContent = 'Загрузка геометрии…';
@@ -319,11 +345,14 @@ function renderJob(job) {
     $('section').setAttribute('aria-pressed', 'false');
     $('section-level').hidden = true;
     $('section-height').hidden = true;
+    $('section-axis').hidden = true;
+    $('section-flip').hidden = true;
     scene.load(job.assets, job.check?.tolerance_mm || .3).then(() => {
       if (key === loadedKey) {
         setView('iso');
         $('view-message').hidden = true;
         $('viewport').classList.remove('loading-geometry');
+        updateSection();
       }
     }).catch((error) => {
       if (key === loadedKey) {
@@ -427,7 +456,11 @@ $('file-input').onchange = (event) => {
   upload(event.target.files[0]);
   event.target.value = '';
 };
-$('units').onchange = showDimensions;
+$('units').onchange = () => {
+  showDimensions();
+  if (selected.section) updateSection();
+  if (selected.measuring) setMeasure(true);
+};
 $('run').onclick = () => selected.job && mutate('/api/jobs/' + selected.job.id + '/run', null,
   {'X-CAD-Regions': '0', 'X-AI': $('ai').checked ? '1' : '0', 'X-Notes': encodeURIComponent($('notes').value.trim())});
 $('fit').onclick = () => { clearFocus(); setView(selected.view); };
@@ -439,11 +472,70 @@ $('section').onclick = () => {
 function updateSection() {
   $('section-level').hidden = !selected.section;
   $('section-height').hidden = !selected.section;
-  const height = scene?.clip(selected.section, Number($('section-level').value));
-  $('section-height').textContent = Number.isFinite(height) ? number(height, 2) + ' мм' : '—';
+  $('section-axis').hidden = !selected.section;
+  $('section-flip').hidden = !selected.section;
+  const axis = $('section-axis').value;
+  const flipped = $('section-flip').getAttribute('aria-pressed') === 'true';
+  if (selected.measuring) setMeasure(true);
+  const height = scene?.clip(selected.section, Number($('section-level').value), axis, flipped);
+  const scale = selected.job?.status === 'ready' || selected.job?.aligned ? 1 : units[$('units').value];
+  $('section-height').textContent = Number.isFinite(height) ? number(height * scale, 2) + ' мм' : '—';
   $('section-level').setAttribute('aria-valuetext', $('section-height').textContent);
 }
 $('section-level').oninput = updateSection;
+$('section-axis').onchange = updateSection;
+$('section-flip').onclick = () => {
+  const button = $('section-flip');
+  button.setAttribute('aria-pressed', String(button.getAttribute('aria-pressed') !== 'true'));
+  updateSection();
+};
+
+function setMeasure(active) {
+  selected.measuring = active;
+  selected.measureSource = null;
+  $('measure').setAttribute('aria-pressed', String(active));
+  $('measure-readout').hidden = !active;
+  $('viewport').classList.toggle('measuring', active);
+  $('measure-result').textContent = 'Выберите две точки на одной поверхности';
+  scene?.clearMeasure();
+}
+
+$('measure').onclick = () => setMeasure(!selected.measuring);
+$('clear-measure').onclick = () => setMeasure(true);
+$('grid').onclick = () => {
+  const button = $('grid');
+  const active = button.getAttribute('aria-pressed') !== 'true';
+  button.setAttribute('aria-pressed', String(active));
+  scene?.setGrid(active);
+};
+let pointerStart;
+$('viewport').addEventListener('pointerdown', (event) => {
+  pointerStart = selected.measuring && event.button === 0 && event.target.tagName === 'CANVAS'
+    ? [event.clientX, event.clientY] : null;
+});
+$('viewport').addEventListener('pointerup', (event) => {
+  if (!selected.measuring || !pointerStart
+      || Math.hypot(event.clientX - pointerStart[0], event.clientY - pointerStart[1]) > 5) return;
+  pointerStart = null;
+  const hit = scene?.pick(event.clientX, event.clientY);
+  if (!hit) return;
+  if (selected.measureSource && selected.measureSource !== hit.source) scene.clearMeasure();
+  selected.measureSource = hit.source;
+  const mm = scene.measure(hit);
+  const scale = selected.job.status === 'ready' || selected.job.aligned ? 1 : units[$('units').value];
+  const surface = hit.source === 'scan' ? 'Скан' : 'Модель';
+  $('measure-result').textContent = mm === null ? surface + ' · выберите вторую точку'
+    : surface + ' · ≈' + number(mm * scale, 2) + ' мм между точками';
+});
+
+for (const button of document.querySelectorAll('[data-inspect]')) {
+  button.onclick = () => {
+    clearFocus();
+    selected.inspector = button.dataset.inspect;
+    for (const tab of document.querySelectorAll('[data-inspect]')) tab.setAttribute('aria-pressed', String(tab === button));
+    if (selected.job) renderInspection(selected.job);
+  };
+}
 $('journal').onclick = () => {
   $('log').hidden = !$('log').hidden;
   $('journal').setAttribute('aria-expanded', String(!$('log').hidden));

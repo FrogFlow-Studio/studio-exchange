@@ -1424,7 +1424,14 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             write_stl_checked(body.wrapped, tf, 0.03, True, 0.15, tol=0.1)
             mm = trimesh.load(tf, force="mesh")
             na = 0
+            outer = Polygon(TOPINFO["ring"]).buffer(0.05) if TOPINFO.get("ring") is not None else None
             for v in sorted(correction_prisms(scan, mm, extra=True), key=lambda c: -c.Volume()):
+                # прибавка снаружи стенки — ступенчатый нарост из призм по слоям (видно глазом);
+                # наружную стенку правит лофт, поправка только внутри
+                if (outer is not None and os.environ.get("CORR_ADD_OUTER", "0") != "1"
+                        and any(not outer.contains(shapely.geometry.Point(q.X, q.Y)) for q in v.Vertices())):
+                    info["correction_adds_outer_skipped"] = info.get("correction_adds_outer_skipped", 0) + 1
+                    continue
                 try:
                     nb = body.fuse(v)
                     if nb.isValid() and len(nb.Solids()) == 1 and nb.Volume() < 1.05 * body.Volume():

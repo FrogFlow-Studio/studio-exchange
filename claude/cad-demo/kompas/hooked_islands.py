@@ -369,6 +369,6 @@ def _fit_window_fillet(sleeve,fills):
             added_volume = added.Volume()
             if added_volume>0 and added.intersect(observed).Volume()>=.70*max(volume,added_volume):
                 return tool,added_volume,radius
-        except (ValueError,RuntimeError,Standard_Failure):
+        except Exception:  # noqa: BLE001  OCP StdFail_NotDone не наследует Standard_Failure
             continue
     return None

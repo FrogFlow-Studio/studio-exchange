@@ -54,7 +54,25 @@ def layers(secs, tol):
     out.append(cur)
     return [l for l in out if any(p for _, p in l)]
 
-def ring_pts(coords, n, smooth, ref_angle_pt=None):
+def _adapt_u(tck, n, adapt, m=2048, win=0.5):
+    """параметры n точек кольца, сгущённые на скруглениях: доля точек делится по углу поворота контура
+    (вес adapt) и по длине (вес 1); у любого сечения на каждый угол приходится одно и то же число точек,
+    поэтому точки соседних уровней стоят друг против друга и на углах стенка не «гранится»"""
+    uu = np.linspace(0, 1, m, endpoint=False)
+    d1 = np.array(splev(uu, tck, der=1)); d2 = np.array(splev(uu, tck, der=2))
+    sp = np.hypot(d1[0], d1[1]) + 1e-12
+    ds = sp / m; L = float(ds.sum())
+    k = np.abs(d1[0] * d2[1] - d1[1] * d2[0]) / sp ** 3
+    # кривизну сглаживаем окном win мм по длине: шум скана на прямых участках не должен стягивать точки
+    sg = max(1.0, win / L * m); j = np.arange(m); j = np.minimum(j, m - j)
+    g = np.exp(-0.5 * (j / sg) ** 2); g /= g.sum()
+    k = np.real(np.fft.ifft(np.fft.fft(k) * np.fft.fft(g)))
+    w = ds * (1.0 + adapt * k * L / (2 * np.pi))
+    cum = np.r_[0.0, np.cumsum(w)]; cum /= cum[-1]
+    return np.interp(np.arange(n) / n, cum, np.r_[uu, 1.0])
+
+
+def ring_pts(coords, n, smooth, ref_angle_pt=None, adapt=0.0):
     p = np.asarray(coords)[:-1]
     # ориентация против часовой
     if np.sum((p[:, 0] - np.roll(p[:, 0], 1)) * (p[:, 1] + np.roll(p[:, 1], 1))) > 0:
@@ -67,6 +85,8 @@ def ring_pts(coords, n, smooth, ref_angle_pt=None):
     p = p[keep]
     tck, _ = splprep(p.T, s=len(p) * smooth ** 2, per=1)
     u = np.linspace(0, 1, n, endpoint=False)
+    if adapt > 0:
+        u = _adapt_u(tck, n, adapt)
     return np.array(splev(u, tck)).T
 
 def wire3d(pts2, z):
@@ -87,9 +107,19 @@ def prism(pts2, za, zb):
     w = cq.Workplane("XY").workplane(offset=float(za)).spline([tuple(map(float, p)) for p in pts2], periodic=True).close()
     return w.extrude(float(zb - za)).val()
 
-def _wire(pts2, z):
+def _wire(pts2, z, par=None):
     zz = np.broadcast_to(np.asarray(z, float), (len(pts2),))  # кольцо может лежать не в плоскости (скругление по дну)
-    return cq.Wire.assembleEdges([cq.Edge.makeSpline([cq.Vector(float(x), float(y), float(h)) for (x, y), h in zip(pts2, zz)], periodic=True)])
+    # par — общие параметры точек для всех колец лофта: узлы сплайнов совпадают, и поверхность лофта
+    # получает столько же полюсов по кругу, сколько точек в кольце (иначе ядро сливает узлы всех колец)
+    return cq.Wire.assembleEdges([cq.Edge.makeSpline([cq.Vector(float(x), float(y), float(h)) for (x, y), h in zip(pts2, zz)],
+                                                     parameters=None if par is None else [float(t) for t in par], periodic=True)])
+
+
+def _common_par(rings_z):
+    """общие параметры точек колец: накопленная длина хорд, средняя по всем уровням (от 0 до 1, замкнуто)"""
+    seg = np.mean([np.linalg.norm(np.roll(p, -1, axis=0) - p, axis=1) for p, _ in rings_z], axis=0)
+    t = np.r_[0.0, np.cumsum(seg)]
+    return t / t[-1]
 
 
 def _inset(ring, d):
@@ -109,19 +139,19 @@ def round_rings(ring, zfun, r, k=int(os.environ.get("ROUND_K", "4"))):
         out.append((q, zfun(ring[:, 0], ring[:, 1]) + h))
     return out
 
-def _loft_child(rings_z, ruled, q, deg=None):
+def _loft_child(rings_z, ruled, q, deg=None, par=None):
     try:
         if os.environ.get("LOFT_SMOOTH", "0") == "1" and not ruled and len(rings_z) > 2:
             ts = BRepOffsetAPI_ThruSections(True, False, 1e-6)
             ts.SetSmoothing(True)
             ts.SetMaxDegree(5)
             for p, z in rings_z:
-                ts.AddWire(_wire(p, z).wrapped)
+                ts.AddWire(_wire(p, z, par).wrapped)
             ts.CheckCompatibility(False)
             ts.Build()
             s = cq.Solid(ts.Shape())
             if not s.isValid():
-                s = cq.Solid.makeLoft([_wire(p, z) for p, z in rings_z], ruled)
+                s = cq.Solid.makeLoft([_wire(p, z, par) for p, z in rings_z], ruled)
         elif deg and not ruled:
             # степень лофта вдоль высоты ограничена: квадратичный лофт меньше раздувается между сечениями,
             # и на его кромках строятся скругления (при степени 6 ядро в скруглении отказывает)
@@ -129,11 +159,11 @@ def _loft_child(rings_z, ruled, q, deg=None):
             ts.SetMaxDegree(int(deg))
             ts.CheckCompatibility(False)
             for p, z in rings_z:
-                ts.AddWire(_wire(p, z).wrapped)
+                ts.AddWire(_wire(p, z, par).wrapped)
             ts.Build()
             s = cq.Solid(ts.Shape())
         else:
-            s = cq.Solid.makeLoft([_wire(p, z) for p, z in rings_z], ruled)
+            s = cq.Solid.makeLoft([_wire(p, z, par) for p, z in rings_z], ruled)
         import io
         from OCP.BRepTools import BRepTools
         from OCP.TopoDS import TopoDS_Shape
@@ -153,11 +183,12 @@ def align(rings_z):
         out.append((np.roll(p, -k, axis=0), np.roll(z, -k) if np.ndim(z) else z))
     return out
 
-def loft(rings_z, ruled=False, deg=None):
+def loft(rings_z, ruled=False, deg=None, par=False):
     rings_z = align(rings_z)
+    par = _common_par(rings_z) if par else None  # WALL_PAR: одна параметризация на все кольца
     import multiprocessing as mp
     ctx = mp.get_context("spawn" if os.name == "nt" else "fork"); q = ctx.Queue()
-    p = ctx.Process(target=_loft_child, args=(rings_z, ruled, q, deg)); p.start(); p.join(60)
+    p = ctx.Process(target=_loft_child, args=(rings_z, ruled, q, deg, par)); p.start(); p.join(60)
     if p.is_alive(): p.kill(); raise RuntimeError("loft timeout")
     if p.exitcode != 0: raise RuntimeError("loft crash %s" % p.exitcode)
     fn = q.get(timeout=5)
@@ -291,7 +322,9 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
         pads.append(outer.pop(0))
     TOPINFO["pads"] = pads
     zs = [o[0] for o in outer]
-    rings = [ring_pts(o[1].exterior.coords, n, smooth) for o in outer]
+    # RING_ADAPT > 0: точки кольца сгущаются на скруглениях углов (0 — равномерно по длине, как раньше)
+    adapt = float(os.environ.get("RING_ADAPT", "0"))
+    rings = [ring_pts(o[1].exterior.coords, n, smooth, adapt=adapt) for o in outer]
     # сглаживание вдоль высоты: каждая точка кольца — гладкая функция z (шум скана не повторяем)
     from scipy.interpolate import UnivariateSpline
     al = align([(r, z) for r, z in zip(rings, zs)])
@@ -374,20 +407,21 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
         TOPINFO["bcoef"] = None; TOPINFO["dome"] = True
         levels[0] = (levels[0][0], zs[keep[0]] - dz / 2)
     degree = int(os.environ.get("WALL_DEG", "2")) or None
+    wpar = os.environ.get("WALL_PAR", "1") == "1"  # общая параметризация колец стенки: меньше полюсов, ровнее грань
     if fit_upper_wall and coef is not None:
         from local_surfaces import upper_wall
 
         extended = upper_wall(mesh,levels,rings[-1],zs[-1],ztop)
         if extended is not None:
             try:
-                wall = loft(extended,deg=degree)
+                wall = loft(extended,deg=degree,par=wpar)
                 levels = None
                 TOPINFO["upper_wall_fit"] = True
             except RuntimeError:
                 pass
     try:
         if levels is not None:
-            wall = loft(levels, deg=degree)
+            wall = loft(levels, deg=degree, par=wpar)
     except RuntimeError:
         if (os.environ.get("CAD_KOMPAS_END_RECOVERY", "0") != "1"
                 or len(levels)<4 or TOPINFO.get("bottom_round")):
@@ -396,7 +430,7 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
         # of the wall. Extend the neighboring full profiles to the trim tools.
         recovery = [(levels[1][0],levels[0][1]),*levels[1:-1],
                     (levels[-2][0],levels[-1][1])]
-        wall = loft(recovery, deg=degree)
+        wall = loft(recovery, deg=degree, par=wpar)
         TOPINFO["wall_end_recovery"] = True
     body = cq.Workplane().add(wall)
     TOPINFO.update(coef=coef, ztop=ztop, ring=rings[-1])

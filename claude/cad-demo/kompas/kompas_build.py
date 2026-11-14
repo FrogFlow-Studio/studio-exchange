@@ -5,6 +5,7 @@ import os
 import sys, time, numpy as np, trimesh, shapely
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # stl_out.py рядом с demo.py
 from shapely.geometry import Polygon
+from shapely.ops import unary_union
 from scipy.interpolate import splprep, splev
 import cadquery as cq
 from OCP.BRepOffsetAPI import BRepOffsetAPI_ThruSections
@@ -573,23 +574,79 @@ def void_chains(voids, dz, n, zb, jump=0.5):
             return top_of(c["into"], seen + (k,))
         return c["items"][-1][0]
     segs = []
+    taper = float(os.environ.get("VOID_JOIN_TAPER", "0"))
+    joins = {}  # id(первого элемента сегмента) -> (есть вырез ниже, есть вырез выше)
     for k, c in enumerate(chains):
         # скачок формы внутри цепочки (верх ребра, уступ) — настоящая ступень: делим цепочку
         cur = [c["items"][0]]
+        # сосед снизу: то, из чего отделение выросло (контуры уровнем ниже); сосед сверху: во что влилось
+        below = [chains[j]["items"][-1][1] for j in c.get("from") or []]
+        below = unary_union(below) if below else None
         for z, g in c["items"][1:]:
             if cur[-1][1].hausdorff_distance(g) > float(os.environ.get("VOID_JUMP", "2.0")):
-                segs.append((cur, cur[-1][0] + dz / 2)); cur = []
+                segs.append((cur, cur[-1][0] + dz / 2)); joins[id(cur)] = (below, g)
+                below = cur[-1][1]; cur = []
             cur.append((z, g))
-        if os.environ.get("VOID_MERGE_TOP", "1") == "1":
+        joins[id(cur)] = (below, chains[c["into"]]["items"][0][1] if c["into"] is not None else None)
+        if taper and c["into"] is not None:
+            # стык без уступа (см. ниже): отделение кончается в плоскости стыка, выше его ведёт общий вырез
+            segs.append((cur, cur[-1][0] + dz / 2))
+        elif os.environ.get("VOID_MERGE_TOP", "1") == "1":
             segs.append((cur, top_of(k) + dz / 2))
         else:
             # отделение, слившееся выше с большим, продолжается только на слой внахлёст: выше его стенки
             # ведёт общая цепочка, а прямая призма до верха давала рядом с её стенками тонкие полоски
             segs.append((cur, cur[-1][0] + dz / 2 + (dz if c["into"] is not None else 0)))
+    segs = [(it, z1) + joins.get(id(it), (None, None)) for it, z1 in segs]
     if os.environ.get("VOID_TIP", "1") == "1" and RAW_VOIDS:
-        segs = [(_extend_down(it, dz), z1) for it, z1 in segs]
+        segs = [(it if (taper and pr is not None) else _extend_down(it, dz), z1, pr, su) for it, z1, pr, su in segs]
+    def _taper_ok(g):
+        q = g.buffer(-2 * taper)
+        return taper > 0 and not q.is_empty and q.geom_type == "Polygon" and q.area > 0.5 * g.area
+    def _big(g, ref):
+        g = g.buffer(0.01).buffer(-0.02).buffer(0.01)
+        if g.geom_type != "Polygon":
+            g = max(getattr(g, "geoms", [ref]), key=lambda q: q.area, default=ref)
+        return Polygon(g.exterior) if (not g.is_empty and g.area > 0.5 * ref.area) else ref
+    def _fill(g):
+        return unary_union([Polygon(q.exterior) for q in getattr(g, "geoms", [g]) if q.geom_type == "Polygon"])
+    def _snap(a, b):
+        """контур a, притянутый к контуру b там, где они расходятся меньше чем на taper; где расходятся
+        сильнее (настоящий уступ), остаётся a"""
+        a = _fill(a); b = _fill(b)
+        far_out = b.difference(a.buffer(taper)).buffer(-0.03).buffer(0.03)   # b заметно шире a
+        far_in = a.difference(b.buffer(taper)).buffer(-0.03).buffer(0.03)    # a заметно шире b
+        g = a.union(b.intersection(a.buffer(taper)).difference(far_out.buffer(1.5 * taper)))
+        g = g.intersection(b.union(far_in.buffer(1.5 * taper)))
+        return _big(g, a)
+    def _tucked(u, low):
+        """низ верхнего выреза под стыком: сужен на taper + 0,03 там, где рядом стенка нижнего выреза,
+        и не тронут над настоящим уступом"""
+        u = _fill(u)
+        ledge = u.difference(_fill(low).buffer(taper)).buffer(-0.03).buffer(0.03)
+        return _big(u.buffer(-(taper + 0.03)).union(ledge), u)
+    def _bulge(sol, lv, tol=0.25):
+        """гладкий лофт выгнуло в плане за свои кольца (близкие уровни с разной расстановкой точек):
+        такой вырез прорезает соседнюю стенку"""
+        if not taper: return False  # прежнее поведение без стыков
+        bb = sol.BoundingBox(); pts = np.vstack([r for r, _ in lv])
+        return (bb.xmin < pts[:, 0].min() - tol or bb.xmax > pts[:, 0].max() + tol
+                or bb.ymin < pts[:, 1].min() - tol or bb.ymax > pts[:, 1].max() + tol)
     cut = []
-    for it, z1 in segs:
+    for it, z1, pred, succ in segs:
+        # Стык вырезов без уступа. Соседние по высоте вырезы одного отделения строятся каждый по своим
+        # контурам, и на стыке их стенки расходятся на сотые доли мм: торцы вырезов выходили на стенку
+        # узкими полосками-гранями (268 из 622 граней кнопки). Теперь нижний вырез к плоскости стыка
+        # подходит к контуру верхнего (там, где они ближе taper), а выше стыка уходит внутрь его пустоты;
+        # верхний ниже стыка уходит внутрь нижнего. Стенки пересекаются по одной кромке в плоскости стыка,
+        # торцы спрятаны в пустоте соседа. Где контуры расходятся сильнее, это настоящий уступ: он остаётся.
+        low, up = pred, succ
+        pred = low is not None and _taper_ok(it[0][1]); succ = up is not None and _taper_ok(it[-1][1])
+        if succ:
+            g_top = _snap(it[-1][1], up)
+            r_top = ring_pts(g_top.exterior.coords, n, 0.03)
+        if pred:
+            r_tuck = ring_pts(_tucked(it[0][1], low).exterior.coords, n, 0.03)
         if (os.environ.get("CAD_KOMPAS_VOID_PERSISTENCE", "0") == "1"
                 and len(it)==1 and it[0][1].area<12):
             # A small, isolated slice can be caused by floor noise. It
@@ -597,52 +654,78 @@ def void_chains(voids, dz, n, zb, jump=0.5):
             continue
         z0 = it[0][0] - dz / 2
         if z1 >= zb - 1e-6: z1 = TOPINFO['ztop'] + 0.5
-        try:
-            zs_c = [z for z, _ in it]
-            rings_c = [ring_pts(g.exterior.coords, n, 0.03) for _, g in it]
-            if len(it) >= 3:
-                kk = pick_levels(zs_c, rings_c, jump=jump, dzmax=1.5, dzmin=0.4)
-                lv = [(rings_c[i], zs_c[i]) for i in kk]
-                lv[0] = (lv[0][0], z0 - 0.02)
-                if len(lv) < 2: lv.append((lv[0][0], z1 + 0.02))
-                else: lv[-1] = (lv[-1][0], z1 + 0.02) if z1 - zs_c[-1] < 0.5 else lv[-1]
-                if lv[-1][1] < z1: lv.append((rings_c[-1], z1 + 0.02))
-                lv[0] = (lv[0][0], z0 - 0.1)
-                tip = 0.0
-                a0, a2 = it[0][1].area, it[2][1].area
-                if os.environ.get("VOID_TIP", "1") == "1" and a0 < 0.85 * a2:
-                    # отделение сужается книзу (канавка клином, конец сверла): сечения мельче порога
-                    # теряются, и дно выходит плоским выше настоящего. Продолжаем сужение вниз до острия
-                    w0, w2 = np.sqrt(a0), np.sqrt(a2)
-                    tip = min(1.0, 0.8 * w0 * 2 * dz / (w2 - w0))
-                    r0 = lv[0][0]; c = r0.mean(0)
-                    lv = [(c + 0.25 * (r0 - c), z0 - 0.1 - tip)] + lv
-                sol = loft(lv)
-                bb = sol.BoundingBox()
-                if sol.Volume() <= 0 or bb.zmin < z0 - 0.3 - tip or bb.zmax > lv[-1][1] + 0.3:
-                    sol = loft(lv, ruled=True)  # гладкий лофт выгнуло за свои уровни — прямые переходы
-                    if sol.Volume() <= 0: raise RuntimeError("negative")
-            else:
-                sol = prism(rings_c[len(it) // 2], z0 - 0.02, z1 + 0.02)
-            sol = sol if isinstance(sol, cq.Shape) else cq.Workplane().add(sol).val()
-            vdeg = int(os.environ.get("VOID_DEG", "0"))
-            if vdeg and len(it) >= 3:
-                # квадратичный лофт кармана: на его кромках строятся скругления; если вырез им не
-                # удастся, при вычитании берётся прежний лофт (_fallback)
-                try:
-                    s2 = loft(lv, deg=vdeg); b2 = s2.BoundingBox()
-                    if s2.isValid() and s2.Volume() > 0 and b2.zmin >= z0 - 0.3 and b2.zmax <= lv[-1][1] + 0.3:
-                        s2._fallback = sol; sol = s2
-                except Exception:  # noqa: BLE001
-                    pass
-            cut.append(sol)
-            print("void chain", round(z0, 2), round(z1, 2), len(it), flush=True)
-        except Exception as e:
-            print("void chain fail", round(z0, 2), str(e)[:50], flush=True)
+        for pred, succ in [(pred, succ)] + ([(False, False)] if (pred or succ) else []):
             try:
-                cut.append(prism(rings_c[len(it) // 2], z0 - 0.02, z1 + 0.02))
-            except Exception:
-                pass
+                zs_c = [z for z, _ in it]
+                rings_c = [ring_pts(g.exterior.coords, n, 0.03) for _, g in it]
+                if len(it) >= 3:
+                    kk = pick_levels(zs_c, rings_c, jump=jump, dzmax=1.5, dzmin=0.4)
+                    lv = [(rings_c[i], zs_c[i]) for i in kk]
+                    lv[0] = (lv[0][0], z0 - 0.02)
+                    if len(lv) < 2: lv.append((lv[0][0], z1 + 0.02))
+                    else: lv[-1] = (lv[-1][0], z1 + 0.02) if z1 - zs_c[-1] < 0.5 else lv[-1]
+                    if lv[-1][1] < z1: lv.append((rings_c[-1], z1 + 0.02))
+                    lv[0] = (lv[0][0], z0 - 0.1)
+                    if pred:
+                        lv[0] = (lv[0][0], z0)
+                        lv = [(r_tuck, z0 - 0.1)] + lv
+                    if succ:
+                        while len(lv) > 1 and lv[-1][1] > zs_c[-1] + 1e-6: lv.pop()
+                        if lv[-1][1] < zs_c[-1] - 1e-6: lv.append((rings_c[-1], zs_c[-1]))
+                        lv += [(r_top, z1), (_inset(r_top, 0.1), z1 + 0.1)]
+                    tip = 0.0
+                    a0, a2 = it[0][1].area, it[2][1].area
+                    if os.environ.get("VOID_TIP", "1") == "1" and a0 < 0.85 * a2 and not pred:
+                        # отделение сужается книзу (канавка клином, конец сверла): сечения мельче порога
+                        # теряются, и дно выходит плоским выше настоящего. Продолжаем сужение вниз до острия
+                        w0, w2 = np.sqrt(a0), np.sqrt(a2)
+                        tip = min(1.0, 0.8 * w0 * 2 * dz / (w2 - w0))
+                        r0 = lv[0][0]; c = r0.mean(0)
+                        lv = [(c + 0.25 * (r0 - c), z0 - 0.1 - tip)] + lv
+                    sol = loft(lv)
+                    bb = sol.BoundingBox()
+                    if sol.Volume() <= 0 or bb.zmin < z0 - 0.3 - tip or bb.zmax > lv[-1][1] + 0.3 or _bulge(sol, lv):
+                        sol = loft(lv, ruled=True)  # гладкий лофт выгнуло за свои уровни — прямые переходы
+                        if sol.Volume() <= 0: raise RuntimeError("negative")
+                elif pred or succ:
+                    r = rings_c[len(it) // 2]
+                    lv = ([(r_tuck, z0 - 0.1), (r, z0)] if pred else [(r, z0 - 0.02)]) \
+                        + ([(r, z1 - 0.1), (r_top, z1), (_inset(r_top, 0.1), z1 + 0.1)] if succ else [(r, z1 + 0.02)])
+                    try:
+                        sol = loft(lv)
+                        bb = sol.BoundingBox()
+                        if sol.Volume() <= 0 or bb.zmin < lv[0][1] - 0.2 or bb.zmax > lv[-1][1] + 0.2 or _bulge(sol, lv):
+                            raise RuntimeError("taper loft")
+                    except RuntimeError:
+                        sol = loft(lv, ruled=True)
+                else:
+                    sol = prism(rings_c[len(it) // 2], z0 - 0.02, z1 + 0.02)
+                sol = sol if isinstance(sol, cq.Shape) else cq.Workplane().add(sol).val()
+                vdeg = int(os.environ.get("VOID_DEG", "0"))
+                if vdeg and len(it) >= 3:
+                    # квадратичный лофт кармана: на его кромках строятся скругления; если вырез им не
+                    # удастся, при вычитании берётся прежний лофт (_fallback)
+                    try:
+                        s2 = loft(lv, deg=vdeg); b2 = s2.BoundingBox()
+                        if s2.isValid() and s2.Volume() > 0 and b2.zmin >= z0 - 0.3 and b2.zmax <= lv[-1][1] + 0.3:
+                            s2._fallback = sol; sol = s2
+                    except Exception:  # noqa: BLE001
+                        pass
+                if (pred or succ) and not sol.isValid():
+                    raise RuntimeError("taper invalid")
+                cut.append(sol)
+                print("void chain", round(z0, 2), round(z1, 2), len(it), "join" if (pred or succ) else "", flush=True)
+                break
+            except Exception as e:
+                if pred or succ:
+                    # стык не построился: этот вырез — как раньше, без стыка
+                    print("void chain join fail", round(z0, 2), str(e)[:40], flush=True)
+                    continue
+                print("void chain fail", round(z0, 2), str(e)[:50], flush=True)
+                try:
+                    cut.append(prism(rings_c[len(it) // 2], z0 - 0.02, z1 + 0.02))
+                except Exception:
+                    pass
     return cut
 
 def islands(secs, zb, dz=0.2, n=32, min_area=float(os.environ.get("ISL_MIN", "0.8")), *, exact=False):

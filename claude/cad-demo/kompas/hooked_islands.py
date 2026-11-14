@@ -1,4 +1,5 @@
 """Rebuild a windowed sleeve and its scan-supported latch protrusions."""
+import os
 from collections import Counter, defaultdict
 from itertools import groupby
 
@@ -129,6 +130,17 @@ def _add_features(sleeve,hook_tracks,end_tracks,bounds,*,mode="smooth",attempts=
     for track in hook_tracks:
         group = {}
         tools,method = _track_tools(track,bounds,mode=hook_mode,diagnostics=group)
+        if method=="union_spline":
+            # одно выдавливание по объединению сечений может не дотянуться до стенки втулки
+            # (сплайн срезает узкую кромку прилегания): тогда этот зацеп строим прежним способом
+            try:
+                attached = _valid_addition(sleeve,_fused(sleeve,*tools),sum(t.Volume() for t in tools))
+            except CAD_ERRORS:
+                attached = False
+            if not attached:
+                group = {"union_spline_detached":True}
+                tools,method = _track_tools(track,bounds,mode=hook_mode,diagnostics=group,union=False)
+                group["union_spline_detached"] = True
         groups.append(dict(feature="hook",method=method,**group))
         additions.extend(tools)
         methods[method] += 1
@@ -145,7 +157,10 @@ def _add_features(sleeve,hook_tracks,end_tracks,bounds,*,mode="smooth",attempts=
             patches = [tool.intersect(annulus) for tool in tools]
             if any(not patch.Solids() or patch.Volume()<=0 for patch in patches):
                 raise ValueError("window transition vanished during clipping")
-        fills.extend((bottom,patch) for patch in patches)
+        # заплатка конца окна — одна на окно: слои лесенки сливаются, иначе верхние слои
+        # не находят своего ребра дна и скругление отвергается целиком
+        merged = patches[0].fuse(*patches[1:]).clean() if len(patches)>1 else patches[0]
+        fills.append((bottom,merged if merged.isValid() and len(merged.Solids())==1 else patches[0]))
         end_options.append((track,annulus,patches,dict(feature="window_end",method=method,**group)))
     fillet = _fit_window_fillet(sleeve,fills)
     if fillet is not None:
@@ -155,9 +170,9 @@ def _add_features(sleeve,hook_tracks,end_tracks,bounds,*,mode="smooth",attempts=
     else:
         fillet_volume,fillet_radius = 0.,None
         for track,annulus,patches,group in end_options:
-            if group["method"] in ("smooth_loft","ruled_loft","radial_smooth_loft","radial_ruled_loft","union_prism"):
+            if group["method"] in ("smooth_loft","ruled_loft","radial_smooth_loft","radial_ruled_loft","union_prism","union_spline"):
                 try:
-                    trial = sleeve.fuse(*patches).clean()
+                    trial = _fused(sleeve,*patches)
                     attached = _valid_addition(sleeve,trial,sum(patch.Volume() for patch in patches))
                 except CAD_ERRORS:
                     attached = False
@@ -175,21 +190,37 @@ def _add_features(sleeve,hook_tracks,end_tracks,bounds,*,mode="smooth",attempts=
         raise ValueError("additions exceed 30% of sleeve volume")
     if additions:
         tol = .0001 if mode in ("smooth","compact_hooks") else None
-        result = sleeve.fuse(*additions,tol=tol).clean()
+        result = _fused(sleeve,*additions,tol=tol)
         if tol and not _valid_addition(sleeve,result,volume):
             result = sleeve
             for tool in additions:
-                next_shape = result.fuse(tool,tol=tol).clean()
+                next_shape = _fused(result,tool,tol=tol)
                 if not _valid_addition(result,next_shape,tool.Volume()):
                     raise ValueError("addition fusion changed sleeve outside additive bounds")
                 result = next_shape
         if not _valid_addition(sleeve,result,volume):
-            raise ValueError("addition fusion changed sleeve outside additive bounds")
+            raise ValueError("addition fusion changed sleeve outside additive bounds "
+                             f"(solids {len(result.Solids())}, valid {result.isValid()}, "
+                             f"delta {result.Volume()-sleeve.Volume():.4f}, max {volume:.4f})")
     else:
         result = sleeve
     return result,dict(additions=len(additions)+(len(fills) if fillet is not None else 0),
                        addition_methods=dict(methods),addition_groups=groups,window_end_fillet_mm=fillet_radius,
                        addition_volume_mm3=volume)
+
+
+def _fused(base,*tools,tol=None):
+    """Слияние с починкой: ядро иногда отдаёт одно тело с мелким дефектом рёбер (isValid False),
+    ShapeFix его исправляет, объём при этом не меняется."""
+    result = base.fuse(*tools,tol=tol).clean()
+    if not result.isValid():
+        try:
+            fixed = result.fix()
+            if fixed.isValid() and abs(fixed.Volume()-result.Volume())<1e-3:
+                result = fixed
+        except Exception:  # noqa: BLE001  починка не удалась: остаётся исходное тело, его отвергнет проверка
+            pass
+    return result
 
 
 def _valid_addition(base,result,max_added):
@@ -365,13 +396,18 @@ def _protrusion_tracks(extras):
     return [track for track in tracks if len(track)>=2]
 
 
-def _track_tools(track,bounds,*,mode,diagnostics=None):
+def _track_tools(track,bounds,*,mode,diagnostics=None,union=True):
     if any(p.interiors for _,p in track):
         raise Rejected("protrusion with unsupported hole",float(bounds[track[0][0]]))
     attempts = {}
     if diagnostics is not None:
         diagnostics.update(sections=len(track),z_mm=round(float(bounds[track[0][0]]),3),
                            areas_mm2=[round(p.area,3) for _,p in track],lofts=attempts)
+    if union and os.environ.get("HOOKED_UNION_SPLINE","1")=="1":
+        tool,status = _union_spline(track,bounds)
+        attempts["union_spline"] = {"status":status}
+        if tool is not None:
+            return [tool],"union_spline"
     if mode!="legacy":
         for ruled in ((False,True) if mode=="smooth" else (True,)):
             detail = {}
@@ -404,6 +440,36 @@ def _track_tools(track,bounds,*,mode,diagnostics=None):
     except CAD_ERRORS:
         pass
     return [_prism(representative,low,high)],"polygon_prism"
+
+
+def _union_spline(track,bounds):
+    """Одно выдавливание сплайнового контура объединения сечений, как ребро в thin_rib_prisms:
+    у конструктора зацеп втулки — один эскиз и одно выдавливание, а не стопка призм."""
+    from kompas_build import prism, ring_pts
+
+    union = shapely.union_all([poly for _,poly in track]).buffer(.01).buffer(-.01)
+    if union.geom_type!="Polygon":
+        parts = sorted(union.geoms,key=lambda q:-q.area)
+        if parts[0].area<.97*union.area:
+            return None,"disconnected"
+        union = parts[0]
+    if union.interiors:
+        return None,"hole"
+    low,high = bounds[track[0][0]],bounds[track[-1][0]+1]
+    try:
+        points = ring_pts(union.exterior.coords,24,.01)
+        drawn = shapely.geometry.Polygon(points)
+        if not drawn.is_valid or drawn.symmetric_difference(union).area>.15*union.area:
+            return None,"spline_deviates"
+        tool = prism(points,low-.01,high+.01)
+        tool = tool if isinstance(tool,cq.Shape) else cq.Workplane().add(tool).val()
+        if not tool.isValid() or tool.Volume()<=0:
+            return None,"invalid_solid"
+        return tool,"ok"
+    except CAD_ERRORS as error:
+        return None,type(error).__name__
+    except Exception as error:  # noqa: BLE001  OCP StdFail_NotDone не наследует Standard_Failure
+        return None,type(error).__name__
 
 
 def _union_prism(track,bounds):
@@ -506,7 +572,9 @@ def _fit_window_fillet(sleeve,fills):
     radii = []
     for bottom,patch in fills:
         box = patch.BoundingBox()
-        if abs(box.zmin-bottom)>.03:
+        # первое сечение заплатки может начаться на слой (0,2 мм) выше дна окна: скругление
+        # у самого дна тоньше погрешности сечения, ребро дна при этом то же
+        if not -.03<=box.zmin-bottom<=.23:
             return None
         # Match the horizontal flank edge that runs through this patch.
         matching = [(edge,center) for edge,center in candidates if abs(center[2]-bottom)<1e-5
@@ -538,7 +606,11 @@ def _fit_window_fillet(sleeve,fills):
                 continue
             added = tool.cut(sleeve)
             added_volume = added.Volume()
-            if added_volume>0 and added.intersect(observed).Volume()>=.70*max(volume,added_volume):
+            overlap = added.intersect(observed).Volume()
+            # лесенка призм по слоям толще настоящего скругления (каждый слой выдавлен по нижнему,
+            # самому широкому сечению), поэтому скругление должно почти целиком лежать внутри
+            # лесенки и занимать хотя бы половину её объёма; точность потом проверяет сверка со сканом
+            if added_volume>0 and overlap>=.90*added_volume and added_volume>=.50*volume:
                 return tool,added_volume,radius
         except CAD_ERRORS:
             continue

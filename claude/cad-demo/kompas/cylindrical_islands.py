@@ -1,4 +1,5 @@
 """Recognize scan islands with a common cylindrical axis over their height."""
+import os
 import cadquery as cq
 import numpy as np
 from OCP.Standard import Standard_Failure
@@ -87,7 +88,13 @@ def guarded_exact_islands(scan, body, info, log, assemble_stock, *, mode=True):
         if details.get("cylindrical_islands"):
             from candidate_guard import compare_candidate
 
-            accepted,audit = compare_candidate(scan,body,trial,allowance=0.)
+            # цель «как в Компасе»: точный остров (втулка, бобышка) может стоить до 0,03 п.п.
+            # покрытия, если оно не падает ниже 99,9 % на 0,3 мм
+            allowance = float(os.environ.get("CAD_KOMPAS_ISLANDS_ALLOWANCE","0.0003"))
+            accepted,audit = compare_candidate(scan,body,trial,allowance=allowance)
+            if accepted and min(audit["candidate"])<.999:
+                accepted = False
+                audit["reason"] = "below_floor"
             if accepted and any(info.get(key) and not details.get(key)
                                 for key in ("top_fillet","bottom_fillet","smooth_pocket_floors")):
                 accepted = False

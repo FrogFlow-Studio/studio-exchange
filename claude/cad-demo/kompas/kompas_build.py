@@ -1258,7 +1258,7 @@ def assemble(scan, log=print):
     body,info = _assemble_candidates(scan,log)
     partial = os.environ.get("CAD_KOMPAS_PARTIAL_ISLANDS", "0") == "1"
     windowed = os.environ.get("CAD_KOMPAS_WINDOWED_ISLANDS", "0") == "1"
-    hooked = os.environ.get("CAD_KOMPAS_HOOKED_ISLANDS", "0") == "1"
+    hooked = os.environ.get("CAD_KOMPAS_HOOKED_ISLANDS", "1") == "1"
     if hooked or windowed or partial or os.environ.get("CAD_KOMPAS_EXACT_ISLANDS", "0") == "1":
         from cylindrical_islands import guarded_exact_islands
 
@@ -1428,7 +1428,29 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
     added = 0
     for p in isl:
         try:
-            nb = body.fuse(p)
+            try:
+                nb = body.fuse(p)
+            except Exception:  # noqa: BLE001  Null TopoDS_Shape: слияние целиком не сошлось
+                if os.environ.get("ISLAND_FUSE_FIX", "1") != "1":
+                    raise
+                # сливаем остров двумя слоями по высоте: каждый слой ядро сливает, а clean() потом
+                # склеивает разрезанные грани обратно в одну (у втулки с окнами помогло)
+                pb = p.BoundingBox(); zm = (pb.zmin + pb.zmax) / 2
+                nb = body
+                for za, zb in ((pb.zmin - 0.1, zm), (zm, pb.zmax + 0.1)):
+                    nb = nb.fuse(p.intersect(cq.Solid.makeBox(pb.xlen + 2, pb.ylen + 2, zb - za,
+                                                               cq.Vector(pb.xmin - 1, pb.ymin - 1, za))))
+                nb = nb.clean()
+                if nb.Volume() - body.Volume() > p.Volume() * 1.02 + 1e-3:
+                    raise ValueError("слойное слияние острова добавило лишний объём")
+            if not nb.isValid() and os.environ.get("ISLAND_FUSE_FIX", "1") == "1":
+                # ядро иногда отдаёт слитое тело с дефектом рёбер; ShapeFix чинит его без изменения объёма
+                try:
+                    fx = nb.fix()
+                    if fx.isValid() and abs(fx.Volume() - nb.Volume()) < 1e-3:
+                        nb = fx
+                except Exception:  # noqa: BLE001
+                    pass
             if nb.isValid() and len(nb.Solids()) <= len(body.Solids()):
                 body = nb; added += 1
                 if hasattr(p,"_cylindrical_island"):

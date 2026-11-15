@@ -178,7 +178,9 @@ def _cut_child(body, tools, q, vol0):
         from OCP.BRepTools import BRepTools
         nb = body.cut(*tools)
         v = nb.Volume()
-        ok = bool(nb.isValid() and 0.5 * vol0 < v <= vol0 + 1e-6)
+        # вырез не должен разрезать тело на куски (шумный вырез насквозь через стенку)
+        ok = bool(nb.isValid() and 0.5 * vol0 < v <= vol0 + 1e-6
+                  and len(nb.Solids()) <= max(1, len(body.Solids())))
         fn = os.path.join(__import__("tempfile").gettempdir(), "_kcut%d.brep" % os.getpid())
         BRepTools.Write_s(nb.wrapped, fn)
         q.put((fn, ok, v))
@@ -218,6 +220,17 @@ def _shape_child(fn_call, q):
         q.put((fn, ok))
     except Exception:  # noqa: BLE001
         q.put(None)
+
+
+def _fillet_sane(nb, body):
+    """скругление не должно ломать тело: объём почти тот же, тел столько же, граней не меньше половины
+    (на шумной крышке ядро отдало «скруглённое» тело из 39 граней вместо 848)"""
+    try:
+        v0, v = body.Volume(), nb.Volume()
+        return (nb.isValid() and 0.95 * v0 < v < 1.02 * v0 and len(nb.Solids()) == len(body.Solids())
+                and len(nb.Faces()) >= 0.5 * len(body.Faces()))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def op_limited(fn_call, seconds):
@@ -334,12 +347,22 @@ def build(mesh, dz=0.2, tol=0.3, n=96, smooth=0.05, step=1.0, secs=None, fuse=Tr
 
 
 
+HD_SIMP = float(os.environ.get("HD_SIMP", "0.02"))
+
+
+def _hd(a, b):
+    """расстояние Хаусдорфа по контурам, упрощённым до HD_SIMP мм (пороги здесь 0.3–2 мм, ошибка ≤ 0.04)"""
+    if HD_SIMP <= 0:
+        return a.hausdorff_distance(b)
+    return a.simplify(HD_SIMP).hausdorff_distance(b.simplify(HD_SIMP))
+
+
 def pick_levels(zs, rings, jump=float(os.environ.get("LEV_JUMP", "0.8")), dzmax=float(os.environ.get("LEV_DZMAX", "2.0")), dzmin=0.6):
     """уровни для лофта: новый уровень, когда контур ушёл на jump мм или прошло dzmax мм"""
     keep = [0]
     for i in range(1, len(zs)):
         A = Polygon(rings[keep[-1]]); B = Polygon(rings[i])
-        if zs[i] - zs[keep[-1]] >= dzmin and (A.hausdorff_distance(B) > jump or zs[i] - zs[keep[-1]] > dzmax):
+        if zs[i] - zs[keep[-1]] >= dzmin and (_hd(A, B) > jump or zs[i] - zs[keep[-1]] > dzmax):
             keep.append(i)
     if keep[-1] != len(zs) - 1:
         if zs[-1] - zs[keep[-1]] < dzmin and len(keep) > 1: keep[-1] = len(zs) - 1
@@ -381,11 +404,12 @@ def _outer_segments(allb, i0, i1, dz, jump=float(os.environ.get("SEG_JUMP", "1.0
     касание дна и кромки верха остаются как были. Возвращает список диапазонов [(a, b)]."""
     m = max(2, int(round(min_h / dz)))
     P = [Polygon(b[1].exterior) for b in allb]
+    Ps = [q.simplify(HD_SIMP) for q in P]  # точный Хаусдорф по ~200 точкам на сотнях уровней — минуты
     def step(i):
         a0, a1 = allb[i - 1][2], allb[i][2]
         if allb[i][0] - allb[i - 1][0] > 1.5 * dz or a1 < 0.7 * a0 or a1 > a0 / 0.7:
             return True
-        return P[i - 1].hausdorff_distance(P[i]) > jump
+        return Ps[i - 1].hausdorff_distance(Ps[i]) > jump
     st = [True] + [step(i) for i in range(1, len(allb))]
     def run(i):  # ровный участок от уровня i не короче m уровней
         return i + m <= len(allb) and not any(st[i + 1:i + m])
@@ -408,10 +432,10 @@ def _outer_segments(allb, i0, i1, dz, jump=float(os.environ.get("SEG_JUMP", "1.0
         out = []
         for a, b in segs:
             j = b - 1
-            while j - 1 >= a and P[j - 1].hausdorff_distance(P[b - 1]) < cst:
+            while j - 1 >= a and Ps[j - 1].hausdorff_distance(Ps[b - 1]) < cst:
                 j -= 1
             i = a
-            while i + 1 < b and P[i + 1].hausdorff_distance(P[a]) < cst:
+            while i + 1 < b and Ps[i + 1].hausdorff_distance(Ps[a]) < cst:
                 i += 1
             cut_ = [c for c in (i + 1, j) if a + m <= c <= b - m]
             cut_ = sorted(set(cut_))
@@ -822,10 +846,131 @@ def _extend_down(it, dz, max_levels=6, min_area=0.03):
     return out
 
 
+FLICKER_ZONES = []  # места в плане, где сечения скана доказанно мерцают (см. _deflicker_voids)
+
+
+def _flicker_zone(g):
+    return any(z.intersects(g) for z in FLICKER_ZONES)
+
+
+def _deflicker_voids(voids, jump, w, min_events=int(os.environ.get("VOID_FLICKER_MIN", "3"))):
+    """мерцание формы пустоты от уровня к уровню (шумный скан: сечение то замыкает паз хордой поперёк устья,
+    то делит отверстие на куски, то оставляет внутри крошку-«остров») — не ступень. Пустота p уровня
+    сравнивается со следующими: если на уровне i то, что продолжает p, отличается от неё больше jump
+    (по Хаусдорфу), а не дальше w уровней выше снова идёт одна пустота, близкая к p, — уровни между
+    ними шум: их продолжения p заменяются на p. Настоящая ступень (форма не возвращается) не тронута.
+    Шум повторяется: правим только места, где таких возвратов не меньше min_events (одиночный короткий
+    уступ — может быть настоящим). Эти места запоминаются в FLICKER_ZONES: там же не верим «островам»,
+    добавкам-поправкам и тонким рёбрам, висящим в пустоте скана"""
+    def over(a, b):
+        return a.intersection(b).area > 0.3 * min(a.area, b.area)
+    simp = {}
+    def hd(a, b):
+        # по упрощённым (0,02 мм) контурам: у сечения скана тысячи вершин, точное — 0,2 с на пару
+        for q in (a, b):
+            if id(q) not in simp: simp[id(q)] = (q, q.simplify(0.02))
+        return simp[id(a)][1].hausdorff_distance(simp[id(b)][1])
+    def run(allowed):
+        out = [(z, list(gs)) for z, gs in voids]
+        events = []; nfix = 0
+        for i in range(1, len(out)):
+            prev = out[i - 1][1]
+            for p in prev:
+                hits = [g for g in out[i][1] if over(g, p)]
+                if not hits or (len(hits) == 1 and hd(p, hits[0]) <= jump):
+                    continue
+                # продолжение p не должно продолжать и соседнюю пустоту: слияние двух карманов — не шум
+                if any(over(g, o) for g in hits for o in prev if o is not p):
+                    continue
+                ret = None
+                for k in range(1, w + 1):
+                    if i + k >= len(out):
+                        break
+                    qs = [q for q in out[i + k][1] if over(q, p)]
+                    if len(qs) == 1 and hd(p, qs[0]) <= jump:
+                        ret = k
+                        break
+                if ret is None:
+                    continue
+                events.append(p)
+                if allowed is None or not any(over(p, a) for a in allowed):
+                    continue
+                for j in range(i, i + ret):
+                    hs = [g for g in out[j][1] if over(g, p)]
+                    out[j] = (out[j][0], [g for g in out[j][1] if not any(g is h for h in hs)] + [p])
+                nfix += ret
+        return out, events, nfix
+    # проход 1: где мерцает; места — группы перекрывающихся пустот p, у которых случился возврат
+    _, events, _ = run(None)
+    zones = []
+    for p in (q.convex_hull for q in events):  # место — выпуклая оболочка: сравнение быстрое, контур не нужен
+        hit = [zn for zn in zones if over(zn["g"], p)]
+        if hit:
+            zn = hit[0]
+            for o in hit[1:]:
+                zn["g"] = zn["g"].union(o["g"]).convex_hull; zn["n"] += o["n"]; zones.remove(o)
+            zn["g"] = zn["g"].union(p).convex_hull; zn["n"] += 1
+        else:
+            zones.append({"g": p, "n": 1})
+    allowed = [zn["g"] for zn in zones if zn["n"] >= min_events]
+    FLICKER_ZONES[:] = [a.buffer(0.5) for a in allowed]
+    if not allowed:
+        if events:
+            print("void flicker below threshold", len(events), flush=True)
+        return voids
+    out, _, nfix = run(allowed)
+    print("void deflicker levels", nfix, "zones", len(allowed), flush=True)
+    return out
+
+
+def _const_void(polys, jump, tol=float(os.environ.get("VOID_CONST", "0.06"))):
+    """контур выреза, если он по высоте не меняется (сквозное отверстие, паз во всю длину), иначе None.
+    Опорный контур — уровень, ближе всех к остальным (медоида по выборке уровней); постоянный, если у 90 %
+    уровней средний зазор до него (площадь симметричной разности / периметр) меньше tol и ни один не
+    дальше jump по Хаусдорфу. Такой вырез — прямое выдавливание, а не лофт по шумным кольцам"""
+    P = [Polygon(g.exterior) for g in polys]
+    S = P[::max(1, len(P) // 25)]
+    ref = min(S, key=lambda c: float(np.median([c.symmetric_difference(q).area / c.length for q in S])))
+    w = [ref.symmetric_difference(q).area / ref.length for q in P]
+    rs = ref.simplify(0.02)
+    if float(np.percentile(w, 90)) >= tol or max(rs.hausdorff_distance(q.simplify(0.02)) for q in P) > jump:
+        return None
+    return ref
+
+
+def _spline_poly(r, m=1500):
+    """замкнутый сплайн через точки кольца (как у prism/loft), снятый густо в многоугольник"""
+    e = cq.Edge.makeSpline([cq.Vector(float(x), float(y), 0.0) for x, y in r], periodic=True)
+    return Polygon([(q.x, q.y) for q in (e.positionAt(t) for t in np.linspace(0, 1, m, endpoint=False))])
+
+
+def _const_ring_pts(ref, n):
+    """кольцо прямого выреза по контуру ref. Острые углы (паз у отверстия) при n равных шагах дают петлю
+    сплайна — тело выреза формально цело, а вычитание ломается (вместо отверстия тело прибавляет объём).
+    Пробуем гуще и с точками по кривизне; берём самое редкое кольцо без петли, не хуже лучшего более чем
+    на 20 % по среднему зазору до контура"""
+    P = Polygon(ref.exterior); got = []
+    for m, ad in ((n, 0.0), (n, 1.0), (int(1.5 * n), 1.0), (2 * n, 0.0), (2 * n, 1.0), (3 * n, 0.0)):
+        try:
+            r = ring_pts(ref.exterior.coords, m, 0.03, adapt=ad)
+            S = _spline_poly(r)
+        except Exception:  # noqa: BLE001
+            continue
+        if Polygon(r).is_valid and S.is_valid:
+            got.append((S.symmetric_difference(P).area / P.length, m, r))
+    if not got:
+        return None
+    best = min(g[0] for g in got)
+    return min((g for g in got if g[0] <= 1.2 * best + 1e-3), key=lambda g: g[1])[2]
+
+
 def void_chains(voids, dz, n, zb, jump=0.5):
     """каждое отделение кармана — своя цепочка контуров по всей высоте и один лофт.
     Отделение, которое выше сливается с большим (начались рёбра), продолжается
     вверх до конца того, с чем слилось: его стенки не обрываются ступенькой."""
+    FLICKER_ZONES.clear()
+    if os.environ.get("VOID_DEFLICKER", "1") == "1":
+        voids = _deflicker_voids(voids, float(os.environ.get("VOID_JUMP", "2.0")), int(os.environ.get("VOID_FLICKER_W", "4")))
     chains = []  # {"items": [(z, poly)], "open": bool, "into": idx}
     for z, geoms in voids:
         open_ = [k for k, c in enumerate(chains) if c["open"]]
@@ -865,7 +1010,7 @@ def void_chains(voids, dz, n, zb, jump=0.5):
         below = [chains[j]["items"][-1][1] for j in c.get("from") or []]
         below = unary_union(below) if below else None
         for z, g in c["items"][1:]:
-            if cur[-1][1].hausdorff_distance(g) > float(os.environ.get("VOID_JUMP", "2.0")):
+            if _hd(cur[-1][1], g) > float(os.environ.get("VOID_JUMP", "2.0")):
                 segs.append((cur, cur[-1][0] + dz / 2)); joins[id(cur)] = (below, g)
                 below = cur[-1][1]; cur = []
             cur.append((z, g))
@@ -969,6 +1114,11 @@ def void_chains(voids, dz, n, zb, jump=0.5):
             # A small, isolated slice can be caused by floor noise. It
             # must not inherit the height of a later, persistent pocket.
             continue
+        if (noisy and len(it) <= int(os.environ.get("VOID_NOISE_LEVELS", "2")) and z1 < zb - 1e-6
+                and not pred and not succ):
+            # шумный скан: вырез высотой в 1–2 среза (0,2–0,4 мм), не выходящий наверх и ни с чем не
+            # связанный — шум сечения, не карман (конструктор таких не делает)
+            continue
         z0 = it[0][0] - dz / 2
         if z1 >= zb - 1e-6: z1 = TOPINFO['ztop'] + 0.5
         # попытки: стык с уступами по контуру соседа; стык с равномерно суженным низом (кольца точка
@@ -978,7 +1128,17 @@ def void_chains(voids, dz, n, zb, jump=0.5):
             try:
                 zs_c = [z for z, _ in it]
                 rings_c = [ring_pts(g.exterior.coords, n, 0.03) for _, g in it]
-                if len(it) >= 3:
+                cref = None
+                if (os.environ.get("VOID_CONST_PRISM", "1") == "1" and not (pred or succ)
+                        and len(it) >= int(os.environ.get("VOID_CONST_MIN", "10"))):
+                    cref = _const_void([g for _, g in it], float(os.environ.get("VOID_JUMP", "2.0")))
+                if cref is not None:
+                    r = _const_ring_pts(cref, n)
+                if cref is not None and r is not None:
+                    # низ — как у лофта (на 0,1 ниже первого среза): сквозное отверстие проходит дно насквозь
+                    sol = prism(r, z0 - 0.1, z1 + 0.02)
+                    print("void chain const", round(z0, 2), round(z1, 2), len(it), round(cref.area, 1), flush=True)
+                elif len(it) >= 3:
                     kk = pick_levels(zs_c, rings_c, jump=jump, dzmax=1.5, dzmin=0.4)
                     lv = [(rings_c[i], zs_c[i]) for i in kk]
                     lv[0] = (lv[0][0], z0 - 0.02)
@@ -1022,7 +1182,7 @@ def void_chains(voids, dz, n, zb, jump=0.5):
                     sol = prism(rings_c[len(it) // 2], z0 - 0.02, z1 + 0.02)
                 sol = sol if isinstance(sol, cq.Shape) else cq.Workplane().add(sol).val()
                 vdeg = int(os.environ.get("VOID_DEG", "0"))
-                if vdeg and len(it) >= 3:
+                if vdeg and len(it) >= 3 and cref is None:
                     # квадратичный лофт кармана: на его кромках строятся скругления; если вырез им не
                     # удастся, при вычитании берётся прежний лофт (_fallback)
                     try:
@@ -1051,6 +1211,22 @@ def void_chains(voids, dz, n, zb, jump=0.5):
                 except Exception:
                     pass
     return cut
+
+def _island_flicker(ps, zset, dz, w=int(os.environ.get("VOID_FLICKER_W", "4"))):
+    """«остров» в несколько срезов, висящий в пустоте: и под ним, и над ним (в пределах w уровней) на его месте пустота
+    (сквозное отверстие, где сечение шумного скана замкнулось внутри крошкой). Настоящая бобышка стоит на
+    полу кармана — под ней материал"""
+    if len(zset) > w or not RAW_VOIDS:
+        return False
+    keys = sorted(RAW_VOIDS)
+    foot = shapely.union_all([Polygon(q.exterior) for _, q in ps])
+    def hollow(zl):
+        k = min(keys, key=lambda q: abs(q - zl))
+        return abs(k - zl) <= dz / 4 and RAW_VOIDS[k].intersection(foot).area >= 0.9 * foot.area
+    # соседние срезы мерцают так же — достаточно пустоты хотя бы на одном из w уровней снизу и сверху
+    return (any(hollow(zset[0] - j * dz) for j in range(1, w + 1))
+            and any(hollow(zset[-1] + j * dz) for j in range(1, w + 1)))
+
 
 def islands(secs, zb, dz=0.2, n=32, min_area=float(os.environ.get("ISL_MIN", "0.8")), *, exact=False):
     """бобышки и рёбра внутри кармана и над краем: отдельные многоугольники сечений,
@@ -1097,6 +1273,8 @@ def islands(secs, zb, dz=0.2, n=32, min_area=float(os.environ.get("ISL_MIN", "0.
             print("island at wall skipped", round(g["foot"].area, 1), flush=True); continue
         zset = sorted({z for z, _ in ps})
         if len(zset) < int(os.environ.get("ISL_MIN_LEVELS", "1")): continue
+        if os.environ.get("ISL_FLICKER", "1") == "1" and _flicker_zone(g["foot"]) and _island_flicker(ps, zset, dz):
+            print("island flicker skipped", round(zset[0], 2), len(zset), round(g["foot"].area, 1), flush=True); continue
         # низ бобышки утапливаем в пол кармана, чтобы она срослась с телом, а не висела отдельно
         za, zb2 = zset[0] - dz / 2 - float(os.environ.get("CAD_SECTIONS_EMBED", "0.6")), zset[-1] + dz / 2
         if floor_on and zbot is not None:
@@ -1385,11 +1563,26 @@ def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=floa
             else:
                 layers_.append({"z0": z, "z1": z, "g": g, "all": [g]})
     out = []
+    w = int(os.environ.get("VOID_FLICKER_W", "4"))
+    flick = extra and os.environ.get("CORR_ADD_FLICKER", "1") == "1"
+    cache = {}
+    def hollow(z, g):
+        # в скане на этом месте пустота (на уровне z)
+        k = round(z, 3)
+        if k not in cache: cache[k] = sec(scan, z) if z0 < z < z1 else None
+        return cache[k] is not None and cache[k].intersection(g).area < 0.1 * g.area
     for L in layers_:
         if len(L["all"]) < 2: continue
         g = shapely.intersection_all(L["all"]) if not extra else L["all"][len(L["all"]) // 2]
         if g.is_empty or g.area < min_area: g = L["all"][len(L["all"]) // 2]
         if g.geom_type != "Polygon": g = max(g.geoms, key=lambda q: q.area)
+        if (flick and _flicker_zone(g) and round((L["z1"] - L["z0"]) / dz) + 1 <= w
+                and any(hollow(L["z0"] - j * dz, g) for j in range(1, w + 1))
+                and any(hollow(L["z1"] + j * dz, g) for j in range(1, w + 1))):
+            # материал скана в несколько срезов, а и ниже, и выше на том же месте пустота: сечение шумного
+            # скана замкнуло отверстие или паз хордой (мерцание, см. _deflicker_voids) — не добавка
+            print("correction add flicker skipped", round(L["z0"], 2), len(L["all"]), round(g.area, 1), flush=True)
+            continue
         try:
             out.append(prism(ring_pts(g.exterior.coords, n, 0.02), L["z0"] - dz / 2 - 0.02, L["z1"] + dz / 2 + 0.02))
         except Exception:
@@ -1447,6 +1640,21 @@ def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RI
             # одна полоска в один слой прямо на материале модели — ступенька пологого дна (скан чуть
             # выше гладкого дна), а не ребро: добавка рисовала на дне извилистые линии-террасы
             groups = [G for G in groups if not floors[id(G)]]
+        if os.environ.get("CORR_ADD_FLICKER", "1") == "1":
+            # полоска, висящая в пустоте скана (ниже и выше на её месте пусто в пределах w слоёв), —
+            # мерцание сечения шумного скана у паза или отверстия, не ребро (см. _deflicker_voids)
+            w = int(os.environ.get("VOID_FLICKER_W", "4"))
+            def hollow(z, g):
+                return z0 < z < z1 and sec(scan, z).intersection(g).area < 0.1 * g.area
+            keep_ = []
+            for G in groups:
+                u = shapely.union_all([q for _, q in G])
+                if (len(G) <= w and _flicker_zone(u) and any(hollow(G[0][0] - j * dz, u) for j in range(1, w + 1))
+                        and any(hollow(G[-1][0] + j * dz, u) for j in range(1, w + 1))):
+                    print("thin rib flicker skipped", round(G[0][0], 2), len(G), flush=True)
+                    continue
+                keep_.append(G)
+            groups = keep_
         for G in groups:
             if os.environ.get("THIN_RIB_UNION", "1") == "1":
                 # как конструктор: язычок — одно выдавливание по общему контуру его сечений на всю
@@ -1526,7 +1734,7 @@ def _edge_fillets(body, info, scan=None, *, fit_variable=False):
             from variable_fillet import variable_fillet
 
             fitted = variable_fillet(scan,body,edges[0])
-            if fitted is not None:
+            if fitted is not None and _fillet_sane(fitted[0], body):
                 body, law = fitted
                 info[key.lower()] = round(float(np.median(law[:,1])),3)
                 info[key.lower()+"_law"] = law.tolist()
@@ -1535,7 +1743,7 @@ def _edge_fillets(body, info, scan=None, *, fit_variable=False):
             try:
                 # скругление на сложной кромке ядро может считать десятки минут — предел времени
                 nb, ok = op_limited(lambda: body.fillet(r, edges), float(os.environ.get("FILLET_SEC", "90")))
-                if ok and nb.Volume() > 0.95 * body.Volume():
+                if ok and _fillet_sane(nb, body):
                     body = nb; info[key.lower()] = round(r, 3)
                     break
             except RuntimeError as e:

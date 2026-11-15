@@ -173,6 +173,72 @@ def _loft_child(rings_z, ruled, q, deg=None, par=None):
     except Exception as e:
         q.put(None)
 
+def _cut_child(body, tools, q, vol0):
+    try:
+        from OCP.BRepTools import BRepTools
+        nb = body.cut(*tools)
+        v = nb.Volume()
+        ok = bool(nb.isValid() and 0.5 * vol0 < v <= vol0 + 1e-6)
+        fn = os.path.join(__import__("tempfile").gettempdir(), "_kcut%d.brep" % os.getpid())
+        BRepTools.Write_s(nb.wrapped, fn)
+        q.put((fn, ok, v))
+    except Exception:  # noqa: BLE001
+        q.put(None)
+
+
+def cut_limited(body, tools, seconds, vol0):
+    """вычитание с проверкой тела в отдельном процессе с пределом времени: на шумном скане булева
+    операция ядра и даже проверка тела (isValid, Volume) на сложной детали идут минутами или не
+    кончаются. Возвращает (тело, годно, объём); по пределу — RuntimeError"""
+    import multiprocessing as mp
+    if os.name == "nt":
+        nb = body.cut(*tools); v = nb.Volume()
+        return nb, bool(nb.isValid() and 0.5 * vol0 < v <= vol0 + 1e-6), v
+    ctx = mp.get_context("fork"); q = ctx.Queue()
+    p = ctx.Process(target=_cut_child, args=(body, tools, q, vol0)); p.start(); p.join(seconds)
+    if p.is_alive():
+        p.kill(); p.join(); raise RuntimeError("cut timeout")
+    r = q.get(timeout=5)
+    if not r: raise RuntimeError("cut failed")
+    fn, ok, v = r
+    from OCP.BRepTools import BRepTools
+    from OCP.TopoDS import TopoDS_Shape
+    from OCP.BRep import BRep_Builder
+    sh = TopoDS_Shape(); BRepTools.Read_s(sh, fn, BRep_Builder()); os.remove(fn)
+    return cq.Shape.cast(sh), ok, v
+
+
+def _shape_child(fn_call, q):
+    try:
+        from OCP.BRepTools import BRepTools
+        nb = fn_call()
+        ok = bool(nb.isValid())
+        fn = os.path.join(__import__("tempfile").gettempdir(), "_kop%d.brep" % os.getpid())
+        BRepTools.Write_s(nb.wrapped, fn)
+        q.put((fn, ok))
+    except Exception:  # noqa: BLE001
+        q.put(None)
+
+
+def op_limited(fn_call, seconds):
+    """операция ядра (скругление и т.п.) с пределом времени в отдельном процессе; (тело, годно) или RuntimeError"""
+    import multiprocessing as mp
+    if os.name == "nt":
+        nb = fn_call(); return nb, nb.isValid()
+    ctx = mp.get_context("fork"); q = ctx.Queue()
+    p = ctx.Process(target=_shape_child, args=(fn_call, q)); p.start(); p.join(seconds)
+    if p.is_alive():
+        p.kill(); p.join(); raise RuntimeError("op timeout")
+    r = q.get(timeout=5)
+    if not r: raise RuntimeError("op failed")
+    fn, ok = r
+    from OCP.BRepTools import BRepTools
+    from OCP.TopoDS import TopoDS_Shape
+    from OCP.BRep import BRep_Builder
+    sh = TopoDS_Shape(); BRepTools.Read_s(sh, fn, BRep_Builder()); os.remove(fn)
+    return cq.Shape.cast(sh), ok
+
+
 def align(rings_z):
     """каждое следующее кольцо поворачиваем по кругу так, чтобы точки шли напротив точек предыдущего (без закрутки)"""
     out = [rings_z[0]]
@@ -304,139 +370,296 @@ def _top_open_levels(top_v, min_area=20.0):
     return lev
 
 
+def _outer_segments(allb, i0, i1, dz, jump=float(os.environ.get("SEG_JUMP", "1.0")),
+                    min_h=float(os.environ.get("SEG_MIN_H", "1.0"))):
+    """наружный контур по всей высоте — стопка участков. allb: [(z, big, area)] всех уровней;
+    [i0, i1) — прежний наружный контур (от дна, пока не распался). Участок кончается на скачке формы
+    (площадь меняется больше чем в 1/0,7 раза или контур уходит дальше jump мм); новый участок
+    начинается, только если выше скачка контур держится ровным не меньше min_h мм и стоит на
+    предыдущем (перекрытие в плане) — иначе выше, как раньше, работают острова и срез верха.
+    Внутри прежнего контура делим только скачок, у которого с обеих сторон ровные участки:
+    касание дна и кромки верха остаются как были. Возвращает список диапазонов [(a, b)]."""
+    m = max(2, int(round(min_h / dz)))
+    P = [Polygon(b[1].exterior) for b in allb]
+    def step(i):
+        a0, a1 = allb[i - 1][2], allb[i][2]
+        if allb[i][0] - allb[i - 1][0] > 1.5 * dz or a1 < 0.7 * a0 or a1 > a0 / 0.7:
+            return True
+        return P[i - 1].hausdorff_distance(P[i]) > jump
+    st = [True] + [step(i) for i in range(1, len(allb))]
+    def run(i):  # ровный участок от уровня i не короче m уровней
+        return i + m <= len(allb) and not any(st[i + 1:i + m])
+    def on(i):   # стоит на предыдущем
+        a = P[i - 1].intersection(P[i]).area
+        return a > 0.3 * min(P[i - 1].area, P[i].area)
+    cuts = [j for j in range(i0 + m, i1 - m + 1) if st[j] and run(j) and not any(st[j - m + 1:j]) and on(j)]
+    bounds = [i0] + cuts + [i1]
+    segs = [(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
+    j = i1
+    while j < len(allb) and j > 0 and run(j) and on(j):
+        k = j + 1
+        while k < len(allb) and not st[k]:
+            k += 1
+        segs.append((j, k)); j = k
+    if len(segs) > 1 and os.environ.get("SEG_CONST_SPLIT", "1") == "1":
+        # излом без скачка: участок, где контур сначала меняется (рёбра сходят на нет), а потом стоит, —
+        # два участка: лофт и прямое выдавливание (гладкий лофт скруглял бы излом)
+        cst = float(os.environ.get("SEG_CONST_HD", "0.3"))
+        out = []
+        for a, b in segs:
+            j = b - 1
+            while j - 1 >= a and P[j - 1].hausdorff_distance(P[b - 1]) < cst:
+                j -= 1
+            i = a
+            while i + 1 < b and P[i + 1].hausdorff_distance(P[a]) < cst:
+                i += 1
+            cut_ = [c for c in (i + 1, j) if a + m <= c <= b - m]
+            cut_ = sorted(set(cut_))
+            if len(cut_) == 2 and cut_[1] - cut_[0] < m:
+                cut_ = cut_[:1]
+            bb_ = [a] + cut_ + [b]
+            out += list(zip(bb_[:-1], bb_[1:]))
+        segs = out
+    return segs
+
+
+def _const_ring(rings, polys, tol=float(os.environ.get("SEG_CONST", "0.15"))):
+    """контур участка, если он по высоте не меняется (с точностью до шума скана), иначе None.
+    Средний контур — кольцо среднего уровня, сдвинутое по нормали на среднее расстояние до контуров
+    всех уровней; участок постоянный, если почти все точки среднего контура (90 %) лежат ближе tol
+    к контуру каждого уровня"""
+    ref = rings[len(rings) // 2]
+    t = np.roll(ref, -1, 0) - np.roll(ref, 1, 0)
+    nrm = np.c_[t[:, 1], -t[:, 0]] / np.linalg.norm(t, axis=1)[:, None]
+    def sd(pts, P):  # знаковое расстояние до контура: снаружи +
+        d = shapely.distance(P.exterior, shapely.points(pts[:, 0], pts[:, 1]))
+        return np.where(shapely.contains_xy(P, pts[:, 0], pts[:, 1]), -d, d)
+    D = np.array([sd(ref, P) for P in polys])
+    avg = ref - nrm * np.median(D, axis=0)[:, None]
+    if not Polygon(avg).is_valid:
+        return None
+    dev = max(float(np.percentile(np.abs(sd(avg, P)), 90)) for P in polys)
+    return avg if dev < tol else None
+
+
+def _split_z(mesh, lo, up, z_lo, z_hi):
+    """высота уступа между участками: средняя высота горизонтальных граней скана в полосе, где
+    контуры участков расходятся (полка нижнего участка смотрит вверх, свес верхнего — вниз)"""
+    zm = 0.5 * (z_lo + z_hi)
+    try:
+        A, B = Polygon(lo.exterior), Polygon(up.exterior)
+        c = mesh.triangles_center; nz = mesh.face_normals[:, 2]; w = mesh.area_faces
+        zsel = (c[:, 2] > z_lo - 0.05) & (c[:, 2] < z_hi + 0.05)
+        best = None
+        for reg, sgn in ((A.difference(B).buffer(-0.3), 1), (B.difference(A).buffer(-0.3), -1)):
+            if reg.is_empty: continue
+            sel = zsel & (sgn * nz > 0.9)
+            sel[sel] = shapely.contains_xy(reg, c[sel, 0], c[sel, 1])
+            if w[sel].sum() > (best[0] if best else 0):
+                best = (w[sel].sum(), float(np.average(c[sel, 2], weights=w[sel])))
+        if best and best[0] > 1.0:
+            return float(np.clip(best[1], z_lo, z_hi))
+    except Exception:  # noqa: BLE001
+        pass
+    return zm
+
+
 def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.environ.get('RING_SMOOTH', '0.05')), *,
            periodic_wall=False, void_n=None, fit_upper_wall=False, exact_islands=False):
     """наружная стенка — один лофт по всей высоте; внутренние объёмы (карманы, пазы) вычитаются по слоям"""
     secs = sections(mesh, dz)
     secs = [(z, p) for z, p in secs if p]
-    # наружный контур: самый большой многоугольник, пока он не распался
-    outer = []
+    # наружный контур: самый большой многоугольник каждого уровня
+    allb = []
     for z, polys in secs:
         big = max(polys, key=lambda p: Polygon(p.exterior).area)
-        a = Polygon(big.exterior).area
-        if outer and a < 0.7 * outer[-1][2]: break
-        outer.append((z, big, a))
+        allb.append((z, big, Polygon(big.exterior).area))
+    # прежний наружный контур: от дна, пока он не распался
+    i1 = 0
+    while i1 < len(allb) and not (i1 and allb[i1][2] < 0.7 * allb[i1 - 1][2]):
+        i1 += 1
     # нижние срезы-обрезки (касание дна) дают скачок формы — дно начинаем с первого полного среза
-    pads = []
-    while len(outer) > 2 and outer[0][2] < 0.6 * outer[1][2]:
-        pads.append(outer.pop(0))
+    i0 = 0
+    while i1 - i0 > 2 and allb[i0][2] < 0.6 * allb[i0 + 1][2]:
+        i0 += 1
+    pads = allb[:i0]
     TOPINFO["pads"] = pads
-    zs = [o[0] for o in outer]
-    # RING_ADAPT > 0: точки кольца сгущаются на скруглениях углов (0 — равномерно по длине, как раньше)
-    adapt = float(os.environ.get("RING_ADAPT", "0"))
-    # большой контур: точек кольца по длине, не меньше одной на WALL_PT_MM мм (32 точки на фланец
-    # Ø90 — 9 мм между точками, отломанный край и выступы сглаживались)
-    per = max(Polygon(o[1].exterior).length for o in outer)
-    n_out = max(n, int(per / float(os.environ.get("WALL_PT_MM", "5"))))
-    TOPINFO["wall_points"] = n_out
-    rings = [ring_pts(o[1].exterior.coords, n_out, smooth, adapt=adapt) for o in outer]
-    # сглаживание вдоль высоты: каждая точка кольца — гладкая функция z (шум скана не повторяем)
-    from scipy.interpolate import UnivariateSpline
-    al = align([(r, z) for r, z in zip(rings, zs)])
-    R = np.array([r for r, _ in al]); Z = np.array(zs)
-    if periodic_wall:
-        from wall_profiles import fit_profiles
+    segr = [(i0, i1)]
+    # WALL_SEGMENTS=0 — выключатель: стенка только до первого скачка формы, как раньше
+    if (os.environ.get("WALL_SEGMENTS", "1") == "1" and not (periodic_wall or fit_upper_wall)
+            and os.environ.get("BOTTOM_ROUND", "0") == "0" and os.environ.get("BOTTOM_DOME", "0") != "1"
+            and os.environ.get("TOP_RIM", "0") != "1"):
+        segr = _outer_segments(allb, i0, i1, dz)
+    while True:
+        segs = [allb[a:b] for a, b in segr]
+        multi = len(segs) > 1
+        splits = [None] + [_split_z(mesh, allb[b - 1][1], allb[b][1], allb[b - 1][0], allb[b][0]) for _, b in segr[:-1]]
+        walls = []; seg_info = []
+        try:
+            for si, outer in enumerate(segs):
+                last = si == len(segs) - 1
+                if multi and len(outer) > 4:
+                    # срез у самого уступа касается полки и шумит — контур участка берём без него
+                    outer = outer[(1 if si else 0):(len(outer) - (0 if last else 1))]
+                zs = [o[0] for o in outer]
+                # RING_ADAPT > 0: точки кольца сгущаются на скруглениях углов (0 — равномерно по длине, как раньше)
+                adapt = float(os.environ.get("RING_ADAPT", "0"))
+                # большой контур: точек кольца по длине, не меньше одной на WALL_PT_MM мм (32 точки на фланец
+                # Ø90 — 9 мм между точками, отломанный край и выступы сглаживались)
+                per = max(Polygon(o[1].exterior).length for o in outer)
+                n_s = max(n, int(per / float(os.environ.get("WALL_PT_MM", "5"))))
+                if not multi:
+                    TOPINFO["wall_points"] = n_s
+                else:
+                    # участки стопки: точек кольца по длине контура (не меньше n), гуще на скруглениях
+                    n_s = max(n, int(Polygon(outer[len(outer) // 2][1].exterior).length / float(os.environ.get("SEG_RING_STEP", "1.5"))))
+                    adapt = max(adapt, float(os.environ.get("SEG_RING_ADAPT", "1.0")))
+                rings = [ring_pts(o[1].exterior.coords, n_s, smooth, adapt=adapt) for o in outer]
+                if multi:
+                    ok_ = [i for i, r in enumerate(rings) if Polygon(r).is_valid]
+                    if len(ok_) < 2:
+                        raise RuntimeError("кольца участка негодны")
+                    outer = [outer[i] for i in ok_]; rings = [rings[i] for i in ok_]; zs = [zs[i] for i in ok_]
+                # сглаживание вдоль высоты: каждая точка кольца — гладкая функция z (шум скана не повторяем)
+                from scipy.interpolate import UnivariateSpline
+                al = align([(r, z) for r, z in zip(rings, zs)])
+                R = np.array([r for r, _ in al]); Z = np.array(zs)
+                if periodic_wall:
+                    from wall_profiles import fit_profiles
 
-        contours = [o[1].exterior.coords for o in outer]
-        fitted = fit_profiles(contours, Z)
-        if fitted is None and len(Z)>=9:
-            # The first and last cuts may touch the caps. Interior contours
-            # still describe the wall and can extend to the trim surfaces.
-            middle = fit_profiles(contours[2:-2], Z[2:-2])
-            if middle is not None:
-                fitted = np.pad(middle,((2,2),(0,0),(0,0)),mode="edge")
-        if fitted is not None:
-            R = fitted
-            TOPINFO["periodic_wall"] = True
-            rings = list(R)
-    sm = float(os.environ.get("Z_SMOOTH", "0.08"))
-    if len(Z) >= 6 and not TOPINFO.get("periodic_wall"):
-        R2 = np.empty_like(R)
-        W = 1.0 + 6.0 * np.exp(-(Z - Z[0]) / 1.0)  # у дна форма меняется быстро — держимся ближе к срезам
-        for i in range(R.shape[1]):
-            for d in range(2):
-                R2[:, i, d] = UnivariateSpline(Z, R[:, i, d], w=W, k=3, s=len(Z) * sm ** 2)(Z)
-        rings = list(R2)
-    keep = pick_levels(zs, rings)
-    za, zb = zs[0] - dz / 2, zs[-1] + dz / 2
-    lz = np.array([zs[i] for i in keep]); lz[0] = za; lz[-1] = zb
-    print("outer levels", len(keep), round(za, 2), round(zb, 2), flush=True)
-    coef = top_surface(mesh, rings[-1], zb)
-    if os.environ.get("TOP_RIM", "0") == "1":  # опыт: подгонка борта Севера (задача 50), высота по длине
-        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
-                                        "chatgpt-1", "cad-intelligence", "cad-kompas-button-2026-11-13"))
-        from rim_fit import fit_rim
-        ev = fit_rim(mesh, rings[-1], zb)
-        if ev is not None:
-            coef = lambda x, y, ev=ev: np.broadcast_to(np.asarray(ev(x, y), float), np.broadcast(np.asarray(x), np.asarray(y)).shape).copy() if np.ndim(x) or np.ndim(y) else float(ev(x, y))
-    ztop = zb
-    levels = [(rings[i], z) for i, z in zip(keep, lz)]
-    if coef is not None:
-        xs, ys = rings[-1][:, 0], rings[-1][:, 1]
-        zz = surf_eval(coef, xs, ys)
-        print("top z", round(float(zz.min()), 2), round(float(zz.max()), 2), flush=True)
-        if zz.max() + 0.5 > zb + 0.3:
-            ztop = float(zz.max()) + 0.5
-            levels[-1] = (levels[-1][0], ztop)  # верхнее сечение поднимаем, без двойного кольца (иначе лофт раздувает)
-    bcoef = top_surface(mesh, rings[keep[0]], zs[0], down=True) if os.environ.get("BOTTOM_FIT", "1") == "1" else None
-    if bcoef is not None:
-        xs, ys = rings[keep[0]][:, 0], rings[keep[0]][:, 1]
-        zz = surf_eval(bcoef, xs, ys)
-        print("bottom z", round(float(zz.min()), 2), round(float(zz.max()), 2), flush=True)
-        levels[0] = (levels[0][0], min(levels[0][1], float(zz.min()) - 0.3))
-    TOPINFO["bcoef"] = bcoef
-    TOPINFO["dome"] = False
-    rr = os.environ.get("BOTTOM_ROUND", "0")
-    if rr != "0" and bcoef is not None:
-        r = None
-        if rr == "auto":  # радиус по тому, как сужаются нижние сечения (оценка Севера, задача 49)
-            sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
-                                            "chatgpt-1", "cad-intelligence", "cad-kompas-button-2026-11-13"))
-            from bottom_round import estimate_radius
-            allo = sorted(pads, key=lambda p: p[0]) + outer
-            zb0 = float(np.median(surf_eval(bcoef, rings[keep[0]][:, 0], rings[keep[0]][:, 1])))
-            r = estimate_radius([np.asarray(p[1].exterior.coords) for p in allo], [p[0] for p in allo], zb0)
-        else:
-            r = float(rr)
-        if r:
-            zf = lambda x, y: surf_eval(bcoef, x, y)
-            base = rings[keep[0]]
-            ztop_r = float(np.max(zf(base[:, 0], base[:, 1]))) + r
-            rest = [(p, z) for p, z in levels[1:] if z > ztop_r + 0.15]
-            levels = round_rings(base, zf, r) + rest
-            TOPINFO["bottom_round"] = r
-            print("bottom round", round(r, 3), "levels", len(levels), flush=True)
-    if os.environ.get("BOTTOM_DOME", "0") == "1" and pads:
-        # дно-купол: отдельный лофт по срезам низа (pad ниже) срастается со стенкой; стенку вниз не тянем
-        # и плоскостью дна не режем — иначе на дне остаётся уступ по контуру купола
-        TOPINFO["bcoef"] = None; TOPINFO["dome"] = True
-        levels[0] = (levels[0][0], zs[keep[0]] - dz / 2)
-    degree = int(os.environ.get("WALL_DEG", "2")) or None
-    wpar = os.environ.get("WALL_PAR", "1") == "1"  # общая параметризация колец стенки: меньше полюсов, ровнее грань
-    if fit_upper_wall and coef is not None:
-        from local_surfaces import upper_wall
+                    contours = [o[1].exterior.coords for o in outer]
+                    fitted = fit_profiles(contours, Z)
+                    if fitted is None and len(Z)>=9:
+                        # The first and last cuts may touch the caps. Interior contours
+                        # still describe the wall and can extend to the trim surfaces.
+                        middle = fit_profiles(contours[2:-2], Z[2:-2])
+                        if middle is not None:
+                            fitted = np.pad(middle,((2,2),(0,0),(0,0)),mode="edge")
+                    if fitted is not None:
+                        R = fitted
+                        TOPINFO["periodic_wall"] = True
+                        rings = list(R)
+                sm = float(os.environ.get("Z_SMOOTH", "0.08"))
+                if len(Z) >= 6 and not TOPINFO.get("periodic_wall"):
+                    R2 = np.empty_like(R)
+                    W = 1.0 + 6.0 * np.exp(-(Z - Z[0]) / 1.0)  # у дна форма меняется быстро — держимся ближе к срезам
+                    for i in range(R.shape[1]):
+                        for d in range(2):
+                            R2[:, i, d] = UnivariateSpline(Z, R[:, i, d], w=W, k=3, s=len(Z) * sm ** 2)(Z)
+                    rings = list(R2)
+                keep = pick_levels(zs, rings)
+                za, zb = zs[0] - dz / 2, zs[-1] + dz / 2
+                if multi:
+                    za = splits[si] if si else za
+                    zb = splits[si + 1] if not last else zb
+                lz = np.array([zs[i] for i in keep]); lz[0] = za; lz[-1] = zb
+                print("outer levels", len(keep), round(za, 2), round(zb, 2), flush=True)
+                coef = top_surface(mesh, rings[-1], zb) if last else None
+                if os.environ.get("TOP_RIM", "0") == "1" and last:  # опыт: подгонка борта Севера (задача 50), высота по длине
+                    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+                                                    "chatgpt-1", "cad-intelligence", "cad-kompas-button-2026-11-13"))
+                    from rim_fit import fit_rim
+                    ev = fit_rim(mesh, rings[-1], zb)
+                    if ev is not None:
+                        coef = lambda x, y, ev=ev: np.broadcast_to(np.asarray(ev(x, y), float), np.broadcast(np.asarray(x), np.asarray(y)).shape).copy() if np.ndim(x) or np.ndim(y) else float(ev(x, y))
+                ztop = zb
+                levels = [(rings[i], z) for i, z in zip(keep, lz)]
+                if coef is not None:
+                    xs, ys = rings[-1][:, 0], rings[-1][:, 1]
+                    zz = surf_eval(coef, xs, ys)
+                    print("top z", round(float(zz.min()), 2), round(float(zz.max()), 2), flush=True)
+                    if zz.max() + 0.5 > zb + 0.3:
+                        ztop = float(zz.max()) + 0.5
+                        levels[-1] = (levels[-1][0], ztop)  # верхнее сечение поднимаем, без двойного кольца (иначе лофт раздувает)
+                bcoef = top_surface(mesh, rings[keep[0]], zs[0], down=True) if os.environ.get("BOTTOM_FIT", "1") == "1" and si == 0 else None
+                if bcoef is not None:
+                    xs, ys = rings[keep[0]][:, 0], rings[keep[0]][:, 1]
+                    zz = surf_eval(bcoef, xs, ys)
+                    print("bottom z", round(float(zz.min()), 2), round(float(zz.max()), 2), flush=True)
+                    levels[0] = (levels[0][0], min(levels[0][1], float(zz.min()) - 0.3))
+                if si == 0:
+                    TOPINFO["bcoef"] = bcoef
+                    TOPINFO["dome"] = False
+                rr = os.environ.get("BOTTOM_ROUND", "0")
+                if rr != "0" and bcoef is not None:
+                    r = None
+                    if rr == "auto":  # радиус по тому, как сужаются нижние сечения (оценка Севера, задача 49)
+                        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+                                                        "chatgpt-1", "cad-intelligence", "cad-kompas-button-2026-11-13"))
+                        from bottom_round import estimate_radius
+                        allo = sorted(pads, key=lambda p: p[0]) + outer
+                        zb0 = float(np.median(surf_eval(bcoef, rings[keep[0]][:, 0], rings[keep[0]][:, 1])))
+                        r = estimate_radius([np.asarray(p[1].exterior.coords) for p in allo], [p[0] for p in allo], zb0)
+                    else:
+                        r = float(rr)
+                    if r:
+                        zf = lambda x, y: surf_eval(bcoef, x, y)
+                        base = rings[keep[0]]
+                        ztop_r = float(np.max(zf(base[:, 0], base[:, 1]))) + r
+                        rest = [(p, z) for p, z in levels[1:] if z > ztop_r + 0.15]
+                        levels = round_rings(base, zf, r) + rest
+                        TOPINFO["bottom_round"] = r
+                        print("bottom round", round(r, 3), "levels", len(levels), flush=True)
+                if os.environ.get("BOTTOM_DOME", "0") == "1" and pads and si == 0:
+                    # дно-купол: отдельный лофт по срезам низа (pad ниже) срастается со стенкой; стенку вниз не тянем
+                    # и плоскостью дна не режем — иначе на дне остаётся уступ по контуру купола
+                    TOPINFO["bcoef"] = None; TOPINFO["dome"] = True
+                    levels[0] = (levels[0][0], zs[keep[0]] - dz / 2)
+                degree = int(os.environ.get("WALL_DEG", "2")) or None
+                wpar = os.environ.get("WALL_PAR", "1") == "1"  # общая параметризация колец стенки: меньше полюсов, ровнее грань
+                if fit_upper_wall and coef is not None and last:
+                    from local_surfaces import upper_wall
 
-        extended = upper_wall(mesh,levels,rings[-1],zs[-1],ztop)
-        if extended is not None:
-            try:
-                wall = loft(extended,deg=degree,par=wpar)
-                levels = None
-                TOPINFO["upper_wall_fit"] = True
-            except RuntimeError:
-                pass
-    try:
-        if levels is not None:
-            wall = loft(levels, deg=degree, par=wpar)
-    except RuntimeError:
-        if (os.environ.get("CAD_KOMPAS_END_RECOVERY", "0") != "1"
-                or len(levels)<4 or TOPINFO.get("bottom_round")):
-            raise
-        # End sections may cut the curved bottom or the rising rim instead
-        # of the wall. Extend the neighboring full profiles to the trim tools.
-        recovery = [(levels[1][0],levels[0][1]),*levels[1:-1],
-                    (levels[-2][0],levels[-1][1])]
-        wall = loft(recovery, deg=degree, par=wpar)
-        TOPINFO["wall_end_recovery"] = True
+                    extended = upper_wall(mesh,levels,rings[-1],zs[-1],ztop)
+                    if extended is not None:
+                        try:
+                            wall = loft(extended,deg=degree,par=wpar)
+                            levels = None
+                            TOPINFO["upper_wall_fit"] = True
+                        except RuntimeError:
+                            pass
+                const = None
+                if multi:
+                    # участок, у которого контур по высоте не меняется, — прямое выдавливание (как в CAD)
+                    const = _const_ring(rings, [Polygon(o[1].exterior) for o in outer])
+                try:
+                    if const is not None:
+                        z0e, z1e = levels[0][1], levels[-1][1]
+                        wall = prism(const, z0e, z1e)
+                        wall = wall if isinstance(wall, cq.Shape) else cq.Workplane().add(wall).val()
+                    elif levels is not None:
+                        wall = loft(levels, deg=degree, par=wpar)
+                except RuntimeError:
+                    if (os.environ.get("CAD_KOMPAS_END_RECOVERY", "0") != "1"
+                            or len(levels)<4 or TOPINFO.get("bottom_round")):
+                        raise
+                    # End sections may cut the curved bottom or the rising rim instead
+                    # of the wall. Extend the neighboring full profiles to the trim tools.
+                    recovery = [(levels[1][0],levels[0][1]),*levels[1:-1],
+                                (levels[-2][0],levels[-1][1])]
+                    wall = loft(recovery, deg=degree, par=wpar)
+                    TOPINFO["wall_end_recovery"] = True
+                if multi:
+                    # меняющийся участок — свой лофт; соседние участки стыкуются по плоскости уступа
+                    kind = "ext" if const is not None else "loft"
+                    print("wall segment", si, kind, round(za, 2), round(zb, 2), "ring", n_s, flush=True)
+                    seg_info.append((za, zb, rings[-1], rings[0], kind))
+                walls.append(wall)
+            if multi:
+                wall = walls[0].fuse(*walls[1:], glue=True).clean()
+                if not wall.isValid() or len(wall.Solids()) != 1:
+                    raise RuntimeError("стопка участков стенки не срослась")
+                TOPINFO["wall_segments"] = [(round(a, 2), round(b, 2), k) for a, b, _, _, k in seg_info]
+                TOPINFO["seg_rings"] = [(a, b, r1, r0) for a, b, r1, r0, _ in seg_info]
+            break
+        except Exception as e:  # noqa: BLE001
+            if not multi:
+                raise
+            # стопка не построилась — как раньше, одна стенка до первого скачка
+            print("wall segments fail", str(e)[:60], flush=True)
+            for key in ("wall_segments", "seg_rings", "bottom_round", "periodic_wall", "upper_wall_fit", "wall_end_recovery"):
+                TOPINFO.pop(key, None)
+            segr = [(i0, i1)]
     body = cq.Workplane().add(wall)
     TOPINFO.update(coef=coef, ztop=ztop, ring=rings[-1])
     # пустоты внутри наружного контура по слоям
@@ -469,6 +692,26 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
         v = raw.buffer(-VOID_OPEN).buffer(VOID_OPEN)
         geoms = [g for g in getattr(v, "geoms", [v]) if not g.is_empty and g.area >= VOID_MIN]
         voids.append((z, geoms))
+    if multi:
+        # срезы у самого уступа между участками касаются горизонтальной полки: их контур шумит, и
+        # разность «контур минус сечение» даёт крошки-«пустоты» вдоль полки. Здесь оставляем только
+        # пустоты, которые продолжают пустоты соседних (не пограничных) уровней — отверстия, карманы
+        bz = {round(allb[b][0], 3) for _, b in segr[:-1]} | {round(allb[b - 1][0], 3) for _, b in segr[:-1]}
+        for idx, (z, geoms) in enumerate(voids):
+            if round(z, 3) not in bz:
+                continue
+            nb_ = [g for j in (idx - 1, idx + 1) if 0 <= j < len(voids) and round(voids[j][0], 3) not in bz
+                   for g in voids[j][1]]
+            ref_ = unary_union(nb_) if nb_ else Polygon()
+            keep_ = []
+            for g in geoms:
+                if g.intersection(ref_).area <= 0.5 * g.area:
+                    continue
+                # и сама пустота — не шире соседних: крошки у полки, приросшие к отверстию, срезаем
+                q = g.intersection(ref_.buffer(0.1))
+                q = max(getattr(q, "geoms", [q]), key=lambda t: t.area) if not q.is_empty else g
+                keep_.append(q if q.geom_type == "Polygon" else g)
+            voids[idx] = (z, keep_)
     if os.environ.get("VOIDS", "chains") == "chains":
         # углубление выше верха стенки продолжает цепочку кармана, с которым сливается: один лофт,
         # стенка чаши — наклонная грань (отдельный вырез рядом с карманом ломал вычитание)
@@ -489,7 +732,7 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
                 try:
                     lv = [(ring_pts(p[1].exterior.coords, n, 0.03), p[0]) for p in pd]
                     lv[0] = (lv[0][0], pd[0][0] - dz / 2)
-                    lv.append((ring_pts(outer[0][1].exterior.coords, n, 0.03), outer[0][0] + 0.3))
+                    lv.append((ring_pts(segs[0][0][1].exterior.coords, n, 0.03), segs[0][0][0] + 0.3))
                     sol = loft(lv)
                     bb = sol.BoundingBox()
                     if sol.isValid() and sol.Volume() > 0 and bb.zmin > pd[0][0] - dz / 2 - 0.3:
@@ -497,7 +740,7 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
                 except Exception as e:
                     print("pad loft fail", str(e)[:50], flush=True)
             if not done:
-                isl.append(prism(ring_pts(big.exterior.coords, n, 0.03), min(pz) - dz / 2, outer[0][0] + 0.3))
+                isl.append(prism(ring_pts(big.exterior.coords, n, 0.03), min(pz) - dz / 2, segs[0][0][0] + 0.3))
             print("pad", round(min(pz) - dz / 2, 2), round(Polygon(big.exterior).area, 1), flush=True)
         except Exception as e:
             print("pad fail", str(e)[:50], flush=True)
@@ -719,7 +962,9 @@ def void_chains(voids, dz, n, zb, jump=0.5):
         if succ and not Polygon(r_top).is_valid:
             r_top = ring_pts(g_top.exterior.coords, n, 0.08)
             succ = Polygon(r_top).is_valid and Polygon(_inset(r_top, 0.1)).is_valid
-        if (os.environ.get("CAD_KOMPAS_VOID_PERSISTENCE", "0") == "1"
+        # шумный скан (вырезов больше VOID_SEQ_MAX): мелкий однослойный срез — шум, не карман
+        noisy = len(segs) > int(os.environ.get("VOID_SEQ_MAX", "40"))
+        if ((os.environ.get("CAD_KOMPAS_VOID_PERSISTENCE", "0") == "1" or noisy)
                 and len(it)==1 and it[0][1].area<12):
             # A small, isolated slice can be caused by floor noise. It
             # must not inherit the height of a later, persistent pocket.
@@ -840,8 +1085,14 @@ def islands(secs, zb, dz=0.2, n=32, min_area=float(os.environ.get("ISL_MIN", "0.
         g["polys"].sort(key=lambda t: t[0])
     solids = []
     wall = Polygon(TOPINFO["ring"]).exterior if TOPINFO.get("ring") is not None else None
+    segw = TOPINFO.get("seg_rings")
     for g in groups:
         ps = g["polys"]
+        if segw:
+            # стенка из участков: остров сравниваем со стенками участков на его высоте
+            z0g, z1g = ps[0][0], ps[-1][0]
+            rs = [r for a, b, r1, r0 in segw if a - dz < z1g and z0g < b + dz for r in (r0, r1)] or [segw[-1][2]]
+            wall = shapely.union_all([Polygon(r).exterior for r in rs])
         if wall is not None and g["foot"].distance(wall) < 0.8:
             print("island at wall skipped", round(g["foot"].area, 1), flush=True); continue
         zset = sorted({z for z, _ in ps})
@@ -1062,7 +1313,7 @@ def top_surface(mesh, ring, zb, band=3.0, down=False):
     print("top fit", len(P), "rms", round(float(np.sqrt(np.mean((r[w > 0]) ** 2))), 3), flush=True)
     return coef
 
-def cut_above(solid, coef, bbox, margin=5.0, below=False):
+def cut_above(solid, coef, bbox, margin=5.0, below=False, clip=None):
     from OCP.TColgp import TColgp_Array2OfPnt
     from OCP.GeomAPI import GeomAPI_PointsToBSplineSurface
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
@@ -1079,7 +1330,22 @@ def cut_above(solid, coef, bbox, margin=5.0, below=False):
     xc, yc = (x0 + x1) / 2, (y0 + y1) / 2
     zc = surf_eval(coef, xc, yc) + (-50 if below else 50)
     hs = BRepPrimAPI_MakeHalfSpace(face, gp_Pnt(float(xc), float(yc), float(zc))).Solid()
-    return solid.cut(cq.Solid(hs))
+    tool = cq.Solid(hs)
+    if clip is not None:
+        # clip = (кольцо, z): срез только над (под) этим контуром и выше (ниже) уровня z — уступы
+        # нижних участков стопки поверхность верха не трогает
+        ring, zc_ = clip
+        P = Polygon(ring).buffer(1.0).simplify(0.05)
+        z0_, z1_ = (zc_ - 200.0, zc_ - 0.05) if below else (zc_ + 0.05, zc_ + 200.0)
+        box = cq.Workplane("XY").workplane(offset=float(z0_)).polyline([tuple(map(float, p)) for p in list(P.exterior.coords)[:-1]]).close().extrude(float(z1_ - z0_)).val()
+        try:
+            nb = solid.cut(tool.intersect(box))
+            if nb.isValid() and 0 < nb.Volume() <= solid.Volume() + 1e-6:
+                return nb
+        except Exception:  # noqa: BLE001
+            pass
+        print("clipped cut failed, full cut", flush=True)
+    return solid.cut(tool)
 
 T0 = time.time()
 if __name__ == "__main__":
@@ -1267,10 +1533,15 @@ def _edge_fillets(body, info, scan=None, *, fit_variable=False):
                 continue
         for r in (rf, rf * 0.7, rf * 0.5):
             try:
-                nb = body.fillet(r, edges)
-                if nb.isValid() and nb.Volume() > 0.95 * body.Volume():
+                # скругление на сложной кромке ядро может считать десятки минут — предел времени
+                nb, ok = op_limited(lambda: body.fillet(r, edges), float(os.environ.get("FILLET_SEC", "90")))
+                if ok and nb.Volume() > 0.95 * body.Volume():
                     body = nb; info[key.lower()] = round(r, 3)
                     break
+            except RuntimeError as e:
+                if "timeout" in str(e):
+                    info[key.lower() + "_timeout"] = True
+                    break  # меньший радиус на той же кромке будет так же долго
             except Exception:  # noqa: BLE001
                 pass
     rin = float(os.environ.get("TOP_IN_FILLET", "0"))
@@ -1294,7 +1565,16 @@ def _edge_fillets(body, info, scan=None, *, fit_variable=False):
 
 
 def assemble(scan, log=print):
+    filled = 0
+    if os.environ.get("CAD_KOMPAS_FILL_HOLES", "1") == "1" and not scan.is_watertight:
+        from scan_fill import fill_loops
+
+        scan, filled = fill_loops(scan)
+        log(f"    дыры скана закрыты: {filled} треугольников, замкнут: {scan.is_watertight}")
     body,info = _assemble_candidates(scan,log)
+    if filled: info["scan_holes_filled"] = filled
+    if info.get("solo_build"):
+        return body, info
     partial = os.environ.get("CAD_KOMPAS_PARTIAL_ISLANDS", "0") == "1"
     windowed = os.environ.get("CAD_KOMPAS_WINDOWED_ISLANDS", "0") == "1"
     hooked = os.environ.get("CAD_KOMPAS_HOOKED_ISLANDS", "1") == "1"
@@ -1328,7 +1608,14 @@ def _assemble_candidates(scan, log):
 
         candidate = assemble_stable(scan, log=log)
         experiment = "stable_pockets"
+    t_base = time.time()
     baseline = _assemble_stock(scan, log=log)
+    # большая или сложная деталь: каждый кандидат — ещё одна полная сборка; если основная шла долго,
+    # кандидатов не строим (иначе 3–4 сборки не укладываются в предел времени)
+    if candidate is None and time.time() - t_base > float(os.environ.get("CAD_KOMPAS_SOLO_SEC", "200")):
+        log(f"    сборка долгая ({time.time() - t_base:.0f} с): без проверки кандидатов")
+        baseline[1]["solo_build"] = True
+        return baseline
     upper = os.environ.get("CAD_KOMPAS_UPPER_WALL", "0") == "1"
     floor = os.environ.get("CAD_KOMPAS_POCKET_FLOOR", "1") == "1"
     variable = os.environ.get("CAD_KOMPAS_VARIABLE_FILLET", "0") == "1"
@@ -1402,6 +1689,8 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
     if not body.isValid() or body.Volume() <= 0:
         raise RuntimeError("наружная стенка не построена")
     info["voids"] = len(cut)
+    if TOPINFO.get("wall_segments"):
+        info["wall_segments"] = TOPINFO["wall_segments"]
     skipped = 0
     trace = os.environ.get("CAD_KOMPAS_TRACE", "0") == "1"
     void_checks = []
@@ -1409,7 +1698,26 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
         from local_surfaces import floor_samples, trim_pocket
 
         floor_points = floor_samples(scan)
+    limited = len(cut) > int(os.environ.get("VOID_SEQ_MAX", "40"))
+    lim_s = float(os.environ.get("VOID_CUT_SEC", "60"))
+    cur_vol = [None]
+    def _good(nb, body):
+        if limited:
+            return getattr(nb, "_ok", False)
+        return nb.isValid() and nb.Volume() > 0.5 * body.Volume()
     def _cut_try(body, v):
+        if limited:
+            # большая шумная деталь: у каждого вычитания (с проверкой) предел времени
+            if cur_vol[0] is None: cur_vol[0] = body.Volume()
+            try:
+                nb, ok, vol = cut_limited(body, [v], lim_s, cur_vol[0])
+                if ok:
+                    nb._ok = True; cur_vol[0] = vol
+                    return nb
+            except RuntimeError as e:
+                print("void cut skipped:", e, flush=True)
+            body._ok = True  # без изменений
+            return body
         try:
             nb = body.cut(v)
             if nb.isValid() and nb.Volume() > 0.5 * body.Volume():
@@ -1419,7 +1727,22 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
         fb = getattr(v, "_fallback", None)
         return body.cut(fb) if fb is not None else body.cut(v)
 
-    for v in sorted(cut, key=lambda c: -c.Volume()):
+    order = sorted(cut, key=lambda c: -c.Volume())
+    nseq = int(os.environ.get("VOID_HEAD", "20"))
+    budget = time.time() + float(os.environ.get("VOID_BUDGET_SEC", "600"))
+    if limited and len(order) > nseq and os.environ.get("VOID_BATCH", "1") == "1":
+        # много мелких вырезов (шумный скан, рёбра): по одному каждый вычитается всё дольше (тело растёт
+        # гранями) — 160 вырезов крышки не укладывались в 25 минут. Крупные — по одному с проверками,
+        # мелкий хвост — одним вычитанием сразу; не вышло — по одному, как раньше
+        head, tail = order[:nseq], order[nseq:]
+        batch_tail = tail
+    else:
+        head, batch_tail = order, []
+    for v in head:
+        if limited and time.time() > budget:
+            # предел времени на вырезы исчерпан: оставшиеся мелкие не вычитаем (иначе сборка не кончится)
+            skipped += 1; continue
+        t_cut = time.time()
         try:
             before = body.Volume() if trace else None
             nb = None
@@ -1436,7 +1759,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
                     pass
             if nb is None:
                 nb = _cut_try(body, v)
-            if nb.isValid() and nb.Volume() > 0.5 * body.Volume():
+            if _good(nb, body):
                 body = nb
                 reason = "accepted"
             else:
@@ -1450,19 +1773,66 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             skipped += 1
             if trace:
                 void_checks.append(dict(reason="exception",error=str(error)))
+        if time.time() - t_cut > 5:
+            print(f"slow cut {time.time() - t_cut:.0f} s, tool {v.Volume():.1f} mm3, z {v.BoundingBox().zmin:.1f}-{v.BoundingBox().zmax:.1f}", flush=True)
+    if batch_tail:
+        # кусками: один битый вырез не валит весь хвост
+        size = int(os.environ.get("VOID_BATCH_SIZE", "12"))
+        nb_ok = nb_fail = 0
+        for k0 in range(0, len(batch_tail), size):
+            if time.time() > budget:
+                print(f"void budget over: {len(batch_tail) - k0} small cutters left out", flush=True)
+                info["voids_over_budget"] = len(batch_tail) - k0
+                break
+            chunk = batch_tail[k0:k0 + size]
+            t_b = time.time(); ok_b = False
+            try:
+                if cur_vol[0] is None: cur_vol[0] = body.Volume()
+                nb, ok_c, vol = cut_limited(body, chunk, 2 * lim_s, cur_vol[0])
+                if ok_c:
+                    body = nb; ok_b = True; cur_vol[0] = vol
+            except Exception:  # noqa: BLE001
+                pass
+            if ok_b:
+                nb_ok += len(chunk)
+                continue
+            nb_fail += len(chunk)
+            for v in chunk:
+                try:
+                    nb = _cut_try(body, v)
+                    if _good(nb, body):
+                        body = nb
+                    else:
+                        skipped += 1
+                except Exception:  # noqa: BLE001
+                    skipped += 1
+        print(f"void batch {len(batch_tail)} tools: {nb_ok} together, {nb_fail} one by one", flush=True)
+        info["void_batch"] = nb_ok
     info["voids_skipped"] = skipped
     if trace:
         info["void_checks"] = void_checks
     bb = pieces[0].BoundingBox()
+    if os.environ.get("CAD_KOMPAS_DIAG"):
+        print("diag after voids: valid", body.isValid(), "solids", len(body.Solids()), "faces", len(body.Faces()), flush=True)
     for key, below in (("coef", False), ("bcoef", True)):
         if TOPINFO.get(key) is not None:
-            nb = cut_above(body, TOPINFO[key], (bb.xmin, bb.ymin, bb.xmax, bb.ymax), below=below)
+            clip = None
+            if TOPINFO.get("seg_rings"):
+                # стенка из участков: верх режем только над верхним участком, дно — только под нижним
+                a, b, r1, r0 = TOPINFO["seg_rings"][0 if below else -1]
+                clip = (r0 if below else r1, b if below else a)
+            nb = cut_above(body, TOPINFO[key], (bb.xmin, bb.ymin, bb.xmax, bb.ymax), below=below, clip=clip)
             if nb.isValid() and nb.Volume() > 0:
                 body = nb
                 info["bottom_surface" if below else "top_surface"] = True
             if trace:
                 info[key+"_check"] = dict(valid=nb.isValid(), volume=nb.Volume(), solids=len(nb.Solids()))
-    body = body.clean()
+    if os.environ.get("CAD_KOMPAS_DIAG"):
+        print("diag after voids+caps: valid", body.isValid(), "solids", len(body.Solids()), "faces", len(body.Faces()), flush=True)
+    try:
+        body = body.clean()
+    except Exception as e:  # noqa: BLE001  ядро не смогло объединить грани (шумный скан) — тело как есть
+        print("clean failed:", str(e)[:60], flush=True)
     body = _edge_fillets(body, info, scan,fit_variable=fit_variable)
     added = 0
     for p in isl:
@@ -1490,13 +1860,16 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
                         nb = fx
                 except Exception:  # noqa: BLE001
                     pass
-            if nb.isValid() and len(nb.Solids()) <= len(body.Solids()):
+            # пустое или «похудевшее» тело после слияния острова — отказ ядра, а не результат
+            if nb.isValid() and len(nb.Solids()) <= len(body.Solids()) and nb.Volume() >= 0.99 * body.Volume():
                 body = nb; added += 1
                 if hasattr(p,"_cylindrical_island"):
                     info.setdefault("cylindrical_islands",[]).append(p._cylindrical_island)
         except Exception:  # noqa: BLE001
             pass
     info["bosses"] = added
+    if os.environ.get("CAD_KOMPAS_DIAG"):
+        print("diag after islands: valid", body.isValid(), "faces", len(body.Faces()), flush=True)
     body = body.clean()
     if os.environ.get("CAD_SECTIONS_CORRECT", "1") == "1":
         tf = os.path.join(tempfile.gettempdir(), "_kcorr%d.stl" % os.getpid())
@@ -1508,7 +1881,10 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
         for v in sorted(correction_prisms(scan, mm), key=lambda c: -c.Volume()):
             try:
                 nb = body.cut(v)
-                if nb.isValid() and nb.Volume() > 0.9 * body.Volume():
+                if len(nb.Faces()) - len(body.Faces()) > int(os.environ.get("CORR_ADD_MAXF", "40")):
+                    # поправочный вырез «лесенкой» (сотни мелких граней) — не так строит конструктор
+                    info["correction_cuts_stairs_skipped"] = info.get("correction_cuts_stairs_skipped", 0) + 1
+                elif nb.isValid() and nb.Volume() > 0.9 * body.Volume():
                     body = nb; nc += 1
             except Exception:  # noqa: BLE001
                 pass
@@ -1520,6 +1896,11 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             mm = trimesh.load(tf, force="mesh")
             na = 0
             outer = Polygon(TOPINFO["ring"]).buffer(0.05) if TOPINFO.get("ring") is not None else None
+            if TOPINFO.get("seg_rings"):
+                outer = shapely.union_all([Polygon(r) for s_ in TOPINFO["seg_rings"] for r in s_[2:]]).buffer(0.05)
+            # наружная стенка в плане: у стопки участков — стенки всех участков (и уступов между ними)
+            wall_line = (shapely.union_all([Polygon(r).exterior for s_ in TOPINFO["seg_rings"] for r in s_[2:]])
+                         if TOPINFO.get("seg_rings") else outer.exterior if outer is not None else None)
             for v in sorted(correction_prisms(scan, mm, extra=True), key=lambda c: -c.Volume()):
                 # прибавка снаружи стенки — ступенчатый нарост из призм по слоям (видно глазом);
                 # наружную стенку правит лофт, поправка только внутри
@@ -1529,12 +1910,16 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
                     continue
                 # прибавка, прилипшая к наружной стенке изнутри, — тот же нарост ступеньками на стенке
                 if (outer is not None and os.environ.get("CORR_ADD_WALL", "0") != "1"
-                        and min(outer.exterior.distance(shapely.geometry.Point(q.X, q.Y)) for q in v.Vertices()) < 0.3):
+                        and min(wall_line.distance(shapely.geometry.Point(q.X, q.Y)) for q in v.Vertices()) < 0.3):
                     info["correction_adds_wall_skipped"] = info.get("correction_adds_wall_skipped", 0) + 1
                     continue
                 try:
                     nb = body.fuse(v)
-                    if nb.isValid() and len(nb.Solids()) == 1 and nb.Volume() < 1.05 * body.Volume():
+                    # прибавка «лесенкой» (сотни мелких граней ради сотых мм) — не так строит конструктор
+                    many = len(nb.Faces()) - len(body.Faces()) > int(os.environ.get("CORR_ADD_MAXF", "40"))
+                    if many:
+                        info["correction_adds_stairs_skipped"] = info.get("correction_adds_stairs_skipped", 0) + 1
+                    elif nb.isValid() and len(nb.Solids()) == 1 and nb.Volume() < 1.05 * body.Volume():
                         body = nb; na += 1
                 except Exception:  # noqa: BLE001
                     pass
@@ -1548,7 +1933,9 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             for v in thin_rib_prisms(scan, mm):
                 try:
                     nb = body.fuse(v)
-                    if nb.isValid() and len(nb.Solids()) == 1 and nb.Volume() < 1.02 * body.Volume():
+                    if len(nb.Faces()) - len(body.Faces()) > int(os.environ.get("CORR_ADD_MAXF", "40")):
+                        info["thin_ribs_stairs_skipped"] = info.get("thin_ribs_stairs_skipped", 0) + 1
+                    elif nb.isValid() and len(nb.Solids()) == 1 and nb.Volume() < 1.02 * body.Volume():
                         body = nb; nt += 1
                 except Exception:  # noqa: BLE001
                     pass

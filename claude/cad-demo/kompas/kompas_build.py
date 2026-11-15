@@ -21,15 +21,79 @@ STEP_JUMP = float(os.environ.get('STEP_JUMP', '1.0'))
 VOID_OPEN = float(os.environ.get("VOID_OPEN", "0.15"))  # срез тонких перешейков пустоты
 VOID_MIN = float(os.environ.get("VOID_MIN", "1.0"))  # мельче — шум сечения
 
+def _vol(shape):
+    """объём тела с запоминанием на самом объекте: тела cadquery не меняются на месте, а в проверках
+    вырезов объём одного и того же тела считался заново сотни раз (на кнопке — больше половины сборки)"""
+    v = getattr(shape, "_kb_vol", None)
+    if v is None:
+        v = shape.Volume()
+        try:
+            shape._kb_vol = v
+        except Exception:  # noqa: BLE001
+            pass
+    return v
+
+
+def _sec_one(mesh, z):
+    s = mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
+    if s is None:
+        return []
+    P, _ = s.to_2D(to_2D=np.eye(4))
+    return list(P.polygons_full)
+
+
+_SEC_POOL_MESH = [None]
+
+
+def _sec_pool_job(z):
+    return _sec_one(_SEC_POOL_MESH[0], z)
+
+
+def polys_at(mesh, z):
+    """многоугольники сечения сетки на высоте z (как P.polygons_full у trimesh), с кэшем на самой сетке:
+    одно и то же сечение скана раньше считалось заново в каждом проходе (сборка, поправки, рёбра),
+    а сборка контуров в trimesh (починка буфером) — больше половины времени сборки"""
+    cache = mesh.__dict__.setdefault("_kb_sec", {})
+    key = round(float(z), 6)
+    if key not in cache:
+        cache[key] = _sec_one(mesh, z)
+    return cache[key]
+
+
+def presection(mesh, zs):
+    """заранее посчитать сечения на всех высотах — параллельно на всех ядрах (результат тот же)"""
+    cache = mesh.__dict__.setdefault("_kb_sec", {})
+    todo = [float(z) for z in zs if round(float(z), 6) not in cache]
+    nproc = min(os.cpu_count() or 1, int(os.environ.get("SEC_PROCS", "8")))
+    if len(todo) < 40 or nproc < 2 or os.name == "nt":
+        for z in todo:
+            cache[round(z, 6)] = _sec_one(mesh, z)
+        return
+    import multiprocessing as mp
+    _SEC_POOL_MESH[0] = mesh
+    try:
+        with mp.get_context("fork").Pool(nproc) as pool:
+            res = pool.map(_sec_pool_job, todo, chunksize=max(1, len(todo) // (4 * nproc)))
+        for z, r in zip(todo, res):
+            cache[round(z, 6)] = r
+    except Exception:  # noqa: BLE001  нет процессов — по одному
+        for z in todo:
+            if round(z, 6) not in cache:
+                cache[round(z, 6)] = _sec_one(mesh, z)
+    finally:
+        _SEC_POOL_MESH[0] = None
+
+
 def sections(mesh, dz):
     z0, z1 = mesh.bounds[:, 2]
     out = []
-    for z in np.arange(z0 + dz / 2, z1, dz):
-        s = mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
+    zs_ = np.arange(z0 + dz / 2, z1, dz)
+    presection(mesh, zs_)
+    for z in zs_:
+        pf = polys_at(mesh, z)
         polys = []
-        if s is not None:
-            P, _ = s.to_2D(to_2D=np.eye(4))
-            polys = [p.buffer(0) for p in P.polygons_full if p.area >= MIN_AREA]
+        if pf:
+            polys = [p.buffer(0) for p in pf if p.area >= MIN_AREA]
             polys = [Polygon(p.exterior, [h for h in p.interiors if Polygon(h).area >= MIN_AREA]) for p in polys if p.geom_type == "Polygon"]
         out.append((z, polys))
     return out
@@ -177,7 +241,7 @@ def _cut_child(body, tools, q, vol0):
     try:
         from OCP.BRepTools import BRepTools
         nb = body.cut(*tools)
-        v = nb.Volume()
+        v = _vol(nb)
         # вырез не должен разрезать тело на куски (шумный вырез насквозь через стенку)
         ok = bool(nb.isValid() and 0.5 * vol0 < v <= vol0 + 1e-6
                   and len(nb.Solids()) <= max(1, len(body.Solids())))
@@ -194,7 +258,7 @@ def cut_limited(body, tools, seconds, vol0):
     кончаются. Возвращает (тело, годно, объём); по пределу — RuntimeError"""
     import multiprocessing as mp
     if os.name == "nt":
-        nb = body.cut(*tools); v = nb.Volume()
+        nb = body.cut(*tools); v = _vol(nb)
         return nb, bool(nb.isValid() and 0.5 * vol0 < v <= vol0 + 1e-6), v
     ctx = mp.get_context("fork"); q = ctx.Queue()
     p = ctx.Process(target=_cut_child, args=(body, tools, q, vol0)); p.start(); p.join(seconds)
@@ -312,7 +376,7 @@ def _fillet_sane(nb, body):
     """скругление не должно ломать тело: объём почти тот же, тел столько же, граней не меньше половины
     (на шумной крышке ядро отдало «скруглённое» тело из 39 граней вместо 848)"""
     try:
-        v0, v = body.Volume(), nb.Volume()
+        v0, v = _vol(body), _vol(nb)
         return (nb.isValid() and 0.95 * v0 < v < 1.02 * v0 and len(nb.Solids()) == len(body.Solids())
                 and len(nb.Faces()) >= 0.5 * len(body.Faces()))
     except Exception:  # noqa: BLE001
@@ -424,11 +488,11 @@ def build(mesh, dz=0.2, tol=0.3, n=96, smooth=0.05, step=1.0, secs=None, fuse=Tr
             info.append(("ok", round(za, 2), round(zb, 2), len(idx))); print(info[-1], flush=True)
     if not fuse:
         return pieces, info
-    vol = sum(p.Volume() for p in pieces)
+    vol = sum(_vol(p) for p in pieces)
     cq.exporters.export(cq.Compound.makeCompound(pieces), sys.argv[2] + "_pieces.stl", tolerance=0.01, angularTolerance=0.1)
     print("pieces written", round(time.time() - T0, 1), flush=True)
     body = pieces[0].fuse(*pieces[1:], glue=True).clean() if len(pieces) > 1 else pieces[0]
-    print("pieces", len(pieces), "sum vol", round(vol, 1), "fused vol", round(body.Volume(), 1), flush=True)
+    print("pieces", len(pieces), "sum vol", round(vol, 1), "fused vol", round(_vol(body), 1), flush=True)
     return body, info
 
 
@@ -821,10 +885,9 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
         if os.environ.get("RAW_SMALL_HOLES", "1") == "1":
             # для продолжения канавок вниз нужны и мелкие дырки сечения (меньше MIN_AREA = 1 мм²):
             # острие V-канавки у бобышки в сечении — полоска 0,05–0,6 мм², sections() её отбрасывает
-            s_ = mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
-            if s_ is not None:
-                P_, _ = s_.to_2D(to_2D=np.eye(4))
-                full = shapely.union_all([q.buffer(0) for q in P_.polygons_full if q.area >= MIN_AREA])
+            pf_ = polys_at(mesh, z)
+            if pf_:
+                full = shapely.union_all([q.buffer(0) for q in pf_ if q.area >= MIN_AREA])
                 RAW_VOIDS[round(z, 3)] = Polygon(big.exterior).difference(full)
         v = raw.buffer(-VOID_OPEN).buffer(VOID_OPEN)
         geoms = [g for g in getattr(v, "geoms", [v]) if not g.is_empty and g.area >= VOID_MIN]
@@ -872,7 +935,7 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
                     lv.append((ring_pts(segs[0][0][1].exterior.coords, n, 0.03), segs[0][0][0] + 0.3))
                     sol = loft(lv)
                     bb = sol.BoundingBox()
-                    if sol.isValid() and sol.Volume() > 0 and bb.zmin > pd[0][0] - dz / 2 - 0.3:
+                    if sol.isValid() and _vol(sol) > 0 and bb.zmin > pd[0][0] - dz / 2 - 0.3:
                         isl.append(sol); done = True
                 except Exception as e:
                     print("pad loft fail", str(e)[:50], flush=True)
@@ -1277,9 +1340,9 @@ def void_chains(voids, dz, n, zb, jump=0.5):
                         lv = [(c + 0.25 * (r0 - c), z0 - 0.1 - tip)] + lv
                     sol = loft(lv)
                     bb = sol.BoundingBox()
-                    if sol.Volume() <= 0 or bb.zmin < z0 - 0.3 - tip or bb.zmax > lv[-1][1] + 0.3 or _bulge(sol, lv):
+                    if _vol(sol) <= 0 or bb.zmin < z0 - 0.3 - tip or bb.zmax > lv[-1][1] + 0.3 or _bulge(sol, lv):
                         sol = loft(lv, ruled=True)  # гладкий лофт выгнуло за свои уровни — прямые переходы
-                        if sol.Volume() <= 0: raise RuntimeError("negative")
+                        if _vol(sol) <= 0: raise RuntimeError("negative")
                 elif pred or succ:
                     r = rings_c[len(it) // 2]
                     lv = ([(_inset(r, taper + 0.03) if even else r_tuck, z0 - 0.1), (r, z0)] if pred else [(r, z0 - 0.02)]) \
@@ -1287,7 +1350,7 @@ def void_chains(voids, dz, n, zb, jump=0.5):
                     try:
                         sol = loft(lv)
                         bb = sol.BoundingBox()
-                        if sol.Volume() <= 0 or bb.zmin < lv[0][1] - 0.2 or bb.zmax > lv[-1][1] + 0.2 or _bulge(sol, lv):
+                        if _vol(sol) <= 0 or bb.zmin < lv[0][1] - 0.2 or bb.zmax > lv[-1][1] + 0.2 or _bulge(sol, lv):
                             raise RuntimeError("taper loft")
                     except RuntimeError:
                         sol = loft(lv, ruled=True)
@@ -1300,7 +1363,7 @@ def void_chains(voids, dz, n, zb, jump=0.5):
                     # удастся, при вычитании берётся прежний лофт (_fallback)
                     try:
                         s2 = loft(lv, deg=vdeg); b2 = s2.BoundingBox()
-                        if s2.isValid() and s2.Volume() > 0 and b2.zmin >= z0 - 0.3 and b2.zmax <= lv[-1][1] + 0.3:
+                        if s2.isValid() and _vol(s2) > 0 and b2.zmin >= z0 - 0.3 and b2.zmax <= lv[-1][1] + 0.3:
                             s2._fallback = sol; sol = s2
                     except Exception:  # noqa: BLE001
                         pass
@@ -1631,7 +1694,7 @@ def cut_above(solid, coef, bbox, margin=5.0, below=False, clip=None):
         box = cq.Workplane("XY").workplane(offset=float(z0_)).polyline([tuple(map(float, p)) for p in list(P.exterior.coords)[:-1]]).close().extrude(float(z1_ - z0_)).val()
         try:
             nb = solid.cut(tool.intersect(box))
-            if nb.isValid() and 0 < nb.Volume() <= solid.Volume() + 1e-6:
+            if nb.isValid() and 0 < _vol(nb) <= _vol(solid) + 1e-6:
                 return nb
         except Exception:  # noqa: BLE001
             pass
@@ -1655,12 +1718,13 @@ def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=floa
     при extra=True наоборот — где в скане есть, а в модели нет — добавка. Слои по перекрытию, выдавливание."""
     z0 = max(scan.bounds[0, 2], model_mesh.bounds[0, 2]); z1 = min(scan.bounds[1, 2], model_mesh.bounds[1, 2])
     def sec(mesh, z):
-        s = mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
-        if s is None: return Polygon()
-        P, _ = s.to_2D(to_2D=np.eye(4))
-        return shapely.union_all([p.buffer(0) for p in P.polygons_full])
+        pf = polys_at(mesh, z)
+        if not pf: return Polygon()
+        return shapely.union_all([p.buffer(0) for p in pf])
     layers_ = []
-    for z in np.arange(z0 + dz, z1 - dz / 2, dz):
+    zs_ = np.arange(z0 + dz, z1 - dz / 2, dz)
+    presection(model_mesh, zs_); presection(scan, zs_)
+    for z in zs_:
         a, b = sec(model_mesh, z), sec(scan, z)
         D = (b.difference(a) if extra else a.difference(b)).buffer(-shrink).buffer(shrink)
         geoms = [g for g in getattr(D, "geoms", [D]) if not g.is_empty and g.geom_type == "Polygon" and g.area >= min_area]
@@ -1710,12 +1774,13 @@ def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RI
     прямыми сторонами, без сплайна по 32 точкам (сплайн и сглаживание 0,12 мм съедали полоску 0,2 мм)"""
     z0 = max(scan.bounds[0, 2], model_mesh.bounds[0, 2]); z1 = min(scan.bounds[1, 2], model_mesh.bounds[1, 2])
     def sec(mesh, z):
-        s = mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
-        if s is None: return Polygon()
-        P, _ = s.to_2D(to_2D=np.eye(4))
-        return shapely.union_all([p.buffer(0) for p in P.polygons_full])
+        pf = polys_at(mesh, z)
+        if not pf: return Polygon()
+        return shapely.union_all([p.buffer(0) for p in pf])
     out = []; found = []
-    for z in np.arange(z0 + dz, z1 - dz / 2, dz):
+    zs_ = np.arange(z0 + dz, z1 - dz / 2, dz)
+    presection(model_mesh, zs_); presection(scan, zs_)
+    for z in zs_:
         a, b = sec(model_mesh, z), sec(scan, z)
         if a.is_empty or b.is_empty: continue
         # cut=True — наоборот: тонкий клин материала модели там, где в скане пусто (острие V-канавки)
@@ -1779,7 +1844,7 @@ def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RI
                     # гладкий контур сплайном: одна боковая грань (многоугольник давал грань на каждую сторону)
                     sol = prism(ring_pts(u.exterior.coords, 24, 0.01), G[0][0] - dz / 2 - 0.01, G[-1][0] + dz / 2 + 0.01)
                     sol = sol if isinstance(sol, cq.Shape) else cq.Workplane().add(sol).val()
-                    if sol.isValid() and sol.Volume() > 0:
+                    if sol.isValid() and _vol(sol) > 0:
                         out.append(sol); continue
                 except Exception:  # noqa: BLE001
                     pass
@@ -1789,7 +1854,7 @@ def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RI
                 rings = [(ring_pts(q.exterior.coords, 24, 0.01), z) for z, q in G]
                 lv = [(rings[0][0], G[0][0] - dz / 2 - 0.01)] + rings + [(rings[-1][0], G[-1][0] + dz / 2 + 0.01)]
                 sol = loft(lv, ruled=True)
-                if not sol.isValid() or sol.Volume() <= 0:
+                if not sol.isValid() or _vol(sol) <= 0:
                     raise ValueError("bad loft")
                 out.append(sol)
             except Exception:  # noqa: BLE001
@@ -1877,7 +1942,7 @@ def _edge_fillets(body, info, scan=None, *, fit_variable=False):
             for r in (rin, rin * 0.6, rin * 0.4):
                 try:
                     nb = body.fillet(r, edges)
-                    if nb.isValid() and nb.Volume() > 0.95 * body.Volume():
+                    if nb.isValid() and _vol(nb) > 0.95 * _vol(body):
                         body = nb; info["top_in_fillet"] = round(r, 3)
                         break
                 except Exception:  # noqa: BLE001
@@ -2007,7 +2072,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
         if TOPINFO.get(key):
             info[key] = True
     body = pieces[0]
-    if not body.isValid() or body.Volume() <= 0:
+    if not body.isValid() or _vol(body) <= 0:
         raise RuntimeError("наружная стенка не построена")
     info["voids"] = len(cut)
     if TOPINFO.get("wall_segments"):
@@ -2025,11 +2090,11 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
     def _good(nb, body):
         if limited:
             return getattr(nb, "_ok", False)
-        return nb.isValid() and nb.Volume() > 0.5 * body.Volume()
+        return nb.isValid() and _vol(nb) > 0.5 * _vol(body)
     def _cut_try(body, v):
         if limited:
             # большая шумная деталь: у каждого вычитания (с проверкой) предел времени
-            if cur_vol[0] is None: cur_vol[0] = body.Volume()
+            if cur_vol[0] is None: cur_vol[0] = _vol(body)
             try:
                 nb, ok, vol = cut_limited(body, [v], lim_s, cur_vol[0])
                 if ok:
@@ -2041,14 +2106,14 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             return body
         try:
             nb = body.cut(v)
-            if nb.isValid() and nb.Volume() > 0.5 * body.Volume():
+            if nb.isValid() and _vol(nb) > 0.5 * _vol(body):
                 return nb
         except Exception:  # noqa: BLE001
             pass
         fb = getattr(v, "_fallback", None)
         return body.cut(fb) if fb is not None else body.cut(v)
 
-    order = sorted(cut, key=lambda c: -c.Volume())
+    order = sorted(cut, key=lambda c: -_vol(c))
     nseq = int(os.environ.get("VOID_HEAD", "20"))
     budget = time.time() + float(os.environ.get("VOID_BUDGET_SEC", "600"))
     if limited and len(order) > nseq and os.environ.get("VOID_BATCH", "1") == "1":
@@ -2065,7 +2130,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             skipped += 1; continue
         t_cut = time.time()
         try:
-            before = body.Volume() if trace else None
+            before = _vol(body) if trace else None
             nb = None
             if fit_pocket_floor:
                 try:
@@ -2073,7 +2138,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
                     if smooth_tool is not None:
                         trial = body.cut(smooth_tool)
                         if (trial.isValid() and len(trial.Solids())==1
-                                and .5*body.Volume()<trial.Volume()<body.Volume()):
+                                and .5*_vol(body)<_vol(trial)<_vol(body)):
                             nb = trial
                             info["smooth_pocket_floors"] = info.get("smooth_pocket_floors",0)+1
                 except (ValueError,RuntimeError):
@@ -2089,13 +2154,13 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             if trace:
                 bounds = v.BoundingBox()
                 void_checks.append(dict(z=[bounds.zmin,bounds.zmax],reason=reason,
-                                        tool_volume=v.Volume(),before_volume=before,after_volume=nb.Volume()))
+                                        tool_volume=_vol(v),before_volume=before,after_volume=_vol(nb)))
         except Exception as error:  # noqa: BLE001
             skipped += 1
             if trace:
                 void_checks.append(dict(reason="exception",error=str(error)))
         if time.time() - t_cut > 5:
-            print(f"slow cut {time.time() - t_cut:.0f} s, tool {v.Volume():.1f} mm3, z {v.BoundingBox().zmin:.1f}-{v.BoundingBox().zmax:.1f}", flush=True)
+            print(f"slow cut {time.time() - t_cut:.0f} s, tool {_vol(v):.1f} mm3, z {v.BoundingBox().zmin:.1f}-{v.BoundingBox().zmax:.1f}", flush=True)
     if batch_tail:
         # кусками: один битый вырез не валит весь хвост
         size = int(os.environ.get("VOID_BATCH_SIZE", "12"))
@@ -2108,7 +2173,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             chunk = batch_tail[k0:k0 + size]
             t_b = time.time(); ok_b = False
             try:
-                if cur_vol[0] is None: cur_vol[0] = body.Volume()
+                if cur_vol[0] is None: cur_vol[0] = _vol(body)
                 nb, ok_c, vol = cut_limited(body, chunk, 2 * lim_s, cur_vol[0])
                 if ok_c:
                     body = nb; ok_b = True; cur_vol[0] = vol
@@ -2143,11 +2208,11 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
                 a, b, r1, r0 = TOPINFO["seg_rings"][0 if below else -1]
                 clip = (r0 if below else r1, b if below else a)
             nb = cut_above(body, TOPINFO[key], (bb.xmin, bb.ymin, bb.xmax, bb.ymax), below=below, clip=clip)
-            if nb.isValid() and nb.Volume() > 0:
+            if nb.isValid() and _vol(nb) > 0:
                 body = nb
                 info["bottom_surface" if below else "top_surface"] = True
             if trace:
-                info[key+"_check"] = dict(valid=nb.isValid(), volume=nb.Volume(), solids=len(nb.Solids()))
+                info[key+"_check"] = dict(valid=nb.isValid(), volume=_vol(nb), solids=len(nb.Solids()))
     if os.environ.get("CAD_KOMPAS_DIAG"):
         print("diag after voids+caps: valid", body.isValid(), "solids", len(body.Solids()), "faces", len(body.Faces()), flush=True)
     try:
@@ -2171,18 +2236,18 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
                     nb = nb.fuse(p.intersect(cq.Solid.makeBox(pb.xlen + 2, pb.ylen + 2, zb - za,
                                                                cq.Vector(pb.xmin - 1, pb.ymin - 1, za))))
                 nb = nb.clean()
-                if nb.Volume() - body.Volume() > p.Volume() * 1.02 + 1e-3:
+                if _vol(nb) - _vol(body) > _vol(p) * 1.02 + 1e-3:
                     raise ValueError("слойное слияние острова добавило лишний объём")
             if not nb.isValid() and os.environ.get("ISLAND_FUSE_FIX", "1") == "1":
                 # ядро иногда отдаёт слитое тело с дефектом рёбер; ShapeFix чинит его без изменения объёма
                 try:
                     fx = nb.fix()
-                    if fx.isValid() and abs(fx.Volume() - nb.Volume()) < 1e-3:
+                    if fx.isValid() and abs(_vol(fx) - _vol(nb)) < 1e-3:
                         nb = fx
                 except Exception:  # noqa: BLE001
                     pass
             # пустое или «похудевшее» тело после слияния острова — отказ ядра, а не результат
-            if nb.isValid() and len(nb.Solids()) <= len(body.Solids()) and nb.Volume() >= 0.99 * body.Volume():
+            if nb.isValid() and len(nb.Solids()) <= len(body.Solids()) and _vol(nb) >= 0.99 * _vol(body):
                 body = nb; added += 1
                 if hasattr(p,"_cylindrical_island"):
                     info.setdefault("cylindrical_islands",[]).append(p._cylindrical_island)
@@ -2198,13 +2263,13 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
         from stl_out import write_stl_checked
         mm = _corr_mesh(body, tf, info)
         nc = 0
-        for v in sorted((correction_prisms(scan, mm) if mm is not None else []), key=lambda c: -c.Volume()):
+        for v in sorted((correction_prisms(scan, mm) if mm is not None else []), key=lambda c: -_vol(c)):
             try:
                 nb = body.cut(v)
                 if len(nb.Faces()) - len(body.Faces()) > int(os.environ.get("CORR_ADD_MAXF", "40")):
                     # поправочный вырез «лесенкой» (сотни мелких граней) — не так строит конструктор
                     info["correction_cuts_stairs_skipped"] = info.get("correction_cuts_stairs_skipped", 0) + 1
-                elif nb.isValid() and nb.Volume() > 0.9 * body.Volume():
+                elif nb.isValid() and _vol(nb) > 0.9 * _vol(body):
                     body = nb; nc += 1
             except Exception:  # noqa: BLE001
                 pass
@@ -2220,7 +2285,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             # наружная стенка в плане: у стопки участков — стенки всех участков (и уступов между ними)
             wall_line = (shapely.union_all([Polygon(r).exterior for s_ in TOPINFO["seg_rings"] for r in s_[2:]])
                          if TOPINFO.get("seg_rings") else outer.exterior if outer is not None else None)
-            for v in sorted((correction_prisms(scan, mm, extra=True) if mm is not None else []), key=lambda c: -c.Volume()):
+            for v in sorted((correction_prisms(scan, mm, extra=True) if mm is not None else []), key=lambda c: -_vol(c)):
                 # прибавка снаружи стенки — ступенчатый нарост из призм по слоям (видно глазом);
                 # наружную стенку правит лофт, поправка только внутри
                 if (outer is not None and os.environ.get("CORR_ADD_OUTER", "0") != "1"
@@ -2238,7 +2303,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
                     many = len(nb.Faces()) - len(body.Faces()) > int(os.environ.get("CORR_ADD_MAXF", "40"))
                     if many:
                         info["correction_adds_stairs_skipped"] = info.get("correction_adds_stairs_skipped", 0) + 1
-                    elif nb.isValid() and len(nb.Solids()) == 1 and nb.Volume() < 1.05 * body.Volume():
+                    elif nb.isValid() and len(nb.Solids()) == 1 and _vol(nb) < 1.05 * _vol(body):
                         body = nb; na += 1
                 except Exception:  # noqa: BLE001
                     pass
@@ -2253,7 +2318,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
                     nb = body.fuse(v)
                     if len(nb.Faces()) - len(body.Faces()) > int(os.environ.get("CORR_ADD_MAXF", "40")):
                         info["thin_ribs_stairs_skipped"] = info.get("thin_ribs_stairs_skipped", 0) + 1
-                    elif nb.isValid() and len(nb.Solids()) == 1 and nb.Volume() < 1.02 * body.Volume():
+                    elif nb.isValid() and len(nb.Solids()) == 1 and _vol(nb) < 1.02 * _vol(body):
                         body = nb; nt += 1
                 except Exception:  # noqa: BLE001
                     pass
@@ -2266,7 +2331,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             for v in (thin_rib_prisms(scan, mm, cut=True) if mm is not None else []):
                 try:
                     nb = body.cut(v)
-                    if nb.isValid() and len(nb.Solids()) == 1 and nb.Volume() > 0.98 * body.Volume():
+                    if nb.isValid() and len(nb.Solids()) == 1 and _vol(nb) > 0.98 * _vol(body):
                         body = nb; nt += 1
                 except Exception:  # noqa: BLE001
                     pass
@@ -2286,10 +2351,10 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
         if len(sols) > 1 and os.environ.get("DROP_CAVITIES", "1") == "1":
             # оболочки внутри наружной — закрытые полости (вырез шумного скана, не вышедший наружу);
             # конструктор полостей внутри сплошного тела не делает — заполняем их
-            big = max(sols, key=lambda x: abs(x.Volume()))
+            big = max(sols, key=lambda x: abs(_vol(x)))
             inner = [x for x in sols if x is not big and big.isInside(x.Center())]
             # только мелкие полости (шум); большие — признак того, что метод не подходит детали
-            if inner and sum(abs(x.Volume()) for x in inner) < 0.02 * abs(big.Volume()):
+            if inner and sum(abs(_vol(x)) for x in inner) < 0.02 * abs(_vol(big)):
                 info["cavities_filled"] = len(inner)
                 rest = [x for x in sols if x is big or not any(x is y for y in inner)]
                 if len(rest) == 1:
@@ -2297,13 +2362,13 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
                 sols = rest
     if len(sols) > 1:
         # мелкие отрезанные обрывки (тонкие перемычки между вырезами) — убираем, если их меньше 1% объёма
-        sols = sorted(sols, key=lambda x: -x.Volume())
-        rest = sum(x.Volume() for x in sols[1:])
+        sols = sorted(sols, key=lambda x: -_vol(x))
+        rest = sum(_vol(x) for x in sols[1:])
         if rest < 0.01 * sols[0].Volume():
             body = sols[0]
             info["fragments_dropped"] = len(sols) - 1
         else:
-            raise RuntimeError(f"сборка распалась на {len(sols)} тела: " + ", ".join(f"{x.Volume():.1f}" for x in sols[:5]))
+            raise RuntimeError(f"сборка распалась на {len(sols)} тела: " + ", ".join(f"{_vol(x):.1f}" for x in sols[:5]))
     info["faces"] = len(body.Faces())
     info["seconds"] = round(time.time() - t, 1)
     log(f"    сборка по сечениям: стенка лофтом, вырезов кармана {len(cut) - skipped}, бобышек {added}, "

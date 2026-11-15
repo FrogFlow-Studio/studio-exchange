@@ -116,6 +116,15 @@ def signed_distance(model: trimesh.Trimesh, pts: np.ndarray, tol: float) -> np.n
     return sign * dist
 
 
+def forward_share(scan, model, tol=.3, n=12000, seed=0, *, prepared=None):
+    """The scan-to-model coverage of compare() without model sampling, reverse distances or clusters."""
+    scan_seed = int(np.random.default_rng(seed).integers(1 << 30))
+    points = (prepared.sample(n, scan_seed) if prepared is not None else
+              trimesh.sample.sample_surface_even(scan, n, seed=scan_seed)[0])
+    distances = signed_distance(model, points, tol)
+    return round(float((np.abs(distances) <= tol).mean()), 4)
+
+
 def compare(scan: trimesh.Trimesh, model: trimesh.Trimesh, tol: float = 0.3, n: int = 12000, seed: int = 0,
             *, prepared=None, timings=None, zones=None) -> dict:
     """zones — места, достроенные по симметрии (шары center, radius): точки скана на изломе там лежат

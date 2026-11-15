@@ -35,11 +35,9 @@ def _vol(shape):
 
 
 def _sec_one(mesh, z):
-    s = mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
-    if s is None:
-        return []
-    P, _ = s.to_2D(to_2D=np.eye(4))
-    return list(P.polygons_full)
+    from section_contours import section_polygons
+
+    return section_polygons(mesh, z)
 
 
 _SEC_POOL_MESH = [None]

@@ -28,7 +28,7 @@ def _holes_at(model: trimesh.Trimesh, z: float) -> list[tuple[np.ndarray, float]
 
 
 def check(run: dict, model: trimesh.Trimesh | None, sheet: dict, scan: trimesh.Trimesh,
-          restored_extent: float = 0.0) -> list[str]:
+          restored_extent: float = 0.0, *, scan_holes=None) -> list[str]:
     """Список нарушений (пустой — всё в порядке)."""
     bad = []
     if not run.get("ok"):
@@ -41,6 +41,13 @@ def check(run: dict, model: trimesh.Trimesh | None, sheet: dict, scan: trimesh.T
         return bad
     # 1) каждое круглое отверстие, найденное в скане, есть в модели (центр ±0.5, Ø ±0.4)
     # отверстие мельче трёх шумов скана может оказаться просто шумом: его не требуем
+    cache = {} if scan_holes is None else scan_holes
+
+    def observed(z):
+        if z not in cache:
+            cache[z] = _holes_at(scan, z)
+        return cache[z]
+
     min_d = 3 * float(sheet.get("diagnostics", {}).get("noise_mm") or 0)
     for sec in sheet.get("sections", []):
         z = sec["z_mm"]
@@ -55,7 +62,7 @@ def check(run: dict, model: trimesh.Trimesh | None, sheet: dict, scan: trimesh.T
                 # настоящее отверстие имеет глубину: оно есть в скане и чуть выше, и чуть ниже;
                 # кольцо только в одном сечении — обрывок контура (линза: «Ø1.07» на Z 14.08)
                 if not all(any(np.linalg.norm(hc - c) < 0.5 and abs(hd - d) < 0.4 + 0.02 * d
-                               for hc, hd in _holes_at(scan, z + dz)) for dz in (-0.25, 0.25)):
+                               for hc, hd in observed(z + dz)) for dz in (-0.25, 0.25)):
                     continue
                 if not any(np.linalg.norm(hc - c) < 0.5 and abs(hd - d) < 0.4 + 0.02 * d for hc, hd in have):
                     bad.append(f"в модели нет отверстия Ø{d} в {list(h['center_xy'])} на высоте {z} (в скане оно есть)")

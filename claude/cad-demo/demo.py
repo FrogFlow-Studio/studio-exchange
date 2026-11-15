@@ -688,15 +688,30 @@ def main() -> None:
 
     prepared_scans = {}
 
-    def compare_models(a_mesh, b_mesh, zones=None):
+    def prepared_scan(a_mesh):
         prepared = None
         if os.environ.get("CAD_COMPARE_CACHE", "1") != "0":
             key = id(a_mesh)
             if key not in prepared_scans:
                 prepared_scans[key] = cmpmod.ScanComparison(a_mesh)
             prepared = prepared_scans[key]
+        return prepared
+
+    def compare_models(a_mesh, b_mesh, zones=None):
+        prepared = prepared_scan(a_mesh)
         with measured(stages, "сравнение"):
             return cmpmod.compare(a_mesh, b_mesh, tol=a.tol, prepared=prepared, timings=stages, zones=zones)
+
+    strict_scores = {}
+    scan_holes = {}
+
+    def strict(it):
+        path = it["dir"] / "model.stl"
+        if path not in strict_scores:
+            model = load_stl(path)
+            with measured(stages, "strict_compare"):
+                strict_scores[path] = cmpmod.forward_share(scan, model, prepared=prepared_scan(scan))
+        return strict_scores[path]
 
     def load_stl(path):
         with measured(stages, "stl_load"):
@@ -732,7 +747,8 @@ def main() -> None:
                 render(cmp, it_dir / "deviation.png", f"Попытка {n} ({by})")
         else:
             log(f"    ошибка: {run.get('error', '')[:200]}")
-        gate_fail = gates.check(run, model, sheet, scan)
+        with measured(stages, "geometry_gates"):
+            gate_fail = gates.check(run, model, sheet, scan, scan_holes=scan_holes)
         for g in gate_fail:
             log("    обязательная проверка не пройдена: " + g)
         fb = llm.feedback_prompt(run, cmp, a.target)
@@ -941,10 +957,6 @@ def main() -> None:
                 if ok and best is not None and best["cmp"] is not None and a.tol > 0.3:
                     # Допуск поднят по шуму: при нём срезанные посадкой детали не видны. Прямое тело
                     # должно не уступать и при 0,3 мм (на сглаженных сканах студии шум завышен).
-                    def strict(it):
-                        m = load_stl(it["dir"] / "model.stl")
-                        return cmpmod.compare(scan, m, tol=0.3)["within_tol_share"]
-
                     sp, sb = strict(itp), strict(best)
                     log(f"    при 0,3 мм: прямое тело {sp * 100:.1f}%, {best['n']} {sb * 100:.1f}%")
                     ok = sp >= sb - 0.015
@@ -977,10 +989,6 @@ def main() -> None:
                 iterations.append(its)
                 ok = bool(its["run"].get("ok") and its["run"].get("valid") and not its["gates"] and its["cmp"])
                 if ok and best is not None and best["cmp"] is not None:
-                    def strict(it):
-                        m = load_stl(it["dir"] / "model.stl")
-                        return cmpmod.compare(scan, m, tol=0.3)["within_tol_share"]
-
                     ss, sb = strict(its), strict(best)
                     log(f"    при 0,3 мм: сборка как в Компасе {ss * 100:.1f}%, {best['n']} {sb * 100:.1f}%")
                     ok = ss >= sb - 0.015
@@ -1113,7 +1121,8 @@ def main() -> None:
         (out / "model_sw.bas").unlink(missing_ok=True)
         import sw_macro
 
-        sw = sw_macro.export(out / "model.py", out / "model.step", out / "model_sw.bas")
+        with measured(stages, "sw_macro"):
+            sw = sw_macro.export(out / "model.py", out / "model.step", out / "model_sw.bas")
         if sw:
             log(f"макрос SolidWorks с деревом построения: {sw} → model_sw.bas")
         if a.truth:
@@ -1147,7 +1156,12 @@ def main() -> None:
                         miss += 1
                     else:
                         errs.append(abs(r["d"] - m["d"]))
-                row = {"n": it["n"], "by": it["by"], "fit": compare_models(tm, mm)["within_tol_share"],
+                if it is best:
+                    fit = truth["within_tol_share"]
+                else:
+                    with measured(stages, "сравнение"):
+                        fit = cmpmod.forward_share(tm, mm, tol=a.tol, prepared=prepared_scan(tm))
+                row = {"n": it["n"], "by": it["by"], "fit": fit,
                        "holes": len(th), "missing": miss,
                        "d_err": round(float(np.mean(errs)), 3) if errs else None,
                        "d_max": round(float(np.max(errs)), 3) if errs else None, "best": it is best}
@@ -1158,7 +1172,8 @@ def main() -> None:
     if best and (out / "model.stl").exists():
         log("4/4 ищу отверстия скана и сверяю их с моделью…", 600)
         try:  # отверстия скана: на месте ли они в модели и того же ли размера
-            holes_rows = holesmod.check(scan, load_stl(out / "model.stl"), tol=max(0.2, a.tol / 2))
+            with measured(stages, "holes_check"):
+                holes_rows = holesmod.check(scan, load_stl(out / "model.stl"), tol=max(0.2, a.tol / 2))
             # излом достроенного скола бывает похож на стенку отверстия: в модели там целый материал
             zs = (best.get("meta") or {}).get("restored_zones") or []
             on_chip = [r for r in holes_rows if r["d_model"] is None and any(
@@ -1182,7 +1197,7 @@ def main() -> None:
         return f"{value:.1f} с" if value is not None else "нет замера"
 
     parts = [f"загрузка и замеры {duration(stages['загрузка и замеры'])}"]
-    for stage in ("0", "0в", "0к"):
+    for stage in ("0", "0в", "0к", "0п", "0с"):
         worker = worker_times.get(stage, {})
         elapsed = worker.get("total")
         if elapsed is not None:
@@ -1235,12 +1250,16 @@ def main() -> None:
     timing_text = "время по этапам: " + ", ".join(parts) + " (фоновые этапы перекрываются)"
     log(timing_text)
     log(route_text(iterations, best))
+    report_started = time.perf_counter()
     rep = write_report(out, {
         "iterations": iterations, "best": best, "sheet": sheet, "mode": mode, "mode_label": mode_label,
         "started": started.strftime("%d.%m.%Y %H:%M"), "scan_name": Path(a.scan).name, "tol": a.tol,
         "target": a.target, "converged": converged, "total_s": (dt.datetime.now() - started).total_seconds(),  # весь запуск, с замерами
         "truth": truth, "holes": holes_rows, "step_check": step_check, "timing_text": timing_text,
         "test_label": test_label, "scan_mesh": scan})
+    stages["report"] = time.perf_counter() - report_started
+    (out / "timings.json").write_text(json.dumps({"stages": stages, "workers": worker_times,
+        "total_s": (dt.datetime.now() - started).total_seconds()}, ensure_ascii=False, indent=2), encoding="utf-8")
     log(f"готово: {rep}")
     if not a.no_open:
         import webbrowser

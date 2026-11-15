@@ -267,6 +267,47 @@ def _corr_mesh(body, tf, info):
     return trimesh.load(tf, force="mesh") if ok else None
 
 
+def _trim_end_levels(levels, f=float(os.environ.get("WALL_END_AREA", "0.5")), m=3):
+    """у края участка (до m колец) контур скачком другой: крошка у касания дна, или выемка, которая
+    начинается чуть ниже границы участка. Кольца за скачком заменяем последним «нормальным» на той же
+    высоте — лофт между непохожими кольцами перекручивается"""
+    try:
+        A = [Polygon(r).area for r, _ in levels]
+        L = [Polygon(r).length for r, _ in levels]
+    except Exception:  # noqa: BLE001
+        return None
+    k = SEG_PERIM_K
+    def jump(a, b):
+        return min(A[a], A[b]) < f * max(A[a], A[b]) or max(L[a], L[b]) > k * min(L[a], L[b])
+    n = len(levels)
+    lead = max([i for i in range(1, min(m, n - 2) + 1) if jump(i - 1, i)], default=0)  # кольца < lead — за скачком
+    tail = min([t for t in range(max(n - m, lead + 1), n) if jump(t - 1, t)], default=n)  # кольца >= tail — за скачком
+    if lead == 0 and tail == n:
+        return None
+    body = list(levels[lead:tail])
+    if len(body) < 1:
+        return None
+    lv = [(body[0][0], levels[0][1])] + body[1:] if lead else body
+    if tail < n:
+        lv = lv + [(lv[-1][0], levels[-1][1])] if lv[-1][1] < levels[-1][1] - 1e-9 else lv
+    return lv if len(lv) >= 2 else None
+
+
+def _twisted(wall, levels, k=float(os.environ.get("WALL_TWIST_K", "1.5"))):
+    """лофт стенки перекручен (кольца не совпали по точкам): боковая площадь намного больше, чем
+    периметр × высота. Такую грань ядро не может даже разбить на сетку (lens: 13 419 мм² вместо ~1 200)"""
+    if os.environ.get("WALL_TWIST_CHECK", "1") != "1" or len(levels) < 2:
+        return False
+    try:
+        side = 0.0
+        for (r0, z0), (r1, z1) in zip(levels[:-1], levels[1:]):
+            side += 0.5 * (Polygon(r0).length + Polygon(r1).length) * abs(z1 - z0)
+        caps = Polygon(levels[0][0]).area + Polygon(levels[-1][0]).area
+        return wall.Area() > k * side + caps + 1.0
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _fillet_sane(nb, body):
     """скругление не должно ломать тело: объём почти тот же, тел столько же, граней не меньше половины
     (на шумной крышке ядро отдало «скруглённое» тело из 39 граней вместо 848)"""
@@ -393,6 +434,7 @@ def build(mesh, dz=0.2, tol=0.3, n=96, smooth=0.05, step=1.0, secs=None, fuse=Tr
 
 
 HD_SIMP = float(os.environ.get("HD_SIMP", "0.02"))
+SEG_PERIM_K = float(os.environ.get("SEG_PERIM_K", "1.25"))
 
 
 def _hd(a, b):
@@ -449,11 +491,17 @@ def _outer_segments(allb, i0, i1, dz, jump=float(os.environ.get("SEG_JUMP", "1.0
     касание дна и кромки верха остаются как были. Возвращает список диапазонов [(a, b)]."""
     m = max(2, int(round(min_h / dz)))
     P = [Polygon(b[1].exterior) for b in allb]
-    Ps = [q.simplify(HD_SIMP) for q in P]  # точный Хаусдорф по ~200 точкам на сотнях уровней — минуты
+    Ps = [q.simplify(HD_SIMP) for q in P]
+    PL = [q.simplify(0.3).length for q in P]  # точный Хаусдорф по ~200 точкам на сотнях уровней — минуты
     def step(i):
         a0, a1 = allb[i - 1][2], allb[i][2]
         if allb[i][0] - allb[i - 1][0] > 1.5 * dz or a1 < 0.7 * a0 or a1 > a0 / 0.7:
             return True
+        if os.environ.get("SEG_PERIM", "1") == "1":
+            # вырез в стенке (паз, выемка) почти не меняет площадь, но резко удлиняет контур
+            l0, l1 = PL[i - 1], PL[i]
+            if l1 > SEG_PERIM_K * l0 or l0 > SEG_PERIM_K * l1:
+                return True
         return Ps[i - 1].hausdorff_distance(Ps[i]) > jump
     st = [True] + [step(i) for i in range(1, len(allb))]
     def run(i):  # ровный участок от уровня i не короче m уровней
@@ -698,16 +746,36 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
                         wall = wall if isinstance(wall, cq.Shape) else cq.Workplane().add(wall).val()
                     elif levels is not None:
                         wall = loft(levels, deg=degree, par=wpar)
+                        if _twisted(wall, levels):
+                            raise RuntimeError("loft twisted")
                 except RuntimeError:
-                    if (os.environ.get("CAD_KOMPAS_END_RECOVERY", "0") != "1"
+                    wall = None
+                    if multi and levels is not None and os.environ.get("WALL_SEG_RETRY", "1") == "1":
+                        # участок стопки: гладкий лофт с общей параметризацией сломался (петля кольца на
+                        # остром углу) — проще: без общей параметризации, потом линейчатый
+                        trimmed = _trim_end_levels(levels)
+                        tries_ = [(levels, dict(deg=degree, par=False)), (levels, dict(ruled=True))]
+                        if trimmed is not None:
+                            # крайнее сечение — крошка у касания дна или верха (скругление, наплыв), а не стенка:
+                            # кольца от крошки к полному контуру перекручивают лофт. Стенку тянем полным контуром
+                            tries_ = [(trimmed, dict(deg=degree, par=wpar)), (trimmed, dict(deg=degree, par=False))] + tries_
+                        for lv_, kw in tries_:
+                            try:
+                                w_ = loft(lv_, **kw)
+                                if not _twisted(w_, lv_):
+                                    wall = w_; TOPINFO.setdefault("wall_seg_retry", []).append(si); break
+                            except RuntimeError:
+                                pass
+                    if wall is not None:
+                        pass
+                    elif (os.environ.get("CAD_KOMPAS_END_RECOVERY", "0") != "1"
                             or len(levels)<4 or TOPINFO.get("bottom_round")):
                         raise
-                    # End sections may cut the curved bottom or the rising rim instead
-                    # of the wall. Extend the neighboring full profiles to the trim tools.
-                    recovery = [(levels[1][0],levels[0][1]),*levels[1:-1],
-                                (levels[-2][0],levels[-1][1])]
-                    wall = loft(recovery, deg=degree, par=wpar)
-                    TOPINFO["wall_end_recovery"] = True
+                    else:
+                        recovery = [(levels[1][0],levels[0][1]),*levels[1:-1],
+                                    (levels[-2][0],levels[-1][1])]
+                        wall = loft(recovery, deg=degree, par=wpar)
+                        TOPINFO["wall_end_recovery"] = True
                 if multi:
                     # меняющийся участок — свой лофт; соседние участки стыкуются по плоскости уступа
                     kind = "ext" if const is not None else "loft"
@@ -726,7 +794,7 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
                 raise
             # стопка не построилась — как раньше, одна стенка до первого скачка
             print("wall segments fail", str(e)[:60], flush=True)
-            for key in ("wall_segments", "seg_rings", "bottom_round", "periodic_wall", "upper_wall_fit", "wall_end_recovery"):
+            for key in ("wall_seg_retry", "wall_segments", "seg_rings", "bottom_round", "periodic_wall", "upper_wall_fit", "wall_end_recovery"):
                 TOPINFO.pop(key, None)
             segr = [(i0, i1)]
     body = cq.Workplane().add(wall)

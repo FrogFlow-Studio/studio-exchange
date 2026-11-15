@@ -552,6 +552,62 @@ def _top_open_levels(top_v, min_area=20.0):
     return lev
 
 
+def _junction_ring(r_up, r_lo, n, tol=float(os.environ.get("JUNC_TOL", "0.3")),
+                   d=float(os.environ.get("JUNC_INSET", "0.1")), amin=float(os.environ.get("JUNC_AREA", "5.0")),
+                   move=float(os.environ.get("JUNC_MOVE", "2.0"))):
+    """нижнее кольцо верхнего участка у уступа, согласованное с верхним кольцом нижнего: где контуры
+    участков почти совпадают (расходятся меньше tol), они пересекаются туда-сюда, и плоскость уступа
+    дробится на сотни крошечных граней. Там верхнее кольцо уводим внутрь нижнего на d — полка уступа
+    становится одной связной гранью. Настоящие выступы (шире tol) остаются как были. None — не вышло"""
+    try:
+        U = Polygon(r_up).buffer(0); L = Polygon(r_lo).buffer(0)
+        if U.is_empty or L.is_empty:
+            return None
+        def parts(g):
+            return [] if g.is_empty else list(getattr(g, "geoms", [g]))
+        big_out = [g for g in parts(U.difference(L)) if g.area >= amin and not g.buffer(-tol / 2).is_empty]
+        # точки кольца сдвигаем по одной (порядок и густота точек прежние — лофт не перекручивается):
+        # точку у края нижнего контура — на контур, сжатый на d; точки настоящих выступов не трогаем
+        r = np.asarray(r_up, float).copy()
+        Li = L.buffer(-d)
+        if Li.is_empty:
+            return None
+        Li = max(parts(Li), key=lambda g: g.area)
+        keep = shapely.contains_xy(Li, r[:, 0], r[:, 1])
+        if big_out:
+            keep |= shapely.contains_xy(shapely.union_all([g.buffer(1.5 * d) for g in big_out]), r[:, 0], r[:, 1])
+        if keep.all():
+            return None
+        line = Li.exterior
+        pts = shapely.points(r[~keep, 0], r[~keep, 1])
+        q = shapely.line_interpolate_point(line, shapely.line_locate_point(line, pts))
+        r[~keep] = shapely.get_coordinates(q)
+        for it_ in range(2, 5):
+            # хорда между точками срезает вогнутый угол нижнего контура и снова выходит наружу крошкой —
+            # точки у таких крошек уводим глубже
+            thin = [g for g in parts(Polygon(r).buffer(0).difference(L)) if g.buffer(-tol / 2).is_empty or g.area < amin]
+            if not thin:
+                break
+            Lk = L.buffer(-it_ * d)
+            if Lk.is_empty:
+                break
+            Lk = max(parts(Lk), key=lambda g: g.area)
+            near = shapely.distance(shapely.union_all(thin), shapely.points(r[:, 0], r[:, 1])) < 1.0
+            near &= ~shapely.contains_xy(Lk, r[:, 0], r[:, 1])
+            if not near.any():
+                break
+            pts = shapely.points(r[near, 0], r[near, 1])
+            r[near] = shapely.get_coordinates(shapely.line_interpolate_point(Lk.exterior, shapely.line_locate_point(Lk.exterior, pts)))
+        if np.linalg.norm(r - np.asarray(r_up), axis=1).max() > move or not Polygon(r).is_valid:
+            return None
+        bad = [g for g in parts(Polygon(r).difference(L)) if g.buffer(-tol / 2).is_empty]
+        if sum(g.area for g in bad) > 0.5:
+            return None
+        return r
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _outer_segments(allb, i0, i1, dz, jump=float(os.environ.get("SEG_JUMP", "1.0")),
                     min_h=float(os.environ.get("SEG_MIN_H", "1.0"))):
     """наружный контур по всей высоте — стопка участков. allb: [(z, big, area)] всех уровней;
@@ -584,6 +640,28 @@ def _outer_segments(allb, i0, i1, dz, jump=float(os.environ.get("SEG_JUMP", "1.0
     cuts = [j for j in range(i0 + m, i1 - m + 1) if st[j] and run(j) and not any(st[j - m + 1:j]) and on(j)]
     bounds = [i0] + cuts + [i1]
     segs = [(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
+    if os.environ.get("SEG_GAP_CUT", "1") == "1":
+        # скачок формы растянут на несколько уровней подряд (выемка открывается за 2–3 среза): по одному
+        # уровню его не делим, и участок тянет лофт через оба контура — верх участка заменяет полный контур,
+        # выемки стенки и карманы под ней пропадают. Короткий (до SEG_GAP_MAX мм) переход вырезаем целиком,
+        # как в _twist_cut: нижний участок кончается до него, верхний начинается после, уступ ставит _split_z
+        g = max(1, int(round(float(os.environ.get("SEG_GAP_MAX", "1.0")) / dz)))
+        def on2(a, b):
+            x = P[a].intersection(P[b]).area
+            return x > 0.3 * min(P[a].area, P[b].area)
+        pairs = []; start = i0; j = i0 + m
+        while j <= i1 - m:
+            if st[j] and not any(st[j - m + 1:j]) and j - start >= m:
+                k = j
+                while k + 1 < len(st) and st[k + 1] and k + 1 - j < g:
+                    k += 1
+                if k > j and k <= i1 - m and run(k) and on2(j - 1, k):
+                    pairs.append((start, j)); start = k; j = k + m; continue
+                if k == j and run(j) and on(j):
+                    pairs.append((start, j)); start = j; j += m; continue
+            j += 1
+        pairs.append((start, i1))
+        segs = pairs
     j = i1
     while j < len(allb) and j > 0 and run(j) and on(j):
         k = j + 1
@@ -629,6 +707,80 @@ def _const_ring(rings, polys, tol=float(os.environ.get("SEG_CONST", "0.15"))):
         return None
     dev = max(float(np.percentile(np.abs(sd(avg, P)), 90)) for P in polys)
     return avg if dev < tol else None
+
+
+class _SegResplit(Exception):
+    """участок стопки перекручен — делим его надвое и строим стопку заново"""
+    def __init__(self, si, parts):
+        super().__init__("segment %d resplit" % si); self.si = si; self.parts = parts
+
+
+def _twist_cut(allb, a, b, dz, jump=float(os.environ.get("SEG_JUMP", "1.0")),
+               min_h=float(os.environ.get("SEG_MIN_H", "1.0")), gap=float(os.environ.get("SEG_GAP_MAX", "1.0"))):
+    """где делить перекрученный участок [a, b): на самом сильном скачке формы между соседними уровнями
+    (площадь, длина контура, Хаусдорф — каждое в долях своего порога). Скачок, растянутый на несколько
+    уровней подряд не выше gap мм (выступ кончается скруглением), вырезаем целиком: нижний участок
+    кончается до него, верхний начинается после, уступ ставит _split_z. Участки не короче min_h.
+    Возвращает [(a, c0), (c1, b)] или None"""
+    m = max(2, int(round(min_h / dz)))
+    if b - a < 2 * m + 1:
+        return None
+    P = [Polygon(allb[i][1].exterior) for i in range(a, b)]
+    Ps = [q.simplify(HD_SIMP) for q in P]
+    PL = [q.simplify(0.3).length for q in P]
+    def score(i):  # скачок между уровнями a+i-1 и a+i, 1 — на пороге
+        a0, a1 = allb[a + i - 1][2], allb[a + i][2]
+        sa = abs(np.log(max(a1, 1e-9) / max(a0, 1e-9))) / abs(np.log(0.7))
+        sl = abs(np.log(PL[i] / max(PL[i - 1], 1e-9))) / np.log(SEG_PERIM_K)
+        return max(sa, sl, Ps[i - 1].hausdorff_distance(Ps[i]) / jump)
+    sc = {i: score(i) for i in range(1, b - a)}
+    cand = [i for i in range(m, b - a - m + 1)]
+    if not cand:
+        return None
+    j = max(cand, key=lambda i: sc[i])
+    if sc[j] < 1.0:
+        return None
+    c0 = c1 = j
+    g = max(1, int(round(gap / dz)))
+    while c0 - 1 >= m and sc[c0 - 1] >= 1.0 and c1 - c0 + 1 < g:
+        c0 -= 1
+    while c1 + 1 <= b - a - m and sc[c1 + 1] >= 1.0 and c1 - c0 + 1 < g:
+        c1 += 1
+    if (c0 - 1 >= 1 and sc[c0 - 1] >= 1.0) or (c1 + 1 < b - a and sc[c1 + 1] >= 1.0):
+        c0 = c1 = j  # плавный переход длиннее gap — режем по одному уровню, без выреза
+    return [(a, a + c0), (a + c1, b)]
+
+
+def _mesh_only(shape, q):
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    BRepMesh_IncrementalMesh(shape.wrapped, 0.1, False, 0.5, False)
+    q.put(True)
+
+
+def _meshable(shape, sec):
+    """сетка грани (0,1 мм, как у STL) строится за sec секунд — в отдельном процессе"""
+    if os.name == "nt" or sec <= 0:
+        return True
+    import multiprocessing as mp
+    ctx = mp.get_context("fork"); q = ctx.Queue()
+    p = ctx.Process(target=_mesh_only, args=(shape, q)); p.start(); p.join(sec)
+    if p.is_alive():
+        p.kill(); p.join(); return False
+    return p.exitcode == 0
+
+
+def _ring_slide(rings):
+    """насколько точки соседних колец (после поворота align) сдвигаются вдоль контура: наибольшее по
+    парам уровней превышение сдвига точки над расстоянием Хаусдорфа между контурами, мм"""
+    al = align([(r, 0.0) for r in rings])
+    worst = 0.0
+    for (a, _), (b, _) in zip(al[:-1], al[1:]):
+        try:
+            hd = Polygon(a).hausdorff_distance(Polygon(b))
+        except Exception:  # noqa: BLE001
+            continue
+        worst = max(worst, float(np.linalg.norm(b - a, axis=1).max()) - hd)
+    return worst
 
 
 def _split_z(mesh, lo, up, z_lo, z_hi):
@@ -679,11 +831,14 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
             and os.environ.get("BOTTOM_ROUND", "0") == "0" and os.environ.get("BOTTOM_DOME", "0") != "1"
             and os.environ.get("TOP_RIM", "0") != "1"):
         segr = _outer_segments(allb, i0, i1, dz)
+    resplits = 0
     while True:
         segs = [allb[a:b] for a, b in segr]
         multi = len(segs) > 1
-        splits = [None] + [_split_z(mesh, allb[b - 1][1], allb[b][1], allb[b - 1][0], allb[b][0]) for _, b in segr[:-1]]
-        walls = []; seg_info = []
+        # между участками может быть вырезанный переход (_twist_cut): уступ — по краям соседних участков
+        splits = [None] + [_split_z(mesh, allb[b - 1][1], allb[a2][1], allb[b - 1][0], allb[a2][0])
+                           for (_, b), (a2, _) in zip(segr[:-1], segr[1:])]
+        walls = []; seg_info = []; prev_top = None
         try:
             for si, outer in enumerate(segs):
                 last = si == len(segs) - 1
@@ -704,6 +859,18 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
                     n_s = max(n, int(Polygon(outer[len(outer) // 2][1].exterior).length / float(os.environ.get("SEG_RING_STEP", "1.5"))))
                     adapt = max(adapt, float(os.environ.get("SEG_RING_ADAPT", "1.0")))
                 rings = [ring_pts(o[1].exterior.coords, n_s, smooth, adapt=adapt) for o in outer]
+                if multi and adapt > 0 and os.environ.get("SEG_SLIDE_CHECK", "1") == "1":
+                    # сгущение по кривизне на шумном контуре без явных углов «ездит» по кольцу от уровня к уровню:
+                    # точки соседних колец уже не друг против друга, и лофт перекручивается (lens: точки уходят
+                    # на 50 мм при сдвиге контура 0,2 мм). Тогда кольца участка — равномерно по длине
+                    flat = [ring_pts(o[1].exterior.coords, n_s, smooth) for o in outer]
+                    sa, sf = _ring_slide(rings), _ring_slide(flat)
+                    # сдвиг считаем «ездой» точек, только если он заметен по сравнению с длиной контура
+                    # (SEG_SLIDE_FRAC): на чистом контуре с углами сгущение сдвигается на проценты длины — это не перекрут
+                    if (sa > float(os.environ.get("SEG_SLIDE_K", "2.0")) * sf + float(os.environ.get("SEG_SLIDE_TOL", "1.0"))
+                            and sa > float(os.environ.get("SEG_SLIDE_FRAC", "0.1")) * per):
+                        print("ring slide", round(sa, 1), "->", round(sf, 1), "uniform rings", flush=True)
+                        rings = flat; TOPINFO.setdefault("seg_uniform", []).append(si)
                 if multi:
                     ok_ = [i for i, r in enumerate(rings) if Polygon(r).is_valid]
                     if len(ok_) < 2:
@@ -760,9 +927,21 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
                     if zz.max() + 0.5 > zb + 0.3:
                         ztop = float(zz.max()) + 0.5
                         levels[-1] = (levels[-1][0], ztop)  # верхнее сечение поднимаем, без двойного кольца (иначе лофт раздувает)
-                bcoef = top_surface(mesh, rings[keep[0]], zs[0], down=True) if os.environ.get("BOTTOM_FIT", "1") == "1" and si == 0 else None
+                bring = rings[keep[0]]
+                if os.environ.get("BOTTOM_FIT_FULL", "1") == "1" and si == 0:
+                    # нижнее сечение задело только край дна (дно чуть наклонено или с ободком): по такой крошке
+                    # кубика дна вытянута из пары десятков точек и вне крошки уходит далеко — дно не срезается.
+                    # Точки дна берём внутри первого полного контура у дна
+                    def _ar(r):
+                        r = np.asarray(r); return 0.5 * abs(np.dot(r[:, 0], np.roll(r[:, 1], 1)) - np.dot(r[:, 1], np.roll(r[:, 0], 1)))
+                    near = [i for i, z in enumerate(zs) if z <= zs[0] + 3.0]
+                    amax = max(_ar(rings[i]) for i in near)
+                    if _ar(bring) < 0.5 * amax:
+                        bring = rings[next(i for i in near if _ar(rings[i]) >= 0.8 * amax)]
+                        TOPINFO["bottom_fit_full"] = True
+                bcoef = top_surface(mesh, bring, zs[0], down=True) if os.environ.get("BOTTOM_FIT", "1") == "1" and si == 0 else None
                 if bcoef is not None:
-                    xs, ys = rings[keep[0]][:, 0], rings[keep[0]][:, 1]
+                    xs, ys = bring[:, 0], bring[:, 1]
                     zz = surf_eval(bcoef, xs, ys)
                     print("bottom z", round(float(zz.min()), 2), round(float(zz.max()), 2), flush=True)
                     levels[0] = (levels[0][0], min(levels[0][1], float(zz.min()) - 0.3))
@@ -794,6 +973,12 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
                     # и плоскостью дна не режем — иначе на дне остаётся уступ по контуру купола
                     TOPINFO["bcoef"] = None; TOPINFO["dome"] = True
                     levels[0] = (levels[0][0], zs[keep[0]] - dz / 2)
+                snap0 = None
+                if (multi and si and prev_top is not None and levels is not None
+                        and os.environ.get("JUNC_SNAP", "1") == "1"):
+                    jr = _junction_ring(levels[0][0], prev_top, len(levels[0][0]))
+                    if jr is not None:
+                        snap0 = levels[0]; levels[0] = (jr, levels[0][1])
                 degree = int(os.environ.get("WALL_DEG", "2")) or None
                 wpar = os.environ.get("WALL_PAR", "1") == "1"  # общая параметризация колец стенки: меньше полюсов, ровнее грань
                 if fit_upper_wall and coef is not None and last:
@@ -807,6 +992,14 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
                             TOPINFO["upper_wall_fit"] = True
                         except RuntimeError:
                             pass
+                sl = 0.0
+                if (multi and levels is not None and os.environ.get("SEG_TWIST_SPLIT", "1") == "1"
+                        and resplits < int(os.environ.get("SEG_TWIST_SPLITS", "12"))):
+                    # точки соседних колец лофта разъезжаются вдоль контура (выступ кончается за пару срезов):
+                    # лофт через такой скачок местами перекручен, даже если площадь грани в целом в норме, — сетку
+                    # на нём ядро строит минутами. Такой лофт ниже проверяем сеткой. Крошки на краях снимает _trim_end_levels
+                    lv_ = _trim_end_levels(levels) or levels
+                    sl = _ring_slide([r for r, _ in lv_])
                 const = None
                 if multi:
                     # участок, у которого контур по высоте не меняется, — прямое выдавливание (как в CAD)
@@ -822,7 +1015,16 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
                             raise RuntimeError("loft twisted")
                 except RuntimeError:
                     wall = None
-                    if multi and levels is not None and os.environ.get("WALL_SEG_RETRY", "1") == "1":
+                    if snap0 is not None:
+                        # с согласованным кольцом у уступа лофт не вышел — как раньше, с исходным кольцом
+                        levels[0] = snap0; snap0 = None
+                        try:
+                            w_ = loft(levels, deg=degree, par=wpar)
+                            if not _twisted(w_, levels):
+                                wall = w_
+                        except RuntimeError:
+                            pass
+                    if wall is None and multi and levels is not None and os.environ.get("WALL_SEG_RETRY", "1") == "1":
                         # участок стопки: гладкий лофт с общей параметризацией сломался (петля кольца на
                         # остром углу) — проще: без общей параметризации, потом линейчатый
                         trimmed = _trim_end_levels(levels)
@@ -838,6 +1040,12 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
                                     wall = w_; TOPINFO.setdefault("wall_seg_retry", []).append(si); break
                             except RuntimeError:
                                 pass
+                    if (wall is None and multi and os.environ.get("SEG_TWIST_SPLIT", "1") == "1"
+                            and resplits < int(os.environ.get("SEG_TWIST_SPLITS", "12"))):
+                        # ни один лофт участка не годен — делим участок на скачке формы и строим стопку заново
+                        parts = _twist_cut(allb, segr[si][0], segr[si][1], dz)
+                        if parts:
+                            raise _SegResplit(si, parts)
                     if wall is not None:
                         pass
                     elif (os.environ.get("CAD_KOMPAS_END_RECOVERY", "0") != "1"
@@ -848,11 +1056,20 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
                                     (levels[-2][0],levels[-1][1])]
                         wall = loft(recovery, deg=degree, par=wpar)
                         TOPINFO["wall_end_recovery"] = True
+                if (wall is not None and const is None and sl > float(os.environ.get("SEG_SLIDE_SPLIT", "5.0"))
+                        and not _meshable(wall, float(os.environ.get("SEG_MESH_SEC", "30")))):
+                    parts = _twist_cut(allb, segr[si][0], segr[si][1], dz)
+                    if parts:
+                        print("ring slide", round(sl, 1), "slow mesh, split", flush=True)
+                        raise _SegResplit(si, parts)
+                if snap0 is not None and const is None:
+                    TOPINFO["junction_snap"] = TOPINFO.get("junction_snap", 0) + 1
                 if multi:
                     # меняющийся участок — свой лофт; соседние участки стыкуются по плоскости уступа
                     kind = "ext" if const is not None else "loft"
                     print("wall segment", si, kind, round(za, 2), round(zb, 2), "ring", n_s, flush=True)
                     seg_info.append((za, zb, rings[-1], rings[0], kind))
+                    prev_top = const if const is not None else (levels[-1][0] if levels is not None else None)
                 walls.append(wall)
             if multi:
                 wall = walls[0].fuse(*walls[1:], glue=True).clean()
@@ -860,13 +1077,21 @@ def build2(mesh, dz=0.2, n=int(os.environ.get('RING_N', '32')), smooth=float(os.
                     raise RuntimeError("стопка участков стенки не срослась")
                 TOPINFO["wall_segments"] = [(round(a, 2), round(b, 2), k) for a, b, _, _, k in seg_info]
                 TOPINFO["seg_rings"] = [(a, b, r1, r0) for a, b, r1, r0, _ in seg_info]
+                TOPINFO["seg_joints"] = [a for a, _, _, _, _ in seg_info[1:]]
             break
+        except _SegResplit as e:
+            resplits += 1
+            print("wall segment resplit", e.si, [(round(allb[a][0], 2), round(allb[b - 1][0], 2)) for a, b in e.parts], flush=True)
+            for key in ("wall_seg_retry", "seg_uniform", "junction_snap"):
+                TOPINFO.pop(key, None)
+            segr = segr[:e.si] + e.parts + segr[e.si + 1:]
+            continue
         except Exception as e:  # noqa: BLE001
             if not multi:
                 raise
             # стопка не построилась — как раньше, одна стенка до первого скачка
             print("wall segments fail", str(e)[:60], flush=True)
-            for key in ("wall_seg_retry", "wall_segments", "seg_rings", "bottom_round", "periodic_wall", "upper_wall_fit", "wall_end_recovery"):
+            for key in ("wall_seg_retry", "seg_uniform", "wall_segments", "seg_rings", "bottom_round", "periodic_wall", "upper_wall_fit", "wall_end_recovery", "bottom_fit_full", "junction_snap", "seg_joints"):
                 TOPINFO.pop(key, None)
             segr = [(i0, i1)]
     body = cq.Workplane().add(wall)
@@ -1326,6 +1551,12 @@ def void_chains(voids, dz, n, zb, jump=0.5):
             continue
         z0 = it[0][0] - dz / 2
         if z1 >= zb - 1e-6: z1 = TOPINFO['ztop'] + 0.5
+        if os.environ.get("VOID_JUNC_SNAP", "1") == "1":
+            # верх выреза в паре сотых от плоскости уступа между участками стенки: вырез надрезает
+            # нижнюю грань верхнего участка, и у уступа остаются крошечные грани. Верх ставим на уступ
+            for jz in TOPINFO.get("seg_joints") or []:
+                if 0 < abs(z1 + 0.02 - jz) < float(os.environ.get("VOID_JUNC_TOL", "0.3")):
+                    z1 = jz - 0.02; break
         # попытки: стык с уступами по контуру соседа; стык с равномерно суженным низом (кольца точка
         # в точку, лофт не перекручивается); без стыка, как раньше
         tries = [(pred, succ, 0)] + ([(pred, succ, 1)] if pred else []) + ([(False, False, 0)] if (pred or succ) else [])
@@ -2235,9 +2466,11 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
                              fit_upper_wall=fit_upper_wall,exact_islands=exact_islands)
     if void_n is not None:
         info["void_n"] = void_n
-    for key in ("periodic_wall", "wall_end_recovery", "upper_wall_fit"):
+    for key in ("periodic_wall", "wall_end_recovery", "upper_wall_fit", "bottom_fit_full"):
         if TOPINFO.get(key):
             info[key] = True
+    if TOPINFO.get("junction_snap"):
+        info["junction_snap"] = TOPINFO["junction_snap"]
     body = pieces[0]
     if not body.isValid() or _vol(body) <= 0:
         raise RuntimeError("наружная стенка не построена")

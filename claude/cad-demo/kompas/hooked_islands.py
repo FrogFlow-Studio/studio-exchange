@@ -448,9 +448,11 @@ def _union_spline(track,bounds):
     from kompas_build import prism, ring_pts
 
     union = shapely.union_all([poly for _,poly in track]).buffer(.01).buffer(-.01)
+    if union.is_empty:
+        return None,"empty_profile"
     if union.geom_type!="Polygon":
-        parts = sorted(union.geoms,key=lambda q:-q.area)
-        if parts[0].area<.97*union.area:
+        parts = sorted(_polygons(union),key=lambda q:-q.area)
+        if not parts or parts[0].area<.97*union.area:
             return None,"disconnected"
         union = parts[0]
     if union.interiors:

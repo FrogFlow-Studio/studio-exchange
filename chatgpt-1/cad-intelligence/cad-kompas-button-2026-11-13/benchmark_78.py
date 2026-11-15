@@ -13,11 +13,17 @@ from benchmark_71_72 import noise
 from benchmark_cleanliness import round_trip
 from candidate_guard import compare_candidate
 from cad_cleanliness import cad_cleanliness
-from hooked_islands import _add_features, _radial_loft, _track_tools, _valid_addition
+from cylindrical_islands import guarded_exact_islands
+from hooked_islands import _add_features, _radial_loft, _track_tools, _union_spline, _valid_addition
 from pocket_steps import _rebuild
 
 
 def tapered_additions():
+    with patch.dict("os.environ", {"HOOKED_UNION_SPLINE":"0"}):
+        return _tapered_additions()
+
+
+def _tapered_additions():
     theta = np.arange(48)*2*np.pi/48
     tracks = [[(i,Polygon(np.column_stack((sign*(2.28+.21*np.cos(theta)-depth*(1-np.cos(theta))/2),
                                           .37*np.sin(theta)))))
@@ -54,7 +60,23 @@ def tapered_additions():
           patch("hooked_islands._union_prism",return_value=None)):
         _,fallback = _add_features(sleeve,tracks,[],bounds)
     assert fallback["addition_methods"]=={"stacked_prisms":2},fallback
+    with patch.dict("os.environ", {"HOOKED_UNION_SPLINE":"1"}):
+        spline,union_audit = _add_features(sleeve,tracks,[],bounds)
+    assert union_audit["addition_methods"]=={"union_spline":2},union_audit
+    spline = round_trip(spline)
+    union_accepted,union_coverage = compare_candidate(step_scan,straight,spline,allowance=0.)
+    assert not union_accepted and union_coverage["reason"]=="coverage_regression",union_coverage
+    with patch.dict("os.environ", {"CAD_KOMPAS_ISLANDS_ALLOWANCE":"0.0003"}):
+        kept,guard = guarded_exact_islands(step_scan,straight,{},lambda _:None,
+            lambda *args,**kwargs: (spline,{"cylindrical_islands":[union_audit]}),mode="hooked")
+    assert kept is straight and not guard["exact_islands_guard"]["accepted"],guard
+    union_faces = cad_cleanliness(spline)
+    assert union_faces["faces"] < before["faces"],union_faces
+    assert union_faces["narrow_faces"] <= before["narrow_faces"],union_faces
+    assert _union_spline([(0,Polygon()),(1,Polygon())],bounds)==(None,"empty_profile")
     return dict(faces=[before["faces"],after["faces"]],
+                union_spline=dict(faces=union_faces["faces"],narrow_faces=union_faces["narrow_faces"],
+                                  coverage=union_coverage,methods=union_audit["addition_methods"]),
                 narrow_faces=[before["narrow_faces"],after["narrow_faces"]],
                 coverage=coverage,methods=audit["addition_methods"],ruled_fallback=method,
                 compact_fallback=compact,

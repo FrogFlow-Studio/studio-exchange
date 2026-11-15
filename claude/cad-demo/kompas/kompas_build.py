@@ -3,6 +3,7 @@ import os
 Сечения скана каждые dz; слой = промежуток, где набор контуров не меняется; каждый контур слоя —
 гладкий сплайн; тело слоя — лофт через несколько сечений; дыры контура вычитаются тем же способом."""
 import sys, time, numpy as np, trimesh, shapely
+from functools import lru_cache
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # stl_out.py рядом с demo.py
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
@@ -10,6 +11,7 @@ from scipy.interpolate import splprep, splev
 import cadquery as cq
 from OCP.BRepOffsetAPI import BRepOffsetAPI_ThruSections
 from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire
+from OCP.BRepAdaptor import BRepAdaptor_Curve
 from OCP.GeomAPI import GeomAPI_PointsToBSpline
 from OCP.TColgp import TColgp_Array1OfPnt
 from OCP.gp import gp_Pnt
@@ -134,8 +136,9 @@ def _adapt_u(tck, n, adapt, m=2048, win=0.5):
     return np.interp(np.arange(n) / n, cum, np.r_[uu, 1.0])
 
 
-def ring_pts(coords, n, smooth, ref_angle_pt=None, adapt=0.0):
-    p = np.asarray(coords)[:-1]
+@lru_cache(maxsize=512)
+def _ring_spline(raw, dtype, columns, smooth):
+    p = np.frombuffer(raw, dtype=dtype).reshape(-1, columns)[:-1]
     # ориентация против часовой
     if np.sum((p[:, 0] - np.roll(p[:, 0], 1)) * (p[:, 1] + np.roll(p[:, 1], 1))) > 0:
         p = p[::-1]
@@ -146,6 +149,13 @@ def ring_pts(coords, n, smooth, ref_angle_pt=None, adapt=0.0):
     seg = np.linalg.norm(np.diff(p, axis=0), axis=1); keep = np.r_[True, seg > 1e-6]
     p = p[keep]
     tck, _ = splprep(p.T, s=len(p) * smooth ** 2, per=1)
+    return tck
+
+
+def ring_pts(coords, n, smooth, ref_angle_pt=None, adapt=0.0):
+    p = np.asarray(coords)
+    # Reuse the fitted spline for different sample counts and curvature weights.
+    tck = _ring_spline(p.tobytes(), p.dtype, p.shape[1], smooth)
     u = np.linspace(0, 1, n, endpoint=False)
     if adapt > 0:
         u = _adapt_u(tck, n, adapt)
@@ -1102,12 +1112,30 @@ def _const_void(polys, jump, tol=float(os.environ.get("VOID_CONST", "0.06"))):
     Опорный контур — уровень, ближе всех к остальным (медоида по выборке уровней); постоянный, если у 90 %
     уровней средний зазор до него (площадь симметричной разности / периметр) меньше tol и ни один не
     дальше jump по Хаусдорфу. Такой вырез — прямое выдавливание, а не лофт по шумным кольцам"""
-    P = [Polygon(g.exterior) for g in polys]
-    S = P[::max(1, len(P) // 25)]
-    ref = min(S, key=lambda c: float(np.median([c.symmetric_difference(q).area / c.length for q in S])))
-    w = [ref.symmetric_difference(q).area / ref.length for q in P]
+    return _const_void_ref(tuple(Polygon(g.exterior) for g in polys), jump, tol)
+
+
+@lru_cache(maxsize=32)
+def _const_void_ref(polys, jump, tol):
+    P = np.array(polys, dtype=object)
+    step = max(1, len(P) // 25)
+    S = P[::step]
+    length = shapely.length(S)
+    if (length == 0).any():
+        raise ZeroDivisionError("float division by zero")
+    # Keep both operand orders and the original first-minimum tie break.
+    scores = shapely.area(shapely.symmetric_difference(S[:, None], S)) / length[:, None]
+    medians = np.median(scores, axis=1)
+    pos = min(range(len(S)), key=medians.__getitem__)
+    ref = S[pos]
+    w = np.empty(len(P))
+    sampled = np.arange(len(P)) % step == 0
+    w[sampled] = scores[pos]
+    w[~sampled] = shapely.area(shapely.symmetric_difference(ref, P[~sampled])) / length[pos]
+    if float(np.percentile(w, 90)) >= tol:
+        return None
     rs = ref.simplify(0.02)
-    if float(np.percentile(w, 90)) >= tol or max(rs.hausdorff_distance(q.simplify(0.02)) for q in P) > jump:
+    if max(rs.hausdorff_distance(rs if q is ref else q.simplify(0.02)) for q in P) > jump:
         return None
     return ref
 
@@ -1115,7 +1143,10 @@ def _const_void(polys, jump, tol=float(os.environ.get("VOID_CONST", "0.06"))):
 def _spline_poly(r, m=1500):
     """замкнутый сплайн через точки кольца (как у prism/loft), снятый густо в многоугольник"""
     e = cq.Edge.makeSpline([cq.Vector(float(x), float(y), 0.0) for x, y in r], periodic=True)
-    return Polygon([(q.x, q.y) for q in (e.positionAt(t) for t in np.linspace(0, 1, m, endpoint=False))])
+    curve = BRepAdaptor_Curve(e.wrapped)
+    # Match positionAt(mode="length") while computing the total length once.
+    params = e.paramsLength(np.linspace(0, 1, m, endpoint=False))
+    return Polygon([(q.X(), q.Y()) for q in (curve.Value(u) for u in params)])
 
 
 def _const_ring_pts(ref, n):
@@ -1710,20 +1741,26 @@ if __name__ == "__main__":
     cq.exporters.export(body, sys.argv[2] + ".stl", tolerance=0.01, angularTolerance=0.1)
 
 
+def _section_area(mesh, z):
+    # The same immutable mesh and height cache already used by polys_at().
+    cache = mesh.__dict__.setdefault("_kb_section_area", {})
+    key = round(float(z), 6)
+    if key not in cache:
+        pf = polys_at(mesh, z)
+        cache[key] = shapely.union_all([p.buffer(0) for p in pf]) if pf else Polygon()
+    return cache[key]
+
+
 def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=float(os.environ.get("CORR_MIN", "0.2")), shrink=0.12,
                       skin=float(os.environ.get("CORR_SKIN", "0.6"))):
     """поправка по сечениям: где в модели есть материал, а в скане нет (пазы, канавки), — вырез;
     при extra=True наоборот — где в скане есть, а в модели нет — добавка. Слои по перекрытию, выдавливание."""
     z0 = max(scan.bounds[0, 2], model_mesh.bounds[0, 2]); z1 = min(scan.bounds[1, 2], model_mesh.bounds[1, 2])
-    def sec(mesh, z):
-        pf = polys_at(mesh, z)
-        if not pf: return Polygon()
-        return shapely.union_all([p.buffer(0) for p in pf])
     layers_ = []
     zs_ = np.arange(z0 + dz, z1 - dz / 2, dz)
     presection(model_mesh, zs_); presection(scan, zs_)
     for z in zs_:
-        a, b = sec(model_mesh, z), sec(scan, z)
+        a, b = _section_area(model_mesh, z), _section_area(scan, z)
         D = (b.difference(a) if extra else a.difference(b)).buffer(-shrink).buffer(shrink)
         geoms = [g for g in getattr(D, "geoms", [D]) if not g.is_empty and g.geom_type == "Polygon" and g.area >= min_area]
         if skin and not extra and geoms and not a.is_empty:
@@ -1744,7 +1781,7 @@ def correction_prisms(scan, model_mesh, dz=0.2, n=32, extra=False, min_area=floa
     def hollow(z, g):
         # в скане на этом месте пустота (на уровне z)
         k = round(z, 3)
-        if k not in cache: cache[k] = sec(scan, z) if z0 < z < z1 else None
+        if k not in cache: cache[k] = _section_area(scan, z) if z0 < z < z1 else None
         return cache[k] is not None and cache[k].intersection(g).area < 0.1 * g.area
     for L in layers_:
         if len(L["all"]) < 2: continue
@@ -1771,18 +1808,22 @@ def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RI
     (толщина 2A/L < tmax), прилегающая к модели; выдавливание ровно на высоту слоя многоугольником с
     прямыми сторонами, без сплайна по 32 точкам (сплайн и сглаживание 0,12 мм съедали полоску 0,2 мм)"""
     z0 = max(scan.bounds[0, 2], model_mesh.bounds[0, 2]); z1 = min(scan.bounds[1, 2], model_mesh.bounds[1, 2])
-    def sec(mesh, z):
-        pf = polys_at(mesh, z)
-        if not pf: return Polygon()
-        return shapely.union_all([p.buffer(0) for p in pf])
+    differences = {}
+
+    def stock_extra(z, a, b):
+        key = round(float(z), 6)
+        if key not in differences:
+            differences[key] = a.difference(b)
+        return differences[key]
+
     out = []; found = []
     zs_ = np.arange(z0 + dz, z1 - dz / 2, dz)
     presection(model_mesh, zs_); presection(scan, zs_)
     for z in zs_:
-        a, b = sec(model_mesh, z), sec(scan, z)
+        a, b = _section_area(model_mesh, z), _section_area(scan, z)
         if a.is_empty or b.is_empty: continue
         # cut=True — наоборот: тонкий клин материала модели там, где в скане пусто (острие V-канавки)
-        D = (a.difference(b) if cut else b.difference(a)).buffer(-0.01).buffer(0.01)
+        D = (stock_extra(z, a, b) if cut else b.difference(a)).buffer(-0.01).buffer(0.01)
         ext = max(getattr(a, "geoms", [a]), key=lambda q: q.area).exterior
         ref = b.boundary if cut else a.boundary
         for g in getattr(D, "geoms", [D]):
@@ -1793,14 +1834,16 @@ def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RI
             from shapely.geometry import Point
             if cut:
                 # дно выреза модели здесь, а скан уходит глубже: слоем выше у модели уже пусто
-                if sec(model_mesh, z + dz).intersection(g).area > 0.3 * g.area: continue
+                if _section_area(model_mesh, z + dz).intersection(g).area > 0.3 * g.area: continue
                 # и скан пуст ещё слоем ниже: канавка глубже дна модели больше чем на допуск
-                if sec(model_mesh, z - dz).difference(sec(scan, z - dz)).intersection(g.buffer(0.05)).area < 0.02: continue
+                below = z - dz
+                extra = stock_extra(below, _section_area(model_mesh, below), _section_area(scan, below))
+                if extra.intersection(g.buffer(0.05)).area < 0.02: continue
             elif max(ref.distance(Point(c)) for c in g.exterior.coords) < 0.3: continue  # и так в допуске
             L = g.length / 2
             if L < 0.5: continue                                 # короче 0,5 мм — не ребро
             # под полоской слоем ниже сплошной материал модели: возможно, ступенька пологого дна
-            floor_ = sec(model_mesh, z - dz).intersection(g).area > 0.7 * g.area
+            floor_ = _section_area(model_mesh, z - dz).intersection(g).area > 0.7 * g.area
             found.append((float(z), g.buffer(0.02, join_style=2), floor_))
     if os.environ.get("THIN_RIB_LOFT", "1") == "1" and not cut:
         # одно ребро на язычок: сечения соседних слоёв, которые перекрываются, — одна цепочка и один
@@ -1821,7 +1864,7 @@ def thin_rib_prisms(scan, model_mesh, dz=0.2, tmax=float(os.environ.get("THIN_RI
             # мерцание сечения шумного скана у паза или отверстия, не ребро (см. _deflicker_voids)
             w = int(os.environ.get("VOID_FLICKER_W", "4"))
             def hollow(z, g):
-                return z0 < z < z1 and sec(scan, z).intersection(g).area < 0.1 * g.area
+                return z0 < z < z1 and _section_area(scan, z).intersection(g).area < 0.1 * g.area
             keep_ = []
             for G in groups:
                 u = shapely.union_all([q for _, q in G])

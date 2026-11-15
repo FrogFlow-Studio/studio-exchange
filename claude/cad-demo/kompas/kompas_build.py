@@ -1920,6 +1920,9 @@ def _nz(f):
         return 0.0
 
 
+_FILLET_TIMEOUTS = set()  # кромки, где скругление не уложилось во время; очищается в assemble()
+
+
 def _edge_fillets(body, info, scan=None, *, fit_variable=False):
     """скругления кромок, как операция «скругление» в CAD: дно (BOTTOM_FILLET) и наружная кромка верха борта
     (TOP_FILLET), радиус в мм; при отказе ядра радиус уменьшается, при неудаче тело остаётся как было"""
@@ -1958,6 +1961,13 @@ def _edge_fillets(body, info, scan=None, *, fit_variable=False):
                 info[key.lower()] = round(float(np.median(law[:,1])),3)
                 info[key.lower()+"_law"] = law.tolist()
                 continue
+        # кромка, на которой ядро уже не уложилось во время в этой же сборке детали (основная сборка и
+        # кандидаты строят одно и то же дно), второй раз не считается: снова те же 90 с впустую
+        ekey = (key, round(rf, 4), tuple(sorted((round(e.Length(), 3), round(e.Center().x, 2), round(e.Center().y, 2),
+                                                 round(e.Center().z, 2)) for e in edges)))
+        if os.environ.get("FILLET_TIMEOUT_MEMO", "1") == "1" and ekey in _FILLET_TIMEOUTS:
+            info[key.lower() + "_timeout"] = True
+            continue
         for r in (rf, rf * 0.7, rf * 0.5):
             try:
                 # скругление на сложной кромке ядро может считать десятки минут — предел времени
@@ -1968,6 +1978,7 @@ def _edge_fillets(body, info, scan=None, *, fit_variable=False):
             except RuntimeError as e:
                 if "timeout" in str(e):
                     info[key.lower() + "_timeout"] = True
+                    _FILLET_TIMEOUTS.add(ekey)
                     break  # меньший радиус на той же кромке будет так же долго
             except Exception:  # noqa: BLE001
                 pass
@@ -1992,6 +2003,7 @@ def _edge_fillets(body, info, scan=None, *, fit_variable=False):
 
 
 def assemble(scan, log=print):
+    _FILLET_TIMEOUTS.clear()
     filled = 0
     if os.environ.get("CAD_KOMPAS_FILL_HOLES", "1") == "1" and not scan.is_watertight:
         from scan_fill import fill_loops
@@ -2026,6 +2038,59 @@ def assemble(scan, log=print):
     return body,info
 
 
+def _build_job(scan, log, kwargs, q):
+    """одна полная сборка 0с в дочернем процессе: (файл тела, info) или ("error", класс, текст)"""
+    try:
+        from OCP.BRepTools import BRepTools
+        body, info = _assemble_stock(scan, log=log, **kwargs)
+        fn = os.path.join(__import__("tempfile").gettempdir(), "_kbuild%d.brep" % os.getpid())
+        BRepTools.Write_s(body.wrapped, fn)
+        q.put((fn, info))
+    except (RuntimeError, ValueError) as error:
+        q.put(("error", type(error).__name__, str(error)))
+    except Exception as error:  # noqa: BLE001
+        q.put(("error", "RuntimeError", f"{type(error).__name__}: {error}"))
+
+
+class _BuildInBackground:
+    """сборка-кандидат параллельно с основной (CAD_KOMPAS_PAR_CAND, по умолчанию вкл.): кандидат не
+    зависит от основной сборки, а по очереди две сборки шли вдвое дольше"""
+
+    def __init__(self, scan, log, kwargs):
+        import multiprocessing as mp
+        ctx = mp.get_context("fork")
+        self.q = ctx.Queue()
+        self.p = ctx.Process(target=_build_job, args=(scan, log, kwargs, self.q))
+        self.p.start()
+
+    def result(self, seconds=3600):
+        import queue as _queue
+        from OCP.BRepTools import BRepTools
+        from OCP.TopoDS import TopoDS_Shape
+        from OCP.BRep import BRep_Builder
+        t_end, r = time.time() + seconds, None
+        while r is None:
+            try:
+                r = self.q.get(timeout=5)
+            except _queue.Empty:
+                if not self.p.is_alive():
+                    raise RuntimeError("candidate build crashed")
+                if time.time() > t_end:
+                    self.cancel()
+                    raise RuntimeError("candidate build timeout")
+        self.p.join(30)
+        if r[0] == "error":
+            raise (ValueError if r[1] == "ValueError" else RuntimeError)(r[2])
+        fn, info = r
+        sh = TopoDS_Shape(); BRepTools.Read_s(sh, fn, BRep_Builder()); os.remove(fn)
+        return cq.Shape.cast(sh), info
+
+    def cancel(self):
+        if self.p.is_alive():
+            self.p.kill()
+        self.p.join(10)
+
+
 def _assemble_candidates(scan, log):
     """Build 0с and validate an opt-in candidate against the stock result."""
     candidate = None
@@ -2035,24 +2100,35 @@ def _assemble_candidates(scan, log):
 
         candidate = assemble_stable(scan, log=log)
         experiment = "stable_pockets"
+    upper = os.environ.get("CAD_KOMPAS_UPPER_WALL", "0") == "1"
+    floor = os.environ.get("CAD_KOMPAS_POCKET_FLOOR", "1") == "1"
+    variable = os.environ.get("CAD_KOMPAS_VARIABLE_FILLET", "0") == "1"
+    # вместе с густыми контурами кармана (48 точек), иначе опытный проход вытесняет кандидата fine_voids
+    fine_n = int(os.environ.get("CAD_KOMPAS_FINE_VOIDS", "48")) or None
+    local_kw = dict(fit_upper_wall=upper, fit_pocket_floor=floor, fit_variable=variable, void_n=fine_n)
+    bg = None
+    if (candidate is None and (upper or floor or variable) and os.name != "nt"
+            and os.environ.get("CAD_KOMPAS_PAR_CAND", "1") == "1"):
+        bg = _BuildInBackground(scan, log, local_kw)
     t_base = time.time()
-    baseline = _assemble_stock(scan, log=log)
+    try:
+        baseline = _assemble_stock(scan, log=log)
+    except BaseException:
+        if bg is not None:
+            bg.cancel()
+        raise
     # большая или сложная деталь: каждый кандидат — ещё одна полная сборка; если основная шла долго,
     # кандидатов не строим (иначе 3–4 сборки не укладываются в предел времени)
     if candidate is None and time.time() - t_base > float(os.environ.get("CAD_KOMPAS_SOLO_SEC", "200")):
         log(f"    сборка долгая ({time.time() - t_base:.0f} с): без проверки кандидатов")
+        if bg is not None:
+            bg.cancel()
         baseline[1]["solo_build"] = True
         return baseline
-    upper = os.environ.get("CAD_KOMPAS_UPPER_WALL", "0") == "1"
-    floor = os.environ.get("CAD_KOMPAS_POCKET_FLOOR", "1") == "1"
-    variable = os.environ.get("CAD_KOMPAS_VARIABLE_FILLET", "0") == "1"
     if candidate is None and (upper or floor or variable):
         experiment = "local_surfaces"
         try:
-            # вместе с густыми контурами кармана (48 точек), иначе опытный проход вытесняет кандидата fine_voids
-            fine_n = int(os.environ.get("CAD_KOMPAS_FINE_VOIDS", "48")) or None
-            trial = _assemble_stock(scan, log=log, fit_upper_wall=upper, fit_pocket_floor=floor, fit_variable=variable,
-                                    void_n=fine_n)
+            trial = bg.result() if bg is not None else _assemble_stock(scan, log=log, **local_kw)
             if any(trial[1].get(key) for key in ("upper_wall_fit","smooth_pocket_floors",
                                                  "top_fillet_law","bottom_fillet_law")):
                 candidate = trial

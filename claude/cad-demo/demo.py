@@ -779,18 +779,60 @@ def main() -> None:
             except Exception:  # noqa: BLE001
                 return None
 
+        # Сборка «как в Компасе» (0с) — первой и одна, на всех ядрах (CAD_SECTIONS_FIRST, по умолчанию
+        # вкл.). Если она сразу годна при 0,3 мм (CAD_SECTIONS_ACCEPT, 99,5 %), остальные пути не
+        # запускаются совсем: они только делили бы с ней процессор. Иначе считаются как раньше.
+        fast, its_first, first_tried = False, None, False
+        cj = out / "sections.json"
+        if os.environ.get("CAD_SECTIONS", "1") != "0" and os.environ.get("CAD_SECTIONS_FIRST", "1") != "0":
+            first_tried = True
+            t0 = time.time()
+            log("2/4 попытка 0с (первой): сборка как в Компасе — стенка лофтом, карман, бобышки, без ИИ…", 600)
+            first = launch("sections", cj)
+            try:
+                code = first.wait(timeout=1500) if first is not None else 1
+            except subprocess.TimeoutExpired:
+                first.kill()
+                code = None
+                log("    сборка как в Компасе не уложилась во время, считаю остальные пути")
+            if code == 0 and cj.exists():
+                try:
+                    g = json.loads(cj.read_text(encoding="utf-8"))
+                    worker_times["0с"] = g.get("timings", {})
+                    log("    " + g["meta"]["plan"])
+                    its_first = evaluate("0с", g["code"], g["meta"], t0, "как в Компасе, без ИИ",
+                                         step_source=cj.with_suffix(".step"))
+                    iterations.append(its_first)
+                    r = its_first["run"]
+                    if r.get("ok") and r.get("valid") and not its_first["gates"] and its_first["cmp"]:
+                        ss = strict(its_first)
+                        need = float(os.environ.get("CAD_SECTIONS_ACCEPT", "0.995"))
+                        if ss >= need:
+                            best, fast = its_first, True
+                            log(f"    при 0,3 мм {ss * 100:.2f}%: модель годна, остальные пути не нужны")
+                        else:
+                            log(f"    при 0,3 мм {ss * 100:.2f}% (меньше {need * 100:.1f}%): считаю остальные пути для сравнения")
+                except Exception as ex:  # noqa: BLE001
+                    its_first = None
+                    log(f"    сборка как в Компасе не получилась ({type(ex).__name__}), считаю остальные пути")
+            elif code is not None:
+                log("    сборка как в Компасе не получилась (деталь не «стопкой» или ошибка), считаю остальные пути")
         sj, wj = out / "surface.json", out / "walls.json"
         bg_limit, bg_started = a.geo_timeout + 300, time.time()
         # тело по поверхности на огромном скане (миллионы треугольников) считается дольше: даём больше
         surf_limit = bg_limit + (480 if sheet["diagnostics"]["faces"] > 1_000_000 else 0)
-        surf_proc, walls_proc = launch("surface", sj), launch("walls", wj)
+        surf_proc = walls_proc = straight_proc = None
+        if not fast:
+            surf_proc, walls_proc = launch("surface", sj), launch("walls", wj)
         # прямое тело (0п) тоже считается в фоне с начала: на кривой оболочке оно само отказывается
         # после разметки, и ожидание не добавляется ко времени расчёта
         pj = out / "straight.json"
-        straight_proc = launch("straight", pj) if os.environ.get("CAD_STRAIGHT", "1") != "0" else None
+        if not fast:
+            straight_proc = launch("straight", pj) if os.environ.get("CAD_STRAIGHT", "1") != "0" else None
         # сборка «как в Компасе» (0с) — тоже в фоне с начала; на деталях не «стопкой» сама отпадёт
-        cj = out / "sections.json"
-        sections_proc = launch("sections", cj) if os.environ.get("CAD_SECTIONS", "1") != "0" else None
+        sections_proc = None
+        if not first_tried:
+            sections_proc = launch("sections", cj) if os.environ.get("CAD_SECTIONS", "1") != "0" else None
         kj = out / "smooth.json"
         smooth_job = None
 
@@ -806,7 +848,7 @@ def main() -> None:
             job.close()
             atexit.unregister(job.close)
 
-        if a.smooth != "off":
+        if a.smooth != "off" and not fast:
             reserve = smooth_memory_budget()
             if reserve:
                 smooth_job = start_smooth(reserve)
@@ -826,25 +868,29 @@ def main() -> None:
             if code != 0:
                 raise RuntimeError("процесс завершился с ошибкой")
 
-        log("2/4 попытка 0: алгоритм без ИИ строит черновик по сечениям…", a.geo_timeout)
+        if not fast:
+            log("2/4 попытка 0: алгоритм без ИИ строит черновик по сечениям…", a.geo_timeout)
         low = (a.notes or "").lower()
         restore = not a.no_restore and not any(w in low for w in ("деталь целая", "не достраивать", "ничего не восстанавливать"))
         if not restore:
             log("    достройка выключена (заметка или --no-restore): строю только то, что есть в скане")
         gj = out / "geometric.json"
-        try:
-            subprocess.run([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
-                            str(out / "sheet.json"), "1" if restore else "0", str(gj)],
-                           timeout=a.geo_timeout, check=True, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
-            g = json.loads(gj.read_text(encoding="utf-8"))
-            g_code, g_meta = g["code"], g["meta"]
-            worker_times["0"] = g.get("timings", {})
-        except subprocess.TimeoutExpired:
+        if fast:
             g_code = None
-            log(f"    деталь слишком сложная для алгоритма без ИИ: не уложился в {a.geo_timeout} с, дальше работает ИИ")
-        except Exception as ex:  # noqa: BLE001
-            g_code = None
-            log(f"    алгоритм без ИИ не справился ({type(ex).__name__}), дальше работает ИИ")
+        else:
+            try:
+                subprocess.run([sys.executable, str(HERE / "geo_worker.py"), str(out / "scan_aligned.stl"),
+                                str(out / "sheet.json"), "1" if restore else "0", str(gj)],
+                               timeout=a.geo_timeout, check=True, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                g = json.loads(gj.read_text(encoding="utf-8"))
+                g_code, g_meta = g["code"], g["meta"]
+                worker_times["0"] = g.get("timings", {})
+            except subprocess.TimeoutExpired:
+                g_code = None
+                log(f"    деталь слишком сложная для алгоритма без ИИ: не уложился в {a.geo_timeout} с, дальше работает ИИ")
+            except Exception as ex:  # noqa: BLE001
+                g_code = None
+                log(f"    алгоритм без ИИ не справился ({type(ex).__name__}), дальше работает ИИ")
         if g_code is not None:
             for r in g_meta["restored"]:
                 log("    " + r)
@@ -854,7 +900,7 @@ def main() -> None:
                 best = it0
         # Тонкостенная деталь (пластик, лист): слои по сечениям не справляются — пробуем
         # черновик из стенок (каждая пластина целиком по паре параллельных сторон).
-        if best is None or best["cmp"]["within_tol_share"] < 0.9:
+        if not fast and (best is None or best["cmp"]["within_tol_share"] < 0.9):
             t0 = time.time()
             w_limit = bg_limit
             if surf_proc is not None and surf_proc.poll() == 0 and walls_proc is not None and walls_proc.poll() is None:
@@ -878,7 +924,7 @@ def main() -> None:
         # Любая форма (кривые оболочки, линзы, корпуса): тело по поверхности скана. Считается
         # параллельно с черновиками выше (запущено в начале), берётся, если они не дошли до
         # цели; из всех попыток выбирается лучшая по сравнению.
-        if best is None or not good(best):
+        if not fast and (best is None or not good(best)):
             t0 = time.time()
             log("2/4 попытка 0в: тело по поверхности скана (для деталей любой формы), без ИИ…", max(10.0, surf_limit - (time.time() - bg_started)))
             try:
@@ -970,23 +1016,26 @@ def main() -> None:
         # Сборка «как в Компасе» (0с): операции стенка → карман → бобышки, гладкие поверхности вместо
         # треугольников. Берётся вместо тел по поверхности и прямого тела, если при 0,3 мм уступает им
         # не больше 1,5 п. п. CAD_SECTIONS=0 — без неё.
-        if sections_proc is not None and (best is None or best["n"] in ("0в", "0к", "0п")):
+        if (sections_proc is not None or its_first is not None) and (best is None or best["n"] in ("0в", "0к", "0п")):
             t0 = time.time()
             log("2/4 попытка 0с: сборка как в Компасе — стенка лофтом, карман, бобышки, без ИИ…", 300)
             try:
-                try:
-                    code = sections_proc.wait(timeout=max(10.0, 1500 - (time.time() - bg_started)))
-                except subprocess.TimeoutExpired:
-                    sections_proc.kill()
-                    raise
-                if code != 0 or not cj.exists():
-                    raise RuntimeError("сборка по сечениям не получилась (деталь не «стопкой» или ошибка, см. журнал)")
-                g = json.loads(cj.read_text(encoding="utf-8"))
-                worker_times["0с"] = g.get("timings", {})
-                log("    " + g["meta"]["plan"])
-                its = evaluate("0с", g["code"], g["meta"], t0, "как в Компасе, без ИИ",
-                               step_source=cj.with_suffix(".step"))
-                iterations.append(its)
+                if its_first is not None:
+                    its = its_first
+                else:
+                    try:
+                        code = sections_proc.wait(timeout=max(10.0, 1500 - (time.time() - bg_started)))
+                    except subprocess.TimeoutExpired:
+                        sections_proc.kill()
+                        raise
+                    if code != 0 or not cj.exists():
+                        raise RuntimeError("сборка по сечениям не получилась (деталь не «стопкой» или ошибка, см. журнал)")
+                    g = json.loads(cj.read_text(encoding="utf-8"))
+                    worker_times["0с"] = g.get("timings", {})
+                    log("    " + g["meta"]["plan"])
+                    its = evaluate("0с", g["code"], g["meta"], t0, "как в Компасе, без ИИ",
+                                   step_source=cj.with_suffix(".step"))
+                    iterations.append(its)
                 ok = bool(its["run"].get("ok") and its["run"].get("valid") and not its["gates"] and its["cmp"])
                 if ok and best is not None and best["cmp"] is not None:
                     ss, sb = strict(its), strict(best)

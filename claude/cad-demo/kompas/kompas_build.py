@@ -2199,10 +2199,14 @@ def _edge_fillets(body, info, scan=None, *, fit_variable=False):
         if os.environ.get("FILLET_TIMEOUT_MEMO", "1") == "1" and ekey in _FILLET_TIMEOUTS:
             info[key.lower() + "_timeout"] = True
             continue
-        for r in (rf, rf * 0.7, rf * 0.5):
+        for i, r in enumerate((rf, rf * 0.7, rf * 0.5)):
             try:
-                # скругление на сложной кромке ядро может считать десятки минут — предел времени
-                nb, ok = op_limited(lambda: body.fillet(r, edges), float(os.environ.get("FILLET_SEC", "90")))
+                # скругление на сложной кромке ядро может считать десятки минут — предел времени;
+                # меньший радиус пробуется после отказа на полном, и на нём ядро бывает зависает до отказа
+                # (дно фланца: 0,4 и 0,2 мм отказ за 0,5 с, 0,28 мм — отказ через 320 с), поэтому
+                # у повторных попыток предел короче
+                lim = float(os.environ.get("FILLET_SEC", "90")) if i == 0 else float(os.environ.get("FILLET_RETRY_SEC", "20"))
+                nb, ok = op_limited(lambda: body.fillet(r, edges), lim)
                 if ok and _fillet_sane(nb, body):
                     body = nb; info[key.lower()] = round(r, 3)
                     break

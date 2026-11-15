@@ -222,6 +222,51 @@ def _shape_child(fn_call, q):
         q.put(None)
 
 
+def _mesh_child(shape_brep, tf, q):
+    try:
+        from OCP.BRepTools import BRepTools
+        from OCP.TopoDS import TopoDS_Shape
+        from OCP.BRep import BRep_Builder
+        from stl_out import write_stl_checked
+        sh = TopoDS_Shape(); BRepTools.Read_s(sh, shape_brep, BRep_Builder())
+        write_stl_checked(sh, tf, 0.03, True, 0.15, tol=0.1, parallel=False)
+        q.put(True)
+    except Exception:  # noqa: BLE001
+        q.put(False)
+
+
+def _corr_mesh(body, tf, info):
+    """сетка тела для поправок; на большой шумной детали сетка ядра с мелким допуском строилась
+    больше 30 минут (крышка) — предел времени MESH_SEC, не успела — поправки пропускаются"""
+    from stl_out import write_stl_checked
+    sec = float(os.environ.get("MESH_SEC", "120"))
+    big = body.BoundingBox().DiagonalLength > float(os.environ.get("MESH_FORK_DIAG", "120"))
+    if os.name == "nt" or sec <= 0 or not big:  # небольшая деталь: сетка за секунды, как раньше
+        write_stl_checked(body.wrapped, tf, 0.03, True, 0.15, tol=0.1)
+        return trimesh.load(tf, force="mesh")
+    import multiprocessing as mp
+    from OCP.BRepTools import BRepTools
+    fb = tf + ".brep"
+    BRepTools.Write_s(body.wrapped, fb)
+    ctx = mp.get_context("fork"); q = ctx.Queue()
+    p = ctx.Process(target=_mesh_child, args=(fb, tf, q)); p.start(); p.join(sec)
+    ok = False
+    if p.is_alive():
+        p.kill(); p.join()
+        info["correction_mesh_timeout"] = info.get("correction_mesh_timeout", 0) + 1
+        print("correction mesh timeout", flush=True)
+    else:
+        try:
+            ok = q.get(timeout=5)
+        except Exception:  # noqa: BLE001
+            ok = False
+    try:
+        os.remove(fb)
+    except OSError:
+        pass
+    return trimesh.load(tf, force="mesh") if ok else None
+
+
 def _fillet_sane(nb, body):
     """скругление не должно ломать тело: объём почти тот же, тел столько же, граней не меньше половины
     (на шумной крышке ядро отдало «скруглённое» тело из 39 граней вместо 848)"""
@@ -2083,10 +2128,9 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
         tf = os.path.join(tempfile.gettempdir(), "_kcorr%d.stl" % os.getpid())
         # сетка для поправки — с проверкой объёма: битая сетка давала ложные вырезы
         from stl_out import write_stl_checked
-        write_stl_checked(body.wrapped, tf, 0.03, True, 0.15, tol=0.1)
-        mm = trimesh.load(tf, force="mesh")
+        mm = _corr_mesh(body, tf, info)
         nc = 0
-        for v in sorted(correction_prisms(scan, mm), key=lambda c: -c.Volume()):
+        for v in sorted((correction_prisms(scan, mm) if mm is not None else []), key=lambda c: -c.Volume()):
             try:
                 nb = body.cut(v)
                 if len(nb.Faces()) - len(body.Faces()) > int(os.environ.get("CORR_ADD_MAXF", "40")):
@@ -2100,8 +2144,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
         if os.environ.get("CORR_ADD", "1") == "1":
             # обратная поправка: где в скане материал есть, а в модели нет (язычок защёлки, тонкая
             # перегородка) — выдавливание по сечениям скана
-            write_stl_checked(body.wrapped, tf, 0.03, True, 0.15, tol=0.1)
-            mm = trimesh.load(tf, force="mesh")
+            mm = _corr_mesh(body, tf, info)
             na = 0
             outer = Polygon(TOPINFO["ring"]).buffer(0.05) if TOPINFO.get("ring") is not None else None
             if TOPINFO.get("seg_rings"):
@@ -2109,7 +2152,7 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             # наружная стенка в плане: у стопки участков — стенки всех участков (и уступов между ними)
             wall_line = (shapely.union_all([Polygon(r).exterior for s_ in TOPINFO["seg_rings"] for r in s_[2:]])
                          if TOPINFO.get("seg_rings") else outer.exterior if outer is not None else None)
-            for v in sorted(correction_prisms(scan, mm, extra=True), key=lambda c: -c.Volume()):
+            for v in sorted((correction_prisms(scan, mm, extra=True) if mm is not None else []), key=lambda c: -c.Volume()):
                 # прибавка снаружи стенки — ступенчатый нарост из призм по слоям (видно глазом);
                 # наружную стенку правит лофт, поправка только внутри
                 if (outer is not None and os.environ.get("CORR_ADD_OUTER", "0") != "1"
@@ -2135,10 +2178,9 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             body = body.clean()
         if os.environ.get("THIN_RIB", "1") == "1":
             # задача 66: язычок защёлки и тонкие перегородки — тоньше, чем ловит CORR_ADD
-            write_stl_checked(body.wrapped, tf, 0.03, True, 0.15, tol=0.1)
-            mm = trimesh.load(tf, force="mesh")
+            mm = _corr_mesh(body, tf, info)
             nt = 0
-            for v in thin_rib_prisms(scan, mm):
+            for v in (thin_rib_prisms(scan, mm) if mm is not None else []):
                 try:
                     nb = body.fuse(v)
                     if len(nb.Faces()) - len(body.Faces()) > int(os.environ.get("CORR_ADD_MAXF", "40")):
@@ -2151,10 +2193,9 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
             body = body.clean()
         if os.environ.get("THIN_CUT", "0") == "1":
             # острие узкой канавки (клин у основания бобышки) — тоньше порога поправочных вырезов
-            write_stl_checked(body.wrapped, tf, 0.03, True, 0.15, tol=0.1)
-            mm = trimesh.load(tf, force="mesh")
+            mm = _corr_mesh(body, tf, info)
             nt = 0
-            for v in thin_rib_prisms(scan, mm, cut=True):
+            for v in (thin_rib_prisms(scan, mm, cut=True) if mm is not None else []):
                 try:
                     nb = body.cut(v)
                     if nb.isValid() and len(nb.Solids()) == 1 and nb.Volume() > 0.98 * body.Volume():
@@ -2174,6 +2215,18 @@ def _assemble_stock(scan, log=print, *, periodic_wall=False, void_n=None,
         # в STEP оно читается как два тела — разбираем по оболочкам, как отдельные тела
         sols = [cq.Solid.makeSolid(sh) for sh in body.Shells()]
         sols = [x for x in sols if x.isValid()] or body.Solids()
+        if len(sols) > 1 and os.environ.get("DROP_CAVITIES", "1") == "1":
+            # оболочки внутри наружной — закрытые полости (вырез шумного скана, не вышедший наружу);
+            # конструктор полостей внутри сплошного тела не делает — заполняем их
+            big = max(sols, key=lambda x: abs(x.Volume()))
+            inner = [x for x in sols if x is not big and big.isInside(x.Center())]
+            # только мелкие полости (шум); большие — признак того, что метод не подходит детали
+            if inner and sum(abs(x.Volume()) for x in inner) < 0.02 * abs(big.Volume()):
+                info["cavities_filled"] = len(inner)
+                rest = [x for x in sols if x is big or not any(x is y for y in inner)]
+                if len(rest) == 1:
+                    body = big
+                sols = rest
     if len(sols) > 1:
         # мелкие отрезанные обрывки (тонкие перемычки между вырезами) — убираем, если их меньше 1% объёма
         sols = sorted(sols, key=lambda x: -x.Volume())

@@ -20,8 +20,9 @@ def stl_volume(path) -> float:
     return float(np.einsum("ij,ij->i", tri[:, 0], np.cross(tri[:, 1], tri[:, 2])).sum() / 6.0)
 
 
-def write_stl_checked(shape, path, lin=0.02, rel=True, ang=0.1, tol=0.05):
-    """Пишет STL; возвращает (объём сетки / объём тела, попытка). shape — TopoDS_Shape."""
+def write_stl_checked(shape, path, lin=0.02, rel=True, ang=0.1, tol=0.05, parallel=True):
+    """Пишет STL; возвращает (объём сетки / объём тела, попытка). shape — TopoDS_Shape.
+    parallel=False — в дочернем процессе после fork (пул потоков ядра там зависает)."""
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
     from OCP.BRepTools import BRepTools
     from OCP.GProp import GProp_GProps
@@ -36,7 +37,7 @@ def write_stl_checked(shape, path, lin=0.02, rel=True, ang=0.1, tol=0.05):
     for k, (l, r, a) in enumerate(tries):
         if k:
             BRepTools.Clean_s(shape)
-        BRepMesh_IncrementalMesh(shape, l, r, a, True)
+        BRepMesh_IncrementalMesh(shape, l, r, a, parallel)
         w = StlAPI_Writer()
         w.ASCIIMode = False
         if not w.Write(shape, str(path)):
@@ -64,7 +65,7 @@ def write_stl_checked(shape, path, lin=0.02, rel=True, ang=0.1, tol=0.05):
             raise RuntimeError("не удалось перечитать STEP для сетки")
         rd.TransferRoots()
         fresh = rd.OneShape()
-    BRepMesh_IncrementalMesh(fresh, lin, rel, ang, True)
+    BRepMesh_IncrementalMesh(fresh, lin, rel, ang, parallel)
     w = StlAPI_Writer()
     w.ASCIIMode = False
     w.Write(fresh, str(path))
@@ -74,7 +75,7 @@ def write_stl_checked(shape, path, lin=0.02, rel=True, ang=0.1, tol=0.05):
     if best[1] != len(tries) - 1:  # вернуть лучшую сетку
         l, r, a = tries[best[1]]
         BRepTools.Clean_s(shape)
-        BRepMesh_IncrementalMesh(shape, l, r, a, True)
+        BRepMesh_IncrementalMesh(shape, l, r, a, parallel)
         w = StlAPI_Writer()
         w.ASCIIMode = False
         w.Write(shape, str(path))

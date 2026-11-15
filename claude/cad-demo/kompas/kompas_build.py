@@ -2010,18 +2010,53 @@ def assemble(scan, log=print):
 
         scan, filled = fill_loops(scan)
         log(f"    дыры скана закрыты: {filled} треугольников, замкнут: {scan.is_watertight}")
-    body,info = _assemble_candidates(scan,log)
-    if filled: info["scan_holes_filled"] = filled
-    if info.get("solo_build"):
-        return body, info
     partial = os.environ.get("CAD_KOMPAS_PARTIAL_ISLANDS", "0") == "1"
     windowed = os.environ.get("CAD_KOMPAS_WINDOWED_ISLANDS", "0") == "1"
     hooked = os.environ.get("CAD_KOMPAS_HOOKED_ISLANDS", "1") == "1"
-    if hooked or windowed or partial or os.environ.get("CAD_KOMPAS_EXACT_ISLANDS", "0") == "1":
+    islands = hooked or windowed or partial or os.environ.get("CAD_KOMPAS_EXACT_ISLANDS", "0") == "1"
+    mode = "hooked" if hooked else "windowed" if windowed else "partial" if partial else True
+    # проверка точных бобышек — ещё одна полная сборка с настройками победителя. Чаще всего побеждает
+    # кандидат «локальные поверхности»; с его настройками она заранее строится параллельно
+    # (CAD_KOMPAS_PAR_ISLANDS=1, по умолчанию выкл.: если победил не он, лишняя сборка только отнимает процессор). Если победил другой — заготовка выбрасывается
+    spec = None
+    if (islands and os.name != "nt" and os.environ.get("CAD_KOMPAS_PAR_ISLANDS", "0") == "1"
+            and os.environ.get("CAD_KOMPAS_PAR_CAND", "1") == "1"
+            and os.environ.get("CAD_KOMPAS_STABLE_POCKETS", "0") != "1"
+            and os.environ.get("CAD_KOMPAS_POCKET_FLOOR", "1") == "1"):
+        spec_kw = dict(exact_islands=mode, fit_pocket_floor=True,
+                       void_n=int(os.environ.get("CAD_KOMPAS_FINE_VOIDS", "48")) or None, periodic_wall=False,
+                       fit_upper_wall=os.environ.get("CAD_KOMPAS_UPPER_WALL", "0") == "1",
+                       fit_variable=os.environ.get("CAD_KOMPAS_VARIABLE_FILLET", "0") == "1")
+        spec = _BuildInBackground(scan, log, spec_kw)
+        spec.kw = spec_kw
+    try:
+        body,info = _assemble_candidates(scan,log)
+    except BaseException:
+        if spec is not None:
+            spec.cancel()
+        raise
+    if filled: info["scan_holes_filled"] = filled
+    if info.get("solo_build"):
+        if spec is not None:
+            spec.cancel()
+        return body, info
+    if islands:
         from cylindrical_islands import guarded_exact_islands
 
-        mode = "hooked" if hooked else "windowed" if windowed else "partial" if partial else True
-        body,info = guarded_exact_islands(scan,body,info,log,_assemble_stock,mode=mode)
+        def stock(scan_, log=print, **kw):
+            nonlocal spec
+            if spec is not None:
+                sp, spec = spec, None
+                if kw == sp.kw:
+                    return sp.result()
+                sp.cancel()
+            return _assemble_stock(scan_, log=log, **kw)
+
+        try:
+            body,info = guarded_exact_islands(scan,body,info,log,stock,mode=mode)
+        finally:
+            if spec is not None:
+                spec.cancel()
     curved = os.environ.get("CAD_KOMPAS_CURVED_PADS", "0") == "1"
     if curved or os.environ.get("CAD_KOMPAS_LEVEL_PADS", "0") == "1":
         from level_pads import guarded_level_pads
@@ -2050,6 +2085,12 @@ def _build_job(scan, log, kwargs, q):
         q.put(("error", type(error).__name__, str(error)))
     except Exception as error:  # noqa: BLE001
         q.put(("error", "RuntimeError", f"{type(error).__name__}: {error}"))
+
+
+def _cpu_now():
+    """процессорное время этого процесса и его уже завершённых дочерних (пулы сечений, сетки, вырезы)"""
+    t = os.times()
+    return t.user + t.system + t.children_user + t.children_system
 
 
 class _BuildInBackground:
@@ -2111,6 +2152,7 @@ def _assemble_candidates(scan, log):
             and os.environ.get("CAD_KOMPAS_PAR_CAND", "1") == "1"):
         bg = _BuildInBackground(scan, log, local_kw)
     t_base = time.time()
+    c_base = _cpu_now()
     try:
         baseline = _assemble_stock(scan, log=log)
     except BaseException:
@@ -2119,8 +2161,16 @@ def _assemble_candidates(scan, log):
         raise
     # большая или сложная деталь: каждый кандидат — ещё одна полная сборка; если основная шла долго,
     # кандидатов не строим (иначе 3–4 сборки не укладываются в предел времени)
-    if candidate is None and time.time() - t_base > float(os.environ.get("CAD_KOMPAS_SOLO_SEC", "200")):
-        log(f"    сборка долгая ({time.time() - t_base:.0f} с): без проверки кандидатов")
+    wall, cpu = time.time() - t_base, _cpu_now() - c_base
+    log(f"    основная сборка: {wall:.0f} с, процессор {cpu:.0f} с")
+    # «долгая» мерится процессорным временем (CAD_KOMPAS_SOLO_CPU): время по часам зависит от загрузки
+    # машины (параллельный кандидат, другие программы), и на занятой машине кнопка теряла кандидатов.
+    # 260 с процессора ≈ прежние 200 с по часам на свободной машине (кнопка: 99 с по часам, 126 с процессора).
+    # CAD_KOMPAS_SOLO_CPU=0 — прежняя проверка по часам (CAD_KOMPAS_SOLO_SEC)
+    solo_cpu = float(os.environ.get("CAD_KOMPAS_SOLO_CPU", "260"))
+    long_build = cpu > solo_cpu if solo_cpu > 0 else wall > float(os.environ.get("CAD_KOMPAS_SOLO_SEC", "200"))
+    if candidate is None and long_build:
+        log(f"    сборка долгая ({wall:.0f} с, процессор {cpu:.0f} с): без проверки кандидатов")
         if bg is not None:
             bg.cancel()
         baseline[1]["solo_build"] = True

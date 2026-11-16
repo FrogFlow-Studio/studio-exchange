@@ -382,8 +382,18 @@ class Workspace:
         process = None
         timer = None
         try:
+            # расчёт грузит все ядра процессора; с обычным приоритетом Windows на ноутбуке «замерзает»
+            # (студия, i5 9-го поколения). Пониженный приоритет: расчёт идёт так же, когда процессор
+            # свободен, но окна и мышь отвечают сразу. Дочерние процессы его наследуют. CAD_LOW_PRIORITY=0 — как раньше
+            low = os.environ.get("CAD_LOW_PRIORITY", "1") == "1"
+            extra = {}
+            if low and os.name == "nt":
+                extra["creationflags"] = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0x4000)
+            elif low and hasattr(os, "nice"):
+                extra["preexec_fn"] = lambda: os.nice(5)
             process = subprocess.Popen(cmd, cwd=DEMO, env=env, stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+                                       stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                                       **extra)
             with self.lock:
                 self.process = process
             timer = threading.Timer(LIMIT, stop_tree, args=(process,))
@@ -509,7 +519,7 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["api", "jobs"]:
             return self.send_json(self.server.workspace.summary())
         if parts == ["api", "config"]:
-            return self.send_json({"ai": ai_key(), "ai_budget_usd": AI_BUDGET_USD})
+            return self.send_json({"ai": ai_key(), "ai_budget_usd": AI_BUDGET_USD, "engine": engine_revision()})
         if parts[:2] == ["api", "jobs"] and len(parts) in (3, 5):
             id = parts[2]
             job = self.server.workspace.snapshot(id)
@@ -539,7 +549,7 @@ class Handler(BaseHTTPRequestHandler):
             if not re.fullmatch(r"sk-[A-Za-z0-9_\-]{20,300}", key):
                 return self.send_json({"error": "Это не похоже на ключ ИИ (он начинается с sk-)."}, 400)
             os.environ["OPENAI_API_KEY" if not key.startswith("sk-ant-") else "ANTHROPIC_API_KEY"] = key
-            return self.send_json({"ai": ai_key(), "ai_budget_usd": AI_BUDGET_USD})
+            return self.send_json({"ai": ai_key(), "ai_budget_usd": AI_BUDGET_USD, "engine": engine_revision()})
         try:
             if self.path == "/api/jobs":
                 count = int(self.headers.get("Content-Length", "0"))

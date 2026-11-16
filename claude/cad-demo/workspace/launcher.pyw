@@ -19,12 +19,25 @@ DATA = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "Fro
 PORTS = range(8770, 8780)
 
 
+def own_engine():
+    """версия этой установки (файл VERSION рядом с программой); None — неизвестна"""
+    try:
+        return (HERE.parent / "VERSION").read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
 def running(port: int) -> bool:
-    """Отвечает ли на порту именно наше рабочее окно (а не чужая программа)."""
+    """Отвечает ли на порту именно наше рабочее окно (а не чужая программа) той же версии: окно другой
+    установки (старая копия программы в другой папке) не открываем, а запускаем своё на свободном порту"""
     try:
         req = urllib.request.Request(f"http://127.0.0.1:{port}/api/config", headers={"Host": f"127.0.0.1:{port}"})
         with urllib.request.urlopen(req, timeout=1.5) as resp:
-            return "ai_budget_usd" in json.load(resp)
+            cfg = json.load(resp)
+        if "ai_budget_usd" not in cfg:
+            return False
+        mine = own_engine()
+        return mine is None or cfg.get("engine") == mine
     except Exception:  # noqa: BLE001 — любой отказ значит «не наше»
         return False
 
